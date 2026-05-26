@@ -116,10 +116,31 @@ You: Reload the scene with eps=0.3 to get finer clusters
 Agent: [calls reload_scene] Scene reloaded. Objects: 24 | Relationships: 41 ...
 ```
 
+## Configuration
+
+Two files can be customized without touching Python code:
+
+**`config.yaml`** — semantic class definitions:
+```yaml
+semantic_classes:
+  names: [arch, column, moldings, ...]   # label id → class name
+  structural: [arch, column, wall, ...]  # used for element type classification
+  finishing: [moldings, floor, ...]
+  colors:                                # RGB in [0, 1], used for visualization
+    arch: [0.85, 0.37, 0.01]
+    ...
+```
+
+**`prompts/system.md`** — system prompt for the agent, edit freely to change its tone or instructions.
+
 ## Project structure
 
 ```
+config.yaml                # semantic class definitions (editable)
+prompts/
+│   └── system.md          # agent system prompt (editable)
 arch_agent/
+├── settings.py            # YAML config loader (lru_cache)
 ├── pipeline/
 │   ├── loader.py          # CSV → DataFrame
 │   ├── segmentation.py    # DBSCAN object extraction
