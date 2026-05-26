@@ -6,7 +6,26 @@ from langchain_core.tools import tool
 
 from ..pipeline.pipeline import SceneContext, run_pipeline
 from ..pipeline.graph import analyze_scene_graph
-from ..pipeline.features import STRUCTURAL_ELEMENTS
+from ..settings import get_config
+
+
+def _structural_elements() -> set[str]:
+    return set(get_config()["semantic_classes"]["structural"])
+
+
+def _classify_area(label_set: set) -> str:
+    structural = _structural_elements()
+    if {"vault", "arch", "column"} & label_set:
+        return "vaulted_space"
+    if "stairs" in label_set:
+        return "vertical_circulation"
+    if {"door_window", "wall"} & label_set:
+        return "facade_zone"
+    if {"floor", "wall"} & label_set:
+        return "floor_zone"
+    if label_set <= structural:
+        return "structural_zone"
+    return "general_area"
 
 
 def create_scene_tools(ctx: SceneContext) -> list:
@@ -92,9 +111,10 @@ def create_scene_tools(ctx: SceneContext) -> list:
         if G is None:
             return "Scene graph not available."
 
+        structural = _structural_elements()
         analysis = analyze_scene_graph(G)
         struct = sum(1 for o in ctx.objects.values()
-                     if o["semantic_label"] in STRUCTURAL_ELEMENTS)
+                     if o["semantic_label"] in structural)
 
         lines = [
             "Scene Statistics",
@@ -260,17 +280,3 @@ def create_scene_tools(ctx: SceneContext) -> list:
         discover_functional_areas,
         reload_scene,
     ]
-
-
-def _classify_area(label_set: set) -> str:
-    if {"vault", "arch", "column"} & label_set:
-        return "vaulted_space"
-    if "stairs" in label_set:
-        return "vertical_circulation"
-    if {"door_window", "wall"} & label_set:
-        return "facade_zone"
-    if {"floor", "wall"} & label_set:
-        return "floor_zone"
-    if label_set <= STRUCTURAL_ELEMENTS:
-        return "structural_zone"
-    return "general_area"

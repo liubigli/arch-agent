@@ -7,28 +7,16 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from typing_extensions import TypedDict
 
+from pathlib import Path
+
 from .pipeline.pipeline import SceneContext
 from .tools.scene_tools import create_scene_tools
 
-_SYSTEM_PROMPT = """\
-You are an expert architectural analyst. You help users explore and understand \
-3D architectural scenes described by a scene graph built from semantic point clouds.
+_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "system.md"
 
-The scene graph contains:
-- NODES: detected architectural elements — arch, column, moldings, floor, \
-door_window, wall, stairs, vault, roof, other
-- EDGES: spatial relationships — near, adjacent, above, below, contains, inside
 
-Element categories:
-  Structural : arch, column, wall, vault, roof
-  Finishing  : moldings, floor, door_window, stairs, other
-
-Rules:
-- Always use the available tools to retrieve data before answering.
-- Do not assume or invent object names or counts.
-- When the user asks a general question about the scene for the first time, \
-start by calling get_scene_statistics.
-"""
+def _load_system_prompt() -> str:
+    return _PROMPT_PATH.read_text(encoding="utf-8")
 
 
 class AgentState(TypedDict):
@@ -42,7 +30,7 @@ def create_agent(ctx: SceneContext, model: str = "llama3"):
     tool_node = ToolNode(tools)
 
     def chat_node(state: AgentState) -> AgentState:
-        messages = [SystemMessage(content=_SYSTEM_PROMPT)] + state["messages"]
+        messages = [SystemMessage(content=_load_system_prompt())] + state["messages"]
         return {"messages": [llm_with_tools.invoke(messages)]}
 
     graph = StateGraph(AgentState)

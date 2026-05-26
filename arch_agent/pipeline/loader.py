@@ -1,15 +1,18 @@
 import pandas as pd
 
-CLASS_NAMES = [
-    "arch", "column", "moldings", "floor", "door_window",
-    "wall", "stairs", "vault", "roof", "other",
-]
-LABEL_MAP = {float(i): CLASS_NAMES[i] for i in range(len(CLASS_NAMES))}
+from ..settings import get_config
+
+
+def _build_label_map() -> dict[float, str]:
+    names = get_config()["semantic_classes"]["names"]
+    return {float(i): name for i, name in enumerate(names)}
 
 
 def load_semantic_point_cloud(file_path: str, sample_n: int = 150_000) -> pd.DataFrame:
+    label_map = _build_label_map()
+
     df = pd.read_csv(file_path, sep=";", decimal=".")
-    df["semantic_label"] = df["semantic_label"].map(LABEL_MAP)
+    df["semantic_label"] = df["semantic_label"].map(label_map)
 
     n_before = len(df)
     df = df.dropna(subset=["semantic_label"])
