@@ -1,8 +1,38 @@
 import networkx as nx
 
+GRAPH_LEVELS = {
+    "L1": "geometric",
+    "L2": "structural",
+    "L3": "mereological",
+}
 
-def build_scene_graph(objects: dict, relationships: list, features: dict) -> nx.DiGraph:
+
+def build_scene_graphs(
+    objects: dict,
+    stratified_relationships: dict,
+    features: dict,
+) -> dict[str, nx.DiGraph]:
+    return {
+        level_name: build_scene_graph(
+            objects,
+            relationships,
+            features,
+            graph_level=GRAPH_LEVELS[level_name],
+        )
+        for level_name, relationships in stratified_relationships.items()
+        if level_name in GRAPH_LEVELS
+    }
+
+
+def build_scene_graph(
+    objects: dict,
+    relationships: list,
+    features: dict,
+    graph_level: str | None = None,
+) -> nx.DiGraph:
     G = nx.DiGraph()
+    if graph_level is not None:
+        G.graph["level"] = graph_level
 
     for obj_name, obj_data in objects.items():
         node_attrs = features.get(obj_name, {}).copy()
@@ -17,9 +47,20 @@ def build_scene_graph(objects: dict, relationships: list, features: dict) -> nx.
         )
 
     for src, tgt, rel in relationships:
-        G.add_edge(src, tgt, relationship=rel)
+        add_relation(G, src, tgt, rel)
 
     return G
+
+
+def add_relation(G: nx.DiGraph, src: str, tgt: str, relationship: str) -> None:
+    if G.has_edge(src, tgt):
+        existing = G[src][tgt].setdefault("relationships", [])
+        if relationship not in existing:
+            existing.append(relationship)
+    else:
+        G.add_edge(src, tgt, relationships=[relationship])
+
+    G[src][tgt]["relationship"] = ", ".join(G[src][tgt]["relationships"])
 
 
 def analyze_scene_graph(G: nx.DiGraph) -> dict:
@@ -43,7 +84,8 @@ def analyze_scene_graph(G: nx.DiGraph) -> dict:
         analysis["element_type_distribution"][etype] = analysis["element_type_distribution"].get(etype, 0) + 1
 
     for _, _, data in G.edges(data=True):
-        rel = data.get("relationship", "unknown")
-        analysis["relationship_types"][rel] = analysis["relationship_types"].get(rel, 0) + 1
+        relationships = data.get("relationships", [data.get("relationship", "unknown")])
+        for rel in relationships:
+            analysis["relationship_types"][rel] = analysis["relationship_types"].get(rel, 0) + 1
 
     return analysis
