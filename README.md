@@ -21,11 +21,11 @@ CSV point cloud
 |      - L1 geometric                                   |
 |      - L2 structural                                  |
 |     - L3 mereological                                 │
-│  5. Scene graph (NetworkX DiGraph)
-│      - geometric graph
-   - structural graph
-   - mereological graph
-└─────────────────────────────────────────────┘
+│  5. Scene graph (NetworkX DiGraph)                    │
+│      - geometric graph                                │
+|      - structural graph                               │
+|      - mereological graph                             │
+└───────────────────────────────────────────────────────┘
 
       │
       ▼
