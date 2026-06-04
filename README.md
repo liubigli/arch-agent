@@ -95,6 +95,26 @@ Each detected object stores the segmentation method used:
 "segmentation_method": "dbscan" | "kmeans_elbow"
 
 
+```md
+## Stratified relationship model
+
+The scene is represented through three relationship levels. Each level is stored as a separate `networkx.DiGraph`, avoiding duplicated edges inside a graph while preserving multiple interpretations of the same object pair across levels.
+
+| Level | Graph | Relations | Meaning |
+|---|---|---|---|
+| L1 | geometric | `near`, `adjacent_to`, `above`, `below` | spatial position and proximity |
+| L2 | structural | `supports`, `rests_on` | vertical support and load-bearing interpretation |
+| L3 | mereological | `part_of`, `has_part`, `is_opening_in`, `is_rib_of`, `is_ornament_of`, `is_attached_to`, `is_placed_on`, `is_connected_to` | architectural composition and functional membership |
+
+The three graphs are available in the scene context:
+
+```python
+ctx.scene_graphs["L1"]  # geometric graph
+ctx.scene_graphs["L2"]  # structural graph
+ctx.scene_graphs["L3"]  # mereological graph
+
+
+
 
 ## Requirements
 
@@ -179,10 +199,10 @@ arch_agent/
 ├── settings.py            # YAML config loader (lru_cache)
 ├── pipeline/
 │   ├── loader.py          # CSV → DataFrame
-│   ├── segmentation.py    # DBSCAN object extraction
+│   ├── segmentation.py    # hybrid DBSCAN / K-Means+Elbow object extraction
 │   ├── features.py        # geometric feature computation
-│   ├── relationships.py   # spatial relationship detection
-│   ├── graph.py           # NetworkX scene graph builder
+│   ├── relationships.py   # spatial relationship detection L1/L2/L3
+│   ├── graph.py           # NetworkX DiGraph builders
 │   └── pipeline.py        # PipelineParams, SceneContext, run_pipeline()
 ├── tools/
 │   └── scene_tools.py     # LangChain tools wrapping the scene graph
