@@ -2,7 +2,7 @@
 
 An LLM-powered agent for interactive analysis of 3D architectural point clouds.
 
-Given a semantically labelled point cloud (CSV), the system builds a **scene graph** of the architectural space and launches a conversational agent that lets you explore it in natural language.
+Given a semantically labelled point cloud (CSV), the system builds a **three stratified scene graphs** of the architectural space and launches a conversational agent that lets you explore it in natural language.
 
 ## How it works
 
@@ -10,14 +10,23 @@ Given a semantically labelled point cloud (CSV), the system builds a **scene gra
 CSV point cloud
       │
       ▼
-┌─────────────────────────────────────────────┐
-│               Pipeline                      │
-│  1. Load & sample points                    │
-│  2. DBSCAN clustering → individual objects  │
-│  3. Geometric features (volume, area, …)    │
-│  4. Spatial relationships between objects   │
-│  5. Scene graph (NetworkX DiGraph)          │
+┌───────────────────────────────────────────────────────┐
+│               Pipeline                                │
+│  1. Load & sample points                              │
+│  2. Hybrid segmentation -> individual objects         |
+|   - DBSCAN for irregular/continuous classes           |
+|   - K-Means + Elbow for discrete repeatable classes   │
+│  3. Geometric features (volume, area, …)              │
+│  4. Spatial relationships between objects             │
+|      - L1 geometric                                   |
+|      - L2 structural                                  |
+|     - L3 mereological                                 │
+│  5. Scene graph (NetworkX DiGraph)
+│      - geometric graph
+   - structural graph
+   - mereological graph
 └─────────────────────────────────────────────┘
+
       │
       ▼
 ┌─────────────────────────────────────────────┐
@@ -59,6 +68,33 @@ Supported semantic labels (integer-encoded):
 | 7  | vault       | structural |
 | 8  | roof        | structural |
 | 9  | other       | finishing  |
+
+
+## Object segmentation
+
+The pipeline uses a hybrid segmentation strategy depending on the semantic class.
+
+| Semantic class | Method | Reason |
+|---|---|---|
+| `column` | K-Means + Elbow | discrete, repeatable architectural instances |
+| `arch` | K-Means + Elbow | discrete, repeatable architectural instances |
+| `door_window` | K-Means + Elbow | discrete openings with predictable instances |
+| `wall` | DBSCAN | continuous or irregular geometry |
+| `floor` | DBSCAN | continuous surface |
+| `vault` | DBSCAN | irregular/continuous curved geometry |
+| `roof` | DBSCAN | irregular/continuous geometry |
+| `stairs` | DBSCAN | variable topology |
+| `moldings` | DBSCAN | often continuous decorative geometry |
+| `other` | DBSCAN | unknown or mixed topology |
+
+DBSCAN is still the default method. K-Means + Elbow is used only for classes where the number of repeated instances can be estimated from the point distribution.
+
+Each detected object stores the segmentation method used:
+
+```python
+"segmentation_method": "dbscan" | "kmeans_elbow"
+
+
 
 ## Requirements
 
