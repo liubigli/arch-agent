@@ -40,6 +40,22 @@ def _overlap_xy_ratio(b1: dict, b2: dict) -> float:
     return float(overlap_area / reference_area)
 
 
+def _axis_gap(min1: float, max1: float, min2: float, max2: float) -> float:
+    if max1 < min2:
+        return float(min2 - max1)
+    if max2 < min1:
+        return float(min1 - max2)
+    return 0.0
+
+
+def _bounds_gap(b1: dict, b2: dict) -> float:
+    gaps = [
+        _axis_gap(float(b1["min"][axis]), float(b1["max"][axis]), float(b2["min"][axis]), float(b2["max"][axis]))
+        for axis in range(3)
+    ]
+    return float(np.linalg.norm(gaps))
+
+
 def _rests_on(upper: dict, lower: dict) -> bool:
     if lower.get("semantic_label") not in SUPPORTING_LABELS:
         return False
@@ -105,6 +121,33 @@ def compute_all_relations(
     return _deduplicate(geometric + structural + mereological)
 
 
+def compute_all_relations_stratified(
+    objects: dict,
+    distance_threshold: float | None = None,
+    surface_contact_thresh: float = 0.10,
+) -> dict[str, list[Relationship]]:
+    threshold = distance_threshold or auto_threshold(objects)
+
+    geometric = compute_spatial_relationships(objects, threshold)
+    structural = compute_structural_relations(objects)
+    mereological = compute_mereological_relations(
+        objects,
+        surface_contact_thresh=surface_contact_thresh,
+    )
+    all_relationships = _deduplicate(geometric + structural + mereological)
+
+    print(f"L1 geometric    : {len(geometric):>4} relationships")
+    print(f"L2 structural   : {len(structural):>4} relationships")
+    print(f"L3 mereological : {len(mereological):>4} relationships")
+
+    return {
+        "L1": geometric,
+        "L2": structural,
+        "L3": mereological,
+        "all": all_relationships,
+    }
+
+
 def compute_spatial_relationships(
     objects: dict,
     distance_threshold: float = 3.0,
@@ -125,6 +168,39 @@ def compute_spatial_relationships(
             )
 
     return _deduplicate(relationships)
+
+
+def _determine_geometric_relationships(
+    name1: str,
+    obj1: dict,
+    name2: str,
+    obj2: dict,
+    distance_threshold: float,
+) -> list[Relationship]:
+    relationships: list[Relationship] = []
+    c1 = np.asarray(obj1["centroid"], dtype=float)
+    c2 = np.asarray(obj2["centroid"], dtype=float)
+    centroid_distance = float(np.linalg.norm(c1 - c2))
+    xy_overlap = _overlap_xy_ratio(obj1["bounds"], obj2["bounds"])
+    z_delta = float(c1[2] - c2[2])
+
+    if centroid_distance <= distance_threshold:
+        relationships.append((name1, name2, "near", GEOMETRIC_LEVEL))
+        relationships.append((name2, name1, "near", GEOMETRIC_LEVEL))
+
+    if abs(z_delta) >= 0.20 and xy_overlap >= 0.05:
+        if z_delta > 0:
+            relationships.append((name1, name2, "above", GEOMETRIC_LEVEL))
+            relationships.append((name2, name1, "below", GEOMETRIC_LEVEL))
+        else:
+            relationships.append((name2, name1, "above", GEOMETRIC_LEVEL))
+            relationships.append((name1, name2, "below", GEOMETRIC_LEVEL))
+
+    if _bounds_gap(obj1["bounds"], obj2["bounds"]) <= min(distance_threshold * 0.25, 0.75):
+        relationships.append((name1, name2, "adjacent_to", GEOMETRIC_LEVEL))
+        relationships.append((name2, name1, "adjacent_to", GEOMETRIC_LEVEL))
+
+    return relationships
 
 def compute_structural_relations(objects: dict) -> list[Relationship]:
     relationships: list[Relationship] = []
@@ -159,3 +235,55 @@ def compute_structural_relations(objects: dict) -> list[Relationship]:
                 ])
 
     return _deduplicate(relationships)
+
+
+def compute_mereological_relations(
+    objects: dict,
+    surface_contact_thresh: float = 0.10,
+) -> list[Relationship]:
+    relationships: list[Relationship] = []
+    names = list(objects.keys())
+
+    for child_name in names:
+        child = objects[child_name]
+        child_label = child["semantic_label"]
+        parent_labels = MEREOLOGICAL_RULES.get(child_label, [])
+        if not parent_labels:
+            continue
+
+        for parent_name in names:
+            if parent_name == child_name:
+                continue
+
+            parent = objects[parent_name]
+            if parent["semantic_label"] not in parent_labels:
+                continue
+
+            contact_like = (
+                _overlap_xy_ratio(child["bounds"], parent["bounds"]) >= surface_contact_thresh
+                or _bounds_gap(child["bounds"], parent["bounds"]) <= 0.35
+            )
+            if not contact_like:
+                continue
+
+            rel = _mereological_relation(child_label, parent["semantic_label"])
+            relationships.append((child_name, parent_name, rel, MEREOLOGICAL_LEVEL))
+            relationships.append((parent_name, child_name, "has_part", MEREOLOGICAL_LEVEL))
+
+    return _deduplicate(relationships)
+
+
+def _mereological_relation(child_label: str, parent_label: str) -> str:
+    if child_label == "door_window" and parent_label == "wall":
+        return "is_opening_in"
+    if child_label == "moldings":
+        return "is_ornament_of"
+    if child_label == "arch" and parent_label == "vault":
+        return "is_rib_of"
+    if child_label == "stairs" and parent_label == "floor":
+        return "is_placed_on"
+    if child_label == "stairs" and parent_label == "wall":
+        return "is_connected_to"
+    if child_label == "other":
+        return "part_of"
+    return "is_attached_to"

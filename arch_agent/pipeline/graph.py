@@ -24,6 +24,14 @@ def build_scene_graph(objects: dict, relationships: list, features: dict) -> nx.
     return G
 
 
+def build_scene_graphs(objects: dict, relationship_layers: dict, features: dict) -> dict[str, nx.DiGraph]:
+    return {
+        level: build_scene_graph(objects, relationships, features)
+        for level, relationships in relationship_layers.items()
+        if level != "all"
+    }
+
+
 def _add_relation(G: nx.DiGraph, src: str, tgt: str, relationship: str, level: str) -> None:
     item = {"type": relationship, "level": level}
 
