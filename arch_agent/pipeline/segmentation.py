@@ -1,25 +1,6 @@
 import numpy as np
 import pandas as pd
-from sklearn.cluster import DBSCAN, KMeans
-
-SEGMENTATION_METHODS = {
-    "column": "kmeans_elbow",
-    "arch": "kmeans_elbow",
-    "door_window": "kmeans_elbow",
-    "wall": "dbscan",
-    "floor": "dbscan",
-    "vault": "dbscan",
-    "roof": "dbscan",
-    "stairs": "dbscan",
-    "moldings": "dbscan",
-    "other": "dbscan",
-}
-
-KMEANS_MAX_K = {
-    "column": 20,
-    "arch": 20,
-    "door_window": 30,
-}
+from sklearn.cluster import DBSCAN
 
 
 def extract_semantic_objects(
@@ -35,20 +16,11 @@ def extract_semantic_objects(
             continue
 
         coords = label_points[["x", "y", "z"]].values
-        method = SEGMENTATION_METHODS.get(label, "dbscan")
-
-        if method == "kmeans_elbow" and len(coords) >= min_samples * 2:
-            cluster_labels = _cluster_kmeans_elbow(
-                coords,
-                max_k=KMEANS_MAX_K.get(label, 12),
-                min_cluster_size=min_samples,
-            )
-        else:
-            cluster_labels = _cluster_dbscan(
-                coords,
-                eps=eps,
-                min_samples=min_samples,
-            )
+        cluster_labels = _cluster_dbscan(
+            coords,
+            eps=eps,
+            min_samples=min_samples,
+        )
 
         label_points_copy = label_points.copy()
         label_points_copy["cluster"] = cluster_labels
@@ -71,7 +43,7 @@ def extract_semantic_objects(
                 },
                 "semantic_label": label,
                 "point_count": len(cluster_pts),
-                "segmentation_method": method,
+                "segmentation_method": "dbscan",
             }
 
     return objects
@@ -83,17 +55,3 @@ def _cluster_dbscan(
     min_samples: int,
 ) -> np.ndarray:
     return DBSCAN(eps=eps, min_samples=min_samples).fit_predict(coords)
-
-
-def _cluster_kmeans_elbow(
-    coords: np.ndarray,
-    max_k: int = 12,
-    min_cluster_size: int = 15,
-) -> np.ndarray:
-    n_points = len(coords)
-    if n_points < min_cluster_size * 2:
-        return np.zeros(n_points, dtype=int)
-
-    k_max = min(max_k, max(1, n_points // min_cluster_size))
-    if k_max <= 1:
-        return np.zeros(n_points, dtype=int)

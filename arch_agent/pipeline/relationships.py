@@ -126,7 +126,6 @@ def compute_spatial_relationships(
 
     return _deduplicate(relationships)
 
-
 def compute_structural_relations(objects: dict) -> list[Relationship]:
     relationships: list[Relationship] = []
     names = list(objects.keys())

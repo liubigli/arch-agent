@@ -13,9 +13,8 @@ CSV point cloud
 ┌───────────────────────────────────────────────────────┐
 │               Pipeline                                │
 │  1. Load & sample points                              │
-│  2. Hybrid segmentation -> individual objects         |
-|   - DBSCAN for irregular/continuous classes           |
-|   - K-Means + Elbow for discrete repeatable classes   │
+│  2. DBSCAN segmentation -> individual objects         |
+|   - DBSCAN for all semantic classes                   |
 │  3. Geometric features (volume, area, …)              │
 │  4. Spatial relationships between objects             │
 |      - L1 geometric                                   |
@@ -72,13 +71,13 @@ Supported semantic labels (integer-encoded):
 
 ## Object segmentation
 
-The pipeline uses a hybrid segmentation strategy depending on the semantic class.
+The pipeline uses DBSCAN segmentation for all semantic classes.
 
 | Semantic class | Method | Reason |
 |---|---|---|
-| `column` | K-Means + Elbow | discrete, repeatable architectural instances |
-| `arch` | K-Means + Elbow | discrete, repeatable architectural instances |
-| `door_window` | K-Means + Elbow | discrete openings with predictable instances |
+| `column` | DBSCAN | density-based object extraction |
+| `arch` | DBSCAN | density-based object extraction |
+| `door_window` | DBSCAN | density-based object extraction |
 | `wall` | DBSCAN | continuous or irregular geometry |
 | `floor` | DBSCAN | continuous surface |
 | `vault` | DBSCAN | irregular/continuous curved geometry |
@@ -87,12 +86,10 @@ The pipeline uses a hybrid segmentation strategy depending on the semantic class
 | `moldings` | DBSCAN | often continuous decorative geometry |
 | `other` | DBSCAN | unknown or mixed topology |
 
-DBSCAN is still the default method. K-Means + Elbow is used only for classes where the number of repeated instances can be estimated from the point distribution.
-
 Each detected object stores the segmentation method used:
 
 ```python
-"segmentation_method": "dbscan" | "kmeans_elbow"
+"segmentation_method": "dbscan"
 
 
 ```md
@@ -199,7 +196,7 @@ arch_agent/
 ├── settings.py            # YAML config loader (lru_cache)
 ├── pipeline/
 │   ├── loader.py          # CSV → DataFrame
-│   ├── segmentation.py    # hybrid DBSCAN / K-Means+Elbow object extraction
+│   ├── segmentation.py    # DBSCAN object extraction
 │   ├── features.py        # geometric feature computation
 │   ├── relationships.py   # spatial relationship detection L1/L2/L3
 │   ├── graph.py           # NetworkX DiGraph builders
