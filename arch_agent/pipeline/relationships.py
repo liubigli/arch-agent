@@ -1,7 +1,10 @@
 import numpy as np
 
-Relationship = tuple[str, str, str]
-StratifiedRelationships = dict[str, list[Relationship]]
+Relationship = tuple[str, str, str, str]
+
+GEOMETRIC_LEVEL = "geometric"
+STRUCTURAL_LEVEL = "structural"
+MEREOLOGICAL_LEVEL = "mereological"
 
 MEREOLOGICAL_RULES = {
     "door_window": ["wall"],
@@ -38,39 +41,25 @@ def auto_threshold(objects: dict, scale: float = 2.5, fallback: float = 3.0) -> 
     return max(float(np.median(distances) / scale), 0.5)
 
 
-def compute_all_relations_stratified(
+def compute_all_relations(
     objects: dict,
     distance_threshold: float | None = None,
     surface_contact_thresh: float = 0.10,
-) -> StratifiedRelationships:
+) -> list[Relationship]:
     threshold = distance_threshold or auto_threshold(objects)
 
-    L1 = compute_spatial_relationships(objects, threshold)
-    L2 = compute_structural_relations(objects)
-    L3 = compute_mereological_relations(
+    geometric = compute_spatial_relationships(objects, threshold)
+    structural = compute_structural_relations(objects)
+    mereological = compute_mereological_relations(
         objects,
         surface_contact_thresh=surface_contact_thresh,
     )
 
-    print(
-        f"L1 geometric    : {len(L1):>4} relationships "
-        f"(adjacent_to, above, near, below)"
-    )
-    print(
-        f"L2 structural   : {len(L2):>4} relationships "
-        f"(supports, rests_on)"
-    )
-    print(
-        f"L3 mereological : {len(L3):>4} relationships "
-        f"(part_of, has_part, is_opening_in, is_attached_to, ...)"
-    )
+    print(f"L1 geometric    : {len(geometric):>4} relationships")
+    print(f"L2 structural   : {len(structural):>4} relationships")
+    print(f"L3 mereological : {len(mereological):>4} relationships")
 
-    return {
-        "L1": L1,
-        "L2": L2,
-        "L3": L3,
-        "all": L1 + L2 + L3,
-    }
+    return _deduplicate(geometric + structural + mereological)
 
 
 def compute_spatial_relationships(
@@ -98,3 +87,14 @@ def compute_spatial_relationships(
 def compute_structural_relations(objects: dict) -> list[Relationship]:
     relationships: list[Relationship] = []
     names = list(objects.keys())
+
+    for i, obj1 in enumerate(names):
+        for obj2 in names[i + 1:]:
+            if _rests_on(objects[obj1], objects[obj2]):
+                relationships.extend([
+                    (obj2, obj1, "supports", STRUCTURAL_LEVEL),
+                    (obj1, obj2, "rests_on", STRUCTURAL_LEVEL),
+                ])
+            if _rests_on(objects[obj2], objects[obj1]):
+                relationships.extend([
+                    (obj1, obj2, "supports", STRUCTURAL_LEVEL),

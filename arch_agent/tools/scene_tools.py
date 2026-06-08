@@ -28,29 +28,6 @@ def _classify_area(label_set: set) -> str:
     return "general_area"
 
 
-def _iter_graph_edges(ctx: SceneContext):
-    for level, G in ctx.scene_graphs.items():
-        for u, v, data in G.edges(data=True):
-            for rel in data.get("relationships", [data.get("relationship", "")]):
-                yield level, G, u, v, rel
-
-
-def _format_graph_level(level: str) -> str:
-    return {
-        "L1": "geometric",
-        "L2": "structural",
-        "L3": "mereological",
-    }.get(level, level)
-
-
-def _relationship_matches(rel: str, relationship: str) -> bool:
-    aliases = {
-        "adjacent": {"adjacent", "adjacent_to"},
-        "adjacent_to": {"adjacent", "adjacent_to"},
-    }
-    return rel == relationship or rel in aliases.get(relationship, set())
-
-
 def create_scene_tools(ctx: SceneContext) -> list:
 
     @tool
@@ -98,3 +75,26 @@ def create_scene_tools(ctx: SceneContext) -> list:
             f"  Height          : {feat.get('height', 0):.2f} m",
             f"  Compactness     : {feat.get('compactness', 0):.4f}",
         ])
+
+    @tool
+    def find_relationships(object_name: str) -> str:
+        """Find all spatial relationships involving a given object.
+
+        Args:
+            object_name: Name of the object to query.
+        """
+        G = ctx.scene_graph
+        if object_name not in G:
+            return f"Object '{object_name}' not found in the scene graph."
+
+        out_edges = list(G.out_edges(object_name, data=True))
+        in_edges = list(G.in_edges(object_name, data=True))
+        lines = [f"Relationships for '{object_name}':"]
+
+        if out_edges:
+            lines.append("  As source:")
+            for _, tgt, d in out_edges:
+                for rel in d.get("relations", []):
+                    lines.append(f"    {object_name} --[{rel['level']}:{rel['type']}]--> {tgt}")
+        if in_edges:
+            lines.append("  As target:")

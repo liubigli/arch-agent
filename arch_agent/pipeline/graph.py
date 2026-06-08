@@ -1,38 +1,8 @@
 import networkx as nx
 
-GRAPH_LEVELS = {
-    "L1": "geometric",
-    "L2": "structural",
-    "L3": "mereological",
-}
 
-
-def build_scene_graphs(
-    objects: dict,
-    stratified_relationships: dict,
-    features: dict,
-) -> dict[str, nx.DiGraph]:
-    return {
-        level_name: build_scene_graph(
-            objects,
-            relationships,
-            features,
-            graph_level=GRAPH_LEVELS[level_name],
-        )
-        for level_name, relationships in stratified_relationships.items()
-        if level_name in GRAPH_LEVELS
-    }
-
-
-def build_scene_graph(
-    objects: dict,
-    relationships: list,
-    features: dict,
-    graph_level: str | None = None,
-) -> nx.DiGraph:
+def build_scene_graph(objects: dict, relationships: list, features: dict) -> nx.DiGraph:
     G = nx.DiGraph()
-    if graph_level is not None:
-        G.graph["level"] = graph_level
 
     for obj_name, obj_data in objects.items():
         node_attrs = features.get(obj_name, {}).copy()
@@ -46,20 +16,27 @@ def build_scene_graph(
             **node_attrs,
         )
 
-    for src, tgt, rel in relationships:
-        add_relation(G, src, tgt, rel)
+    for relationship in relationships:
+        src, tgt, rel = relationship[:3]
+        level = relationship[3] if len(relationship) > 3 else "geometric"
+        _add_relation(G, src, tgt, rel, level)
 
     return G
 
 
-def add_relation(G: nx.DiGraph, src: str, tgt: str, relationship: str) -> None:
-    if G.has_edge(src, tgt):
-        existing = G[src][tgt].setdefault("relationships", [])
-        if relationship not in existing:
-            existing.append(relationship)
-    else:
-        G.add_edge(src, tgt, relationships=[relationship])
+def _add_relation(G: nx.DiGraph, src: str, tgt: str, relationship: str, level: str) -> None:
+    item = {"type": relationship, "level": level}
 
+    if G.has_edge(src, tgt):
+        relations = G[src][tgt].setdefault("relations", [])
+        if item not in relations:
+            relations.append(item)
+    else:
+        G.add_edge(src, tgt, relations=[item])
+
+    relations = G[src][tgt]["relations"]
+    G[src][tgt]["relationships"] = [rel["type"] for rel in relations]
+    G[src][tgt]["relationship_levels"] = [rel["level"] for rel in relations]
     G[src][tgt]["relationship"] = ", ".join(G[src][tgt]["relationships"])
 
 
@@ -75,6 +52,7 @@ def analyze_scene_graph(G: nx.DiGraph) -> dict:
         "semantic_distribution": {},
         "element_type_distribution": {},
         "relationship_types": {},
+        "relationship_levels": {},
     }
 
     for _, data in G.nodes(data=True):
@@ -84,8 +62,10 @@ def analyze_scene_graph(G: nx.DiGraph) -> dict:
         analysis["element_type_distribution"][etype] = analysis["element_type_distribution"].get(etype, 0) + 1
 
     for _, _, data in G.edges(data=True):
-        relationships = data.get("relationships", [data.get("relationship", "unknown")])
-        for rel in relationships:
-            analysis["relationship_types"][rel] = analysis["relationship_types"].get(rel, 0) + 1
+        for rel in data.get("relations", []):
+            rel_type = rel.get("type", "unknown")
+            rel_level = rel.get("level", "unknown")
+            analysis["relationship_types"][rel_type] = analysis["relationship_types"].get(rel_type, 0) + 1
+            analysis["relationship_levels"][rel_level] = analysis["relationship_levels"].get(rel_level, 0) + 1
 
     return analysis
