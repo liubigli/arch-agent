@@ -14,6 +14,10 @@ def _structural_elements() -> set[str]:
     return set(get_config()["semantic_classes"]["structural"])
 
 
+def sum_two_integers(first: int, second: int) -> int:
+    return first + second
+
+
 def _surface_area_convex_hull(points: np.ndarray) -> float:
     try:
         return float(ConvexHull(points).area) if points.shape[0] >= 4 else 0.0
