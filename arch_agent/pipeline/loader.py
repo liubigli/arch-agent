@@ -1,4 +1,7 @@
+from pathlib import Path
+
 import pandas as pd
+import laspy
 
 from ..settings import get_config
 
@@ -47,10 +50,52 @@ def _voxel_sample_by_class(
     return sampled
 
 
+def _load_laz_file(file_path: Path) -> pd.DataFrame:
+    las = laspy.read(file_path)
+    dimensions = set(las.point_format.dimension_names)
+
+    if "semantic_label" in dimensions:
+        raw_labels = las["semantic_label"]
+    elif "classification" in dimensions:
+        raw_labels = las.classification
+    else:
+        raise ValueError(
+            "LAZ file must contain a 'semantic_label' extra dimension or "
+            "the standard 'classification' dimension."
+        )
+
+    df = pd.DataFrame(
+        {
+            "x": las.x,
+            "y": las.y,
+            "z": las.z,
+            "semantic_label": raw_labels,
+        }
+    )
+
+    if {"red", "green", "blue"} <= dimensions:
+        df["R"] = las.red
+        df["G"] = las.green
+        df["B"] = las.blue
+
+    normal_aliases = {
+        "nx": ("nx", "normal_x"),
+        "ny": ("ny", "normal_y"),
+        "nz": ("nz", "normal_z"),
+    }
+    for out_col, candidates in normal_aliases.items():
+        for dim_name in candidates:
+            if dim_name in dimensions:
+                df[out_col] = las[dim_name]
+                break
+
+    return df
+
+
 def load_semantic_point_cloud(file_path: str, sample_n: int = 150_000) -> pd.DataFrame:
     label_map = _build_label_map()
 
-    df = pd.read_csv(file_path, sep=";", decimal=".")
+    df = _load_laz_file(Path(file_path))
     df["semantic_label"] = df["semantic_label"].map(label_map)
 
     n_before = len(df)

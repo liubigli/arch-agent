@@ -12,7 +12,7 @@ from .graph import build_scene_graphs
 
 @dataclass
 class PipelineParams:
-    csv_path: str
+    point_cloud_path: str
     sample_n: int = 150_000
     eps: float = 0.5
     min_samples: int = 15
@@ -33,8 +33,8 @@ class SceneContext:
 
 
 def run_pipeline(params: PipelineParams) -> SceneContext:
-    print(f"\n[1/5] Loading point cloud: {params.csv_path}")
-    df = load_semantic_point_cloud(params.csv_path, sample_n=params.sample_n)
+    print(f"\n[1/5] Loading point cloud: {params.point_cloud_path}")
+    df = load_semantic_point_cloud(params.point_cloud_path, sample_n=params.sample_n)
 
     print(f"[2/5] Segmenting objects  (eps={params.eps}, min_samples={params.min_samples})")
     objects = extract_semantic_objects(df, eps=params.eps, min_samples=params.min_samples)

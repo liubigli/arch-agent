@@ -49,7 +49,7 @@ def run_agent(ctx: SceneContext, model: str = "llama3") -> None:
     print("=" * 60)
     print("  Architectural Scene Agent  |  model: " + model)
     print("=" * 60)
-    print(f"  Scene : {ctx.params.csv_path}")
+    print(f"  Scene : {ctx.params.point_cloud_path}")
     print(f"  Objects: {len(ctx.objects)}  |  Relationships: {len(ctx.relationships)}")
     print("  Type 'quit' to exit.\n")
 

@@ -2,12 +2,12 @@
 
 An LLM-powered agent for interactive analysis of 3D architectural point clouds.
 
-Given a semantically labelled point cloud (CSV), the system builds a **three stratified scene graphs** of the architectural space and launches a conversational agent that lets you explore it in natural language.
+Given a semantically labelled point cloud (LAZ), the system builds a **three stratified scene graphs** of the architectural space and launches a conversational agent that lets you explore it in natural language.
 
 ## How it works
 
 ```
-CSV point cloud
+LAZ point cloud
       │
       ▼
 ┌───────────────────────────────────────────────────────┐
@@ -47,10 +47,11 @@ CSV point cloud
 
 ## Input format
 
-The input CSV must use `;` as delimiter with the following columns:
+The input can be a LAZ file or a directory containing `.laz` files. When a directory is provided, the CLI lists the available `.laz` files and asks which one to load. The selected file must contain semantic labels in either a `semantic_label` extra dimension or the standard `classification` dimension. Optional RGB channels and normals are preserved when available.
 
 ```
-x;y;z;R;G;B;nx;ny;nz;semantic_label
+semantic_label or classification
+optional: red;green;blue;nx;ny;nz
 ```
 
 Supported semantic labels (integer-encoded):
@@ -132,17 +133,20 @@ pixi install
 ## Usage
 
 ```bash
-# Basic usage with default parameters
-python main.py path/to/scene.csv
+# Basic usage with default directory and interactive file selection
+python main.py
 
 # Tune DBSCAN clustering (smaller eps = tighter clusters)
-python main.py path/to/scene.csv --eps 0.3 --min-samples 10
+python main.py --eps 0.3 --min-samples 10
 
 # Extend the spatial relationship radius and use a different model
-python main.py path/to/scene.csv --distance-threshold 5.0 --model llama3.1
+python main.py --distance-threshold 5.0 --model llama3.1
 
 # Use Poisson reconstruction for more accurate surface area estimates
-python main.py path/to/scene.csv --use-normals
+python main.py --use-normals
+
+# Use another LAZ file or directory
+python main.py path/to/scene.laz
 ```
 
 ### All options
@@ -195,7 +199,7 @@ prompts/
 arch_agent/
 ├── settings.py            # YAML config loader (lru_cache)
 ├── pipeline/
-│   ├── loader.py          # CSV → DataFrame
+│   ├── loader.py          # LAZ → DataFrame
 │   ├── segmentation.py    # DBSCAN object extraction
 │   ├── features.py        # geometric feature computation
 │   ├── relationships.py   # spatial relationship detection L1/L2/L3
