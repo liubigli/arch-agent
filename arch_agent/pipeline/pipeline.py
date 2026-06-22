@@ -38,7 +38,11 @@ class SceneContext:
 
 def run_pipeline(params: PipelineParams) -> SceneContext:
     print(f"\n[1/5] Loading point cloud: {params.point_cloud_path}")
-    df = load_semantic_point_cloud(params.point_cloud_path, sample_n=params.sample_n)
+    df = load_semantic_point_cloud(
+        params.point_cloud_path,
+        sample_n=params.sample_n,
+        include_normals=params.use_normals,
+    )
 
     print(f"[2/5] Segmenting objects  (eps={params.eps}, min_samples={params.min_samples})")
     objects = extract_semantic_objects(df, eps=params.eps, min_samples=params.min_samples)

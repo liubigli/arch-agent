@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import laspy
 
@@ -54,7 +55,21 @@ def _voxel_sample_by_class(
     return sampled
 
 
-def _points_to_df(points, dimensions: set[str]) -> pd.DataFrame:
+def _sample_indices(length: int, sample_ratio: float, seed: int) -> np.ndarray:
+    target = max(1, round(length * sample_ratio))
+    if target >= length:
+        return np.arange(length)
+
+    rng = np.random.default_rng(seed)
+    return np.sort(rng.choice(length, size=target, replace=False))
+
+
+def _points_to_arrays(
+    points,
+    dimensions: set[str],
+    indices: np.ndarray | None = None,
+    include_normals: bool = False,
+) -> dict[str, np.ndarray]:
     if "semantic_label" in dimensions:
         raw_labels = points["semantic_label"]
     elif "classification" in dimensions:
@@ -65,35 +80,53 @@ def _points_to_df(points, dimensions: set[str]) -> pd.DataFrame:
             "the standard 'classification' dimension."
         )
 
-    df = pd.DataFrame(
-        {
-            "x": points.x,
-            "y": points.y,
-            "z": points.z,
-            "semantic_label": raw_labels,
-        }
-    )
+    arrays = {
+        "x": np.asarray(points.x, dtype=np.float32),
+        "y": np.asarray(points.y, dtype=np.float32),
+        "z": np.asarray(points.z, dtype=np.float32),
+        "semantic_label": np.asarray(raw_labels),
+    }
 
     if {"red", "green", "blue"} <= dimensions:
-        df["R"] = points.red
-        df["G"] = points.green
-        df["B"] = points.blue
+        arrays["R"] = np.asarray(points.red)
+        arrays["G"] = np.asarray(points.green)
+        arrays["B"] = np.asarray(points.blue)
 
-    normal_aliases = {
-        "nx": ("nx", "normal_x"),
-        "ny": ("ny", "normal_y"),
-        "nz": ("nz", "normal_z"),
+    if include_normals:
+        normal_aliases = {
+            "nx": ("nx", "normal_x"),
+            "ny": ("ny", "normal_y"),
+            "nz": ("nz", "normal_z"),
+        }
+        for out_col, candidates in normal_aliases.items():
+            for dim_name in candidates:
+                if dim_name in dimensions:
+                    arrays[out_col] = np.asarray(points[dim_name], dtype=np.float32)
+                    break
+
+    if indices is not None:
+        arrays = {name: values[indices] for name, values in arrays.items()}
+
+    return arrays
+
+
+def _concat_array_parts(parts: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
+    columns = parts[0].keys()
+    return {
+        column: np.concatenate([part[column] for part in parts])
+        for column in columns
     }
-    for out_col, candidates in normal_aliases.items():
-        for dim_name in candidates:
-            if dim_name in dimensions:
-                df[out_col] = points[dim_name]
-                break
-
-    return df
 
 
-def _load_laz_file(file_path: Path, sample_n: int | None) -> pd.DataFrame:
+def _arrays_to_df(arrays: dict[str, np.ndarray]) -> pd.DataFrame:
+    return pd.DataFrame(arrays, copy=False)
+
+
+def _load_laz_file(
+    file_path: Path,
+    sample_n: int | None,
+    include_normals: bool = False,
+) -> pd.DataFrame:
     with laspy.open(file_path) as laz:
         dimensions = set(laz.header.point_format.dimension_names)
         point_count = laz.header.point_count
@@ -101,30 +134,45 @@ def _load_laz_file(file_path: Path, sample_n: int | None) -> pd.DataFrame:
         if sample_n and point_count > sample_n:
             target = min(point_count, sample_n * _STREAM_OVERSAMPLE_FACTOR)
             sample_ratio = target / point_count
-            sampled_parts = []
+            sampled_parts: list[dict[str, np.ndarray]] = []
 
             for chunk_index, points in enumerate(
                 laz.chunk_iterator(_LAZ_CHUNK_SIZE),
                 start=1,
             ):
-                chunk_df = _points_to_df(points, dimensions)
-                chunk_target = max(1, round(len(chunk_df) * sample_ratio))
-                if len(chunk_df) > chunk_target:
-                    chunk_df = chunk_df.sample(
-                        n=chunk_target,
-                        random_state=chunk_index,
+                indices = _sample_indices(len(points), sample_ratio, seed=chunk_index)
+                sampled_parts.append(
+                    _points_to_arrays(
+                        points,
+                        dimensions,
+                        indices=indices,
+                        include_normals=include_normals,
                     )
-                sampled_parts.append(chunk_df)
+                )
 
-            return pd.concat(sampled_parts, ignore_index=True)
+            return _arrays_to_df(_concat_array_parts(sampled_parts))
 
-        return _points_to_df(laz.read(), dimensions)
+        return _arrays_to_df(
+            _points_to_arrays(
+                laz.read(),
+                dimensions,
+                include_normals=include_normals,
+            )
+        )
 
 
-def load_semantic_point_cloud(file_path: str, sample_n: int = 150_000) -> pd.DataFrame:
+def load_semantic_point_cloud(
+    file_path: str,
+    sample_n: int = 150_000,
+    include_normals: bool = False,
+) -> pd.DataFrame:
     label_map = _build_label_map()
 
-    df = _load_laz_file(Path(file_path), sample_n=sample_n)
+    df = _load_laz_file(
+        Path(file_path),
+        sample_n=sample_n,
+        include_normals=include_normals,
+    )
     df["semantic_label"] = df["semantic_label"].map(label_map)
 
     n_before = len(df)
