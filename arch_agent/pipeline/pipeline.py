@@ -19,6 +19,10 @@ class PipelineParams:
     distance_threshold: float = 3.0
     use_normals: bool = False
 
+    @property
+    def csv_path(self) -> str:
+        return self.point_cloud_path
+
 
 @dataclass
 class SceneContext:

@@ -8,7 +8,7 @@ Usage:
 """
 
 import argparse
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from arch_agent.pipeline.pipeline import PipelineParams, run_pipeline
 from arch_agent.agent import run_agent
@@ -69,8 +69,23 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def select_point_cloud(path_value: str) -> str:
+def resolve_local_path(path_value: str) -> Path:
     path = Path(path_value)
+    if path.exists():
+        return path
+
+    windows_path = PureWindowsPath(path_value)
+    if windows_path.drive:
+        drive = windows_path.drive.rstrip(":").lower()
+        wsl_path = Path("/mnt") / drive / Path(*windows_path.parts[1:])
+        if wsl_path.exists():
+            return wsl_path
+
+    return path
+
+
+def select_point_cloud(path_value: str) -> str:
+    path = resolve_local_path(path_value)
     if path.is_file():
         return str(path)
     if not path.is_dir():

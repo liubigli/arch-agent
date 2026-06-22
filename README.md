@@ -136,6 +136,10 @@ pixi install
 # Basic usage with default directory and interactive file selection
 python main.py
 
+# From WSL, Windows paths are converted automatically when using the default.
+# You can also pass an explicit /mnt/c/... path.
+python main.py /mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_palette_originale/scena19_KAS_pavillion_2.laz
+
 # Tune DBSCAN clustering (smaller eps = tighter clusters)
 python main.py --eps 0.3 --min-samples 10
 
