@@ -73,3 +73,48 @@ def compute_object_features(objects: dict, use_normals: bool = False) -> dict:
         }
 
     return features
+
+
+def compute_scene_features(objects: dict) -> dict:
+    features = {}
+    room_volume = _estimate_room_volume_box(objects)
+    if room_volume:
+        features["room_volume"] = room_volume
+    return features
+
+
+def _estimate_room_volume_box(objects: dict) -> dict | None:
+    floors = [
+        (name, obj) for name, obj in objects.items()
+        if obj["semantic_label"] == "floor"
+    ]
+    envelope = [
+        obj for obj in objects.values()
+        if obj["semantic_label"] in {"wall", "column", "roof", "vault"}
+    ]
+    if not floors or not envelope:
+        return None
+
+    floor_name, floor = max(floors, key=lambda item: _xy_area(item[1]["bounds"]))
+    floor_bounds = floor["bounds"]
+    floor_dims = floor_bounds["max"][:2] - floor_bounds["min"][:2]
+    floor_area = _xy_area(floor_bounds)
+    z_min = float(floor_bounds["max"][2])
+    z_max = max(float(obj["bounds"]["max"][2]) for obj in envelope)
+    height = max(0.0, z_max - z_min)
+
+    return {
+        "method": "floor_aabb_area_x_envelope_height",
+        "floor_object": floor_name,
+        "floor_base_dimensions": [float(floor_dims[0]), float(floor_dims[1])],
+        "floor_base_area": floor_area,
+        "lower_z": z_min,
+        "upper_z": z_max,
+        "height": height,
+        "volume": floor_area * height,
+    }
+
+
+def _xy_area(bounds: dict) -> float:
+    dims = bounds["max"][:2] - bounds["min"][:2]
+    return float(max(dims[0], 0.0) * max(dims[1], 0.0))

@@ -2,7 +2,6 @@ from collections import Counter
 from typing import Optional
 
 import networkx as nx
-import numpy as np
 from langchain_core.tools import tool
 
 from ..pipeline.pipeline import SceneContext, run_pipeline
@@ -234,6 +233,14 @@ def create_scene_tools(ctx: SceneContext) -> list:
             f"finishing={finishing_count}"
         )
 
+        room_volume = ctx.scene_features.get("room_volume", {})
+        if room_volume:
+            lines.append(
+                "Room volume feature: "
+                f"{room_volume['volume']:.3f} m3 "
+                f"({room_volume['method']})"
+            )
+
         lines.append("Graphs:")
         for level, graph in graphs.items():
             analysis = analyze_scene_graph(graph)
@@ -303,33 +310,26 @@ def create_scene_tools(ctx: SceneContext) -> list:
 
     @tool
     def estimate_room_volume() -> str:
-        """Estimate room volume from floor footprint area and representative wall/column height."""
-        floors = [
-            (name, obj) for name, obj in ctx.objects.items()
-            if obj["semantic_label"] == "floor"
-        ]
-        height_candidates = [
-            ctx.features[name]["height"]
-            for name, obj in ctx.objects.items()
-            if obj["semantic_label"] in {"wall", "column"} and name in ctx.features
-        ]
-        if not floors:
-            return "Cannot estimate room volume: no floor object was detected."
-        if not height_candidates:
-            return "Cannot estimate room volume: no wall or column height is available."
-
-        floor_name, floor = max(floors, key=lambda item: _xy_area(item[1]["bounds"]))
-        floor_area = _xy_area(floor["bounds"])
-        height = float(np.median(height_candidates))
-        volume = floor_area * height
+        """Estimate room volume as a containing box: floor footprint times envelope height."""
+        room_volume = ctx.scene_features.get("room_volume", {})
+        if not room_volume:
+            return (
+                "Cannot estimate room volume: no room_volume scene feature is available. "
+                "A floor plus at least one wall, column, roof, or vault is required."
+            )
+        floor_dims = room_volume["floor_base_dimensions"]
 
         return "\n".join([
-            "Room volume estimate:",
-            f"  Floor footprint object: {floor_name}",
-            f"  Floor footprint area (AABB XY): {floor_area:.3f} m2",
-            f"  Representative height (median wall/column height): {height:.3f} m",
-            f"  Estimated volume: {volume:.3f} m3",
-            "  Method: floor footprint area multiplied by wall/column height.",
+            "Room volume estimate as containing box:",
+            f"  Floor footprint object: {room_volume['floor_object']}",
+            f"  Floor base dimensions (AABB XY): {floor_dims[0]:.3f} x {floor_dims[1]:.3f} m",
+            f"  Floor base area: {room_volume['floor_base_area']:.3f} m2",
+            f"  Lower Z: floor top = {room_volume['lower_z']:.3f} m",
+            f"  Upper Z: max wall/column/roof/vault Z = {room_volume['upper_z']:.3f} m",
+            f"  Box height: {room_volume['height']:.3f} m",
+            f"  Estimated volume: {room_volume['volume']:.3f} m3",
+            f"  Feature: scene_features['room_volume']",
+            "  Formula: floor base area multiplied by box height.",
         ])
 
     @tool
@@ -434,6 +434,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
         ctx.df = new_ctx.df
         ctx.objects = new_ctx.objects
         ctx.features = new_ctx.features
+        ctx.scene_features = new_ctx.scene_features
         ctx.relationships = new_ctx.relationships
         ctx.relationship_layers = new_ctx.relationship_layers
         ctx.scene_graph = new_ctx.scene_graph

@@ -5,7 +5,7 @@ import pandas as pd
 
 from .loader import load_semantic_point_cloud
 from .segmentation import extract_semantic_objects
-from .features import compute_object_features
+from .features import compute_object_features, compute_scene_features
 from .relationships import compute_all_relations_stratified
 from .graph import build_scene_graphs
 
@@ -30,6 +30,7 @@ class SceneContext:
     df: pd.DataFrame = field(default=None)
     objects: dict = field(default_factory=dict)
     features: dict = field(default_factory=dict)
+    scene_features: dict = field(default_factory=dict)
     relationships: list = field(default_factory=list)
     relationship_layers: dict = field(default_factory=dict)
     scene_graph: nx.DiGraph = field(default=None)
@@ -50,6 +51,7 @@ def run_pipeline(params: PipelineParams) -> SceneContext:
 
     print(f"[3/5] Computing features  (use_normals={params.use_normals})")
     features = compute_object_features(objects, use_normals=params.use_normals)
+    scene_features = compute_scene_features(objects)
 
     print(f"[4/5] Computing stratified relationships (threshold={params.distance_threshold} m)")
     relationship_layers = compute_all_relations_stratified(
@@ -73,6 +75,7 @@ def run_pipeline(params: PipelineParams) -> SceneContext:
         df=df,
         objects=objects,
         features=features,
+        scene_features=scene_features,
         relationships=relationships,
         relationship_layers=relationship_layers,
         scene_graph=scene_graph,

@@ -11,7 +11,6 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from typing_extensions import TypedDict
 
 from pathlib import Path
-import numpy as np
 
 from .pipeline.pipeline import SceneContext
 from .tools.scene_tools import create_scene_tools
@@ -86,6 +85,9 @@ def run_agent(ctx: SceneContext, model: str = "llama3") -> None:
 
 def _try_answer_deterministic(ctx: SceneContext, user_input: str) -> str | None:
     text = _normalize_text(user_input)
+    requested_facts = _format_requested_facts(ctx, text)
+    if requested_facts is not None:
+        return requested_facts
 
     if "incongruen" in text or "contraddizion" in text or "contraddittor" in text:
         return _format_relationship_inconsistencies(ctx)
@@ -123,6 +125,28 @@ def _try_answer_deterministic(ctx: SceneContext, user_input: str) -> str | None:
         return _format_scene_inventory(ctx)
 
     return None
+
+
+def _format_requested_facts(ctx: SceneContext, text: str) -> str | None:
+    sections: list[tuple[str, str]] = []
+
+    if _asks_for_scene_inventory(text):
+        sections.append(("Inventario", _format_scene_inventory(ctx)))
+    if "maggior numero di punti" in text or "piu punti" in text:
+        sections.append(("Elemento con piu punti", _format_top_object(ctx, metric="point_count")))
+    if "volume maggiore" in text or "maggior volume" in text or "piu volume" in text:
+        sections.append(("Elemento con volume maggiore", _format_top_object(ctx, metric="volume")))
+    if "piu compatto" in text or "geometricamente compatto" in text:
+        sections.append(("Elemento piu compatto", _format_top_object(ctx, metric="compactness", reverse=False)))
+    if "volume" in text and ("stanza" in text or "room" in text):
+        sections.append(("Volume stanza", _format_room_volume(ctx)))
+    if "bounding box" in text or "boundingn box" in text:
+        sections.append(("Point cloud", _format_point_cloud_info(ctx)))
+
+    if not sections:
+        return None
+
+    return "\n\n".join(f"{title}\n{body}" for title, body in sections)
 
 
 def _normalize_text(text: str) -> str:
@@ -272,30 +296,25 @@ def _format_point_cloud_info(ctx: SceneContext) -> str:
 
 
 def _format_room_volume(ctx: SceneContext) -> str:
-    floors = [
-        (name, obj) for name, obj in ctx.objects.items()
-        if obj["semantic_label"] == "floor"
-    ]
-    height_candidates = [
-        ctx.features[name]["height"]
-        for name, obj in ctx.objects.items()
-        if obj["semantic_label"] in {"wall", "column"} and name in ctx.features
-    ]
-    if not floors:
-        return "Non posso stimare il volume della stanza: non e stato rilevato un floor."
-    if not height_candidates:
-        return "Non posso stimare il volume della stanza: mancano altezze di wall o column."
-
-    floor_name, floor = max(floors, key=lambda item: _xy_area(item[1]["bounds"]))
-    floor_area = _xy_area(floor["bounds"])
-    height = float(np.median(height_candidates))
-    volume = floor_area * height
+    room_volume = ctx.scene_features.get("room_volume", {})
+    if not room_volume:
+        return (
+            "Non posso stimare il volume della stanza: la feature "
+            "scene_features['room_volume'] non e disponibile. Servono almeno "
+            "un floor e un elemento tra wall, column, roof o vault."
+        )
+    floor_dims = room_volume["floor_base_dimensions"]
     return "\n".join([
-        "Volume stimato della stanza:",
-        f"  Floor usato: {floor_name}",
-        f"  Superficie floor (AABB XY): {floor_area:.3f} m2",
-        f"  Altezza rappresentativa (mediana wall/column): {height:.3f} m",
-        f"  Volume: {volume:.3f} m3",
+        "Volume stimato della stanza come box contenitore:",
+        f"  Floor usato: {room_volume['floor_object']}",
+        f"  Dimensioni base floor (AABB XY): {floor_dims[0]:.3f} x {floor_dims[1]:.3f} m",
+        f"  Superficie base: {room_volume['floor_base_area']:.3f} m2",
+        f"  Quota inferiore: top del floor = {room_volume['lower_z']:.3f} m",
+        f"  Quota superiore: max Z di wall/column/roof/vault = {room_volume['upper_z']:.3f} m",
+        f"  Altezza box: {room_volume['height']:.3f} m",
+        f"  Volume: {room_volume['volume']:.3f} m3",
+        "  Feature: scene_features['room_volume']",
+        "  Formula: area base del floor x altezza del box.",
     ])
 
 
