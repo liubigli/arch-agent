@@ -40,6 +40,8 @@ LAZ point cloud
 │  • get_point_cloud_info                     │
 │  • get_color_summary                        │
 │  • estimate_room_volume                     │
+│  • measure_distance                         │
+│  • find_nearest_objects                     │
 │  • find_focal_points                        │
 │  • find_pattern                             │
 │  • discover_functional_areas                │

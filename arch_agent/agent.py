@@ -89,6 +89,10 @@ def _try_answer_deterministic(ctx: SceneContext, user_input: str) -> str | None:
     if requested_facts is not None:
         return requested_facts
 
+    distance_answer = _try_answer_distance(ctx, text)
+    if distance_answer is not None:
+        return distance_answer
+
     if "incongruen" in text or "contraddizion" in text or "contraddittor" in text:
         return _format_relationship_inconsistencies(ctx)
 
@@ -147,6 +151,33 @@ def _format_requested_facts(ctx: SceneContext, text: str) -> str | None:
         return None
 
     return "\n\n".join(f"{title}\n{body}" for title, body in sections)
+
+
+def _try_answer_distance(ctx: SceneContext, text: str) -> str | None:
+    distance_terms = ("distanza", "dista", "distano", "vicino", "vicini", "nearest", "closest")
+    if not any(term in text for term in distance_terms):
+        return None
+
+    object_names = _extract_object_names(text, ctx.objects)
+    if len(object_names) >= 2:
+        return _format_distance(ctx, object_names[0], object_names[1])
+
+    if len(object_names) == 1 and any(term in text for term in ("vicino", "vicini", "nearest", "closest")):
+        semantic_label = _extract_semantic_label(text)
+        if semantic_label == ctx.objects[object_names[0]]["semantic_label"]:
+            semantic_label = None
+        return _format_nearest_objects(ctx, object_names[0], semantic_label=semantic_label)
+
+    return None
+
+
+def _extract_object_names(text: str, objects: dict) -> list[str]:
+    found = []
+    for match in re.finditer(r"\b[a-z]+(?:_[a-z]+)*_\d+\b", text):
+        name = match.group(0)
+        if name in objects and name not in found:
+            found.append(name)
+    return found
 
 
 def _normalize_text(text: str) -> str:
@@ -293,6 +324,120 @@ def _format_point_cloud_info(ctx: SceneContext) -> str:
         "RGB: " + ("disponibile" if _has_rgb(ctx.df) else "non disponibile")
     )
     return "\n".join(lines)
+
+
+def _format_distance(ctx: SceneContext, object_a: str, object_b: str) -> str:
+    metrics = _distance_metrics(ctx.objects[object_a], ctx.objects[object_b])
+    return "\n".join([
+        f"Distanza tra {object_a} e {object_b}:",
+        f"  Distanza tra centroidi: {metrics['centroid_distance']:.3f} m",
+        f"  Gap tra bounding box: {metrics['bbox_gap']:.3f} m",
+        f"  Gap per asse (x,y,z): ({metrics['gap_x']:.3f}, {metrics['gap_y']:.3f}, {metrics['gap_z']:.3f}) m",
+        f"  Gap verticale: {metrics['vertical_gap']:.3f} m",
+        f"  Overlap XY: {metrics['xy_overlap_ratio']:.3f}",
+        "  Bounding box a contatto/sovrapposte: "
+        + ("si" if metrics["touching_or_overlapping"] else "no"),
+    ])
+
+
+def _format_nearest_objects(
+    ctx: SceneContext,
+    object_name: str,
+    semantic_label: str | None = None,
+    limit: int = 10,
+) -> str:
+    rows = []
+    for candidate_name, candidate in ctx.objects.items():
+        if candidate_name == object_name:
+            continue
+        if semantic_label and candidate["semantic_label"] != semantic_label:
+            continue
+        metrics = _distance_metrics(ctx.objects[object_name], candidate)
+        rows.append((candidate_name, candidate["semantic_label"], metrics))
+
+    rows.sort(key=lambda row: (row[2]["bbox_gap"], row[2]["centroid_distance"]))
+    lines = [
+        f"Oggetti piu vicini a {object_name}"
+        + (f" filtrati per classe {semantic_label}" if semantic_label else "")
+        + f": {len(rows)} candidati"
+    ]
+    for candidate_name, label, metrics in rows[:limit]:
+        lines.append(
+            f"  - {candidate_name} ({label}): "
+            f"bbox_gap={metrics['bbox_gap']:.3f} m, "
+            f"centroide={metrics['centroid_distance']:.3f} m, "
+            f"gap_verticale={metrics['vertical_gap']:.3f} m, "
+            f"overlap_xy={metrics['xy_overlap_ratio']:.3f}"
+        )
+    if not rows:
+        lines.append("  Nessun oggetto corrispondente trovato.")
+    return "\n".join(lines)
+
+
+def _distance_metrics(obj_a: dict, obj_b: dict) -> dict:
+    c_a = obj_a["centroid"]
+    c_b = obj_b["centroid"]
+    gaps = _axis_gaps(obj_a["bounds"], obj_b["bounds"])
+    bbox_gap = _norm(gaps)
+    return {
+        "centroid_distance": _norm(c_a - c_b),
+        "bbox_gap": bbox_gap,
+        "gap_x": gaps[0],
+        "gap_y": gaps[1],
+        "gap_z": gaps[2],
+        "vertical_gap": _signed_vertical_gap(obj_a["bounds"], obj_b["bounds"]),
+        "xy_overlap_ratio": _overlap_xy_ratio(obj_a["bounds"], obj_b["bounds"]),
+        "touching_or_overlapping": bbox_gap == 0.0,
+    }
+
+
+def _axis_gaps(bounds_a: dict, bounds_b: dict) -> list[float]:
+    return [
+        _axis_gap(
+            float(bounds_a["min"][axis]),
+            float(bounds_a["max"][axis]),
+            float(bounds_b["min"][axis]),
+            float(bounds_b["max"][axis]),
+        )
+        for axis in range(3)
+    ]
+
+
+def _axis_gap(min_a: float, max_a: float, min_b: float, max_b: float) -> float:
+    if max_a < min_b:
+        return float(min_b - max_a)
+    if max_b < min_a:
+        return float(min_a - max_b)
+    return 0.0
+
+
+def _signed_vertical_gap(bounds_a: dict, bounds_b: dict) -> float:
+    if bounds_a["max"][2] < bounds_b["min"][2]:
+        return float(bounds_b["min"][2] - bounds_a["max"][2])
+    if bounds_b["max"][2] < bounds_a["min"][2]:
+        return float(bounds_a["min"][2] - bounds_b["max"][2])
+    return 0.0
+
+
+def _overlap_xy_ratio(bounds_a: dict, bounds_b: dict) -> float:
+    x_overlap = max(
+        0.0,
+        min(bounds_a["max"][0], bounds_b["max"][0])
+        - max(bounds_a["min"][0], bounds_b["min"][0]),
+    )
+    y_overlap = max(
+        0.0,
+        min(bounds_a["max"][1], bounds_b["max"][1])
+        - max(bounds_a["min"][1], bounds_b["min"][1]),
+    )
+    reference_area = min(_xy_area(bounds_a), _xy_area(bounds_b))
+    if reference_area <= 0:
+        return 0.0
+    return float((x_overlap * y_overlap) / reference_area)
+
+
+def _norm(values) -> float:
+    return sum(float(value) ** 2 for value in values) ** 0.5
 
 
 def _format_room_volume(ctx: SceneContext) -> str:

@@ -34,5 +34,8 @@ Rules:
   get_object_info.
 - When the user asks for room volume, call estimate_room_volume unless they
   explicitly ask for bounding-box volume.
+- When the user asks for distance between two objects, call measure_distance.
+- When the user asks for nearest/closest objects or which objects are closer to
+  a given object, call find_nearest_objects.
 - If a tool returns no data for a requested quantity, say that the data is not
   available instead of estimating it from unrelated fields.

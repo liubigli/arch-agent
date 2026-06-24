@@ -333,6 +333,68 @@ def create_scene_tools(ctx: SceneContext) -> list:
         ])
 
     @tool
+    def measure_distance(object_a: str, object_b: str) -> str:
+        """Measure geometric distances between two detected objects.
+
+        Args:
+            object_a: First object name, e.g. 'column_0'.
+            object_b: Second object name, e.g. 'roof_0'.
+        """
+        if object_a not in ctx.objects:
+            return _object_not_found_message(object_a, ctx.objects)
+        if object_b not in ctx.objects:
+            return _object_not_found_message(object_b, ctx.objects)
+
+        metrics = _distance_metrics(ctx.objects[object_a], ctx.objects[object_b])
+        return _format_distance_metrics(object_a, object_b, metrics)
+
+    @tool
+    def find_nearest_objects(
+        object_name: str,
+        limit: int = 10,
+        semantic_label: Optional[str] = None,
+    ) -> str:
+        """Find nearest objects to a detected object by bounding-box gap.
+
+        Args:
+            object_name: Reference object name, e.g. 'roof_0'.
+            limit: Maximum number of nearest objects to return.
+            semantic_label: Optional semantic class filter, e.g. 'column'.
+        """
+        if object_name not in ctx.objects:
+            return _object_not_found_message(object_name, ctx.objects)
+
+        rows = []
+        for candidate_name, candidate in ctx.objects.items():
+            if candidate_name == object_name:
+                continue
+            if semantic_label and candidate["semantic_label"] != semantic_label:
+                continue
+            metrics = _distance_metrics(ctx.objects[object_name], candidate)
+            rows.append((candidate_name, candidate["semantic_label"], metrics))
+
+        rows.sort(key=lambda row: (row[2]["bbox_gap"], row[2]["centroid_distance"]))
+        max_rows = max(1, min(int(limit), 100))
+        lines = [
+            f"Nearest objects to {object_name}"
+            + (f" with class {semantic_label}" if semantic_label else "")
+            + f": {len(rows)} candidates"
+        ]
+        for candidate_name, label, metrics in rows[:max_rows]:
+            lines.append(
+                f"  - {candidate_name} ({label}): "
+                f"bbox_gap={metrics['bbox_gap']:.3f} m, "
+                f"centroid={metrics['centroid_distance']:.3f} m, "
+                f"vertical_gap={metrics['vertical_gap']:.3f} m, "
+                f"xy_overlap={metrics['xy_overlap_ratio']:.3f}"
+            )
+        if len(rows) > max_rows:
+            lines.append(f"  ... {len(rows) - max_rows} more candidates not shown.")
+        if not rows:
+            lines.append("  No matching objects found.")
+        return "\n".join(lines)
+
+    @tool
     def find_focal_points(limit: int = 5) -> str:
         """Find the most central objects in the scene graph.
 
@@ -455,6 +517,8 @@ def create_scene_tools(ctx: SceneContext) -> list:
         get_point_cloud_info,
         get_color_summary,
         estimate_room_volume,
+        measure_distance,
+        find_nearest_objects,
         find_focal_points,
         find_pattern,
         discover_functional_areas,
@@ -521,6 +585,94 @@ def _concat_frames(frames):
 def _xy_area(bounds: dict) -> float:
     dims = bounds["max"][:2] - bounds["min"][:2]
     return float(max(dims[0], 0.0) * max(dims[1], 0.0))
+
+
+def _object_not_found_message(object_name: str, objects: dict) -> str:
+    sample = ", ".join(list(objects.keys())[:8])
+    return f"Object '{object_name}' not found. Examples: {sample}"
+
+
+def _distance_metrics(obj_a: dict, obj_b: dict) -> dict:
+    c_a = obj_a["centroid"]
+    c_b = obj_b["centroid"]
+    centroid_distance = float(np_linalg_norm(c_a - c_b))
+    gaps = _axis_gaps(obj_a["bounds"], obj_b["bounds"])
+    bbox_gap = float(np_linalg_norm(gaps))
+    vertical_gap = _signed_vertical_gap(obj_a["bounds"], obj_b["bounds"])
+    xy_overlap_ratio = _overlap_xy_ratio(obj_a["bounds"], obj_b["bounds"])
+
+    return {
+        "centroid_distance": centroid_distance,
+        "bbox_gap": bbox_gap,
+        "gap_x": gaps[0],
+        "gap_y": gaps[1],
+        "gap_z": gaps[2],
+        "vertical_gap": vertical_gap,
+        "xy_overlap_ratio": xy_overlap_ratio,
+        "touching_or_overlapping": bbox_gap == 0.0,
+    }
+
+
+def _format_distance_metrics(object_a: str, object_b: str, metrics: dict) -> str:
+    return "\n".join([
+        f"Distance between {object_a} and {object_b}:",
+        f"  Centroid distance: {metrics['centroid_distance']:.3f} m",
+        f"  Bounding-box gap: {metrics['bbox_gap']:.3f} m",
+        f"  Axis gaps (x,y,z): ({metrics['gap_x']:.3f}, {metrics['gap_y']:.3f}, {metrics['gap_z']:.3f}) m",
+        f"  Signed vertical gap: {metrics['vertical_gap']:.3f} m",
+        f"  XY overlap ratio: {metrics['xy_overlap_ratio']:.3f}",
+        "  Bounding boxes touch/overlap: "
+        + ("yes" if metrics["touching_or_overlapping"] else "no"),
+    ])
+
+
+def _axis_gaps(bounds_a: dict, bounds_b: dict) -> list[float]:
+    return [
+        _axis_gap(
+            float(bounds_a["min"][axis]),
+            float(bounds_a["max"][axis]),
+            float(bounds_b["min"][axis]),
+            float(bounds_b["max"][axis]),
+        )
+        for axis in range(3)
+    ]
+
+
+def _axis_gap(min_a: float, max_a: float, min_b: float, max_b: float) -> float:
+    if max_a < min_b:
+        return float(min_b - max_a)
+    if max_b < min_a:
+        return float(min_a - max_b)
+    return 0.0
+
+
+def _signed_vertical_gap(bounds_a: dict, bounds_b: dict) -> float:
+    if bounds_a["max"][2] < bounds_b["min"][2]:
+        return float(bounds_b["min"][2] - bounds_a["max"][2])
+    if bounds_b["max"][2] < bounds_a["min"][2]:
+        return float(bounds_a["min"][2] - bounds_b["max"][2])
+    return 0.0
+
+
+def _overlap_xy_ratio(bounds_a: dict, bounds_b: dict) -> float:
+    x_overlap = max(
+        0.0,
+        min(bounds_a["max"][0], bounds_b["max"][0])
+        - max(bounds_a["min"][0], bounds_b["min"][0]),
+    )
+    y_overlap = max(
+        0.0,
+        min(bounds_a["max"][1], bounds_b["max"][1])
+        - max(bounds_a["min"][1], bounds_b["min"][1]),
+    )
+    reference_area = min(_xy_area(bounds_a), _xy_area(bounds_b))
+    if reference_area <= 0:
+        return 0.0
+    return float((x_overlap * y_overlap) / reference_area)
+
+
+def np_linalg_norm(values) -> float:
+    return sum(float(value) ** 2 for value in values) ** 0.5
 
 
 def _relationship_anomalies(ctx: SceneContext) -> list[str]:
