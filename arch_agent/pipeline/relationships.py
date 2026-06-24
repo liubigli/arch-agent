@@ -56,6 +56,21 @@ def _bounds_gap(b1: dict, b2: dict) -> float:
     return float(np.linalg.norm(gaps))
 
 
+def _vertical_gap(upper_bounds: dict, lower_bounds: dict) -> float:
+    return float(upper_bounds["min"][2] - lower_bounds["max"][2])
+
+
+def _is_above(upper: dict, lower: dict, max_gap: float = 0.75) -> bool:
+    upper_bounds = upper["bounds"]
+    lower_bounds = lower["bounds"]
+    z_gap = _vertical_gap(upper_bounds, lower_bounds)
+    return (
+        upper["centroid"][2] > lower["centroid"][2]
+        and -0.15 <= z_gap <= max_gap
+        and _overlap_xy_ratio(upper_bounds, lower_bounds) >= 0.05
+    )
+
+
 def _rests_on(upper: dict, lower: dict) -> bool:
     if lower.get("semantic_label") not in SUPPORTING_LABELS:
         return False
@@ -63,9 +78,7 @@ def _rests_on(upper: dict, lower: dict) -> bool:
     upper_bounds = upper["bounds"]
     lower_bounds = lower["bounds"]
 
-    upper_min_z = float(upper_bounds["min"][2])
-    lower_max_z = float(lower_bounds["max"][2])
-    z_gap = upper_min_z - lower_max_z
+    z_gap = _vertical_gap(upper_bounds, lower_bounds)
 
     return (
         upper["centroid"][2] > lower["centroid"][2]
@@ -181,20 +194,17 @@ def _determine_geometric_relationships(
     c1 = np.asarray(obj1["centroid"], dtype=float)
     c2 = np.asarray(obj2["centroid"], dtype=float)
     centroid_distance = float(np.linalg.norm(c1 - c2))
-    xy_overlap = _overlap_xy_ratio(obj1["bounds"], obj2["bounds"])
-    z_delta = float(c1[2] - c2[2])
 
     if centroid_distance <= distance_threshold:
         relationships.append((name1, name2, "near", GEOMETRIC_LEVEL))
         relationships.append((name2, name1, "near", GEOMETRIC_LEVEL))
 
-    if abs(z_delta) >= 0.20 and xy_overlap >= 0.05:
-        if z_delta > 0:
-            relationships.append((name1, name2, "above", GEOMETRIC_LEVEL))
-            relationships.append((name2, name1, "below", GEOMETRIC_LEVEL))
-        else:
-            relationships.append((name2, name1, "above", GEOMETRIC_LEVEL))
-            relationships.append((name1, name2, "below", GEOMETRIC_LEVEL))
+    if _is_above(obj1, obj2):
+        relationships.append((name1, name2, "above", GEOMETRIC_LEVEL))
+        relationships.append((name2, name1, "below", GEOMETRIC_LEVEL))
+    elif _is_above(obj2, obj1):
+        relationships.append((name2, name1, "above", GEOMETRIC_LEVEL))
+        relationships.append((name1, name2, "below", GEOMETRIC_LEVEL))
 
     if _bounds_gap(obj1["bounds"], obj2["bounds"]) <= min(distance_threshold * 0.25, 0.75):
         relationships.append((name1, name2, "adjacent_to", GEOMETRIC_LEVEL))
@@ -212,12 +222,12 @@ def compute_structural_relations(objects: dict) -> list[Relationship]:
 
     for column in columns:
         for roof in roofs:
-            if _overlap_xy_ratio(objects[column]["bounds"], objects[roof]["bounds"]) >= 0.02:
+            if _rests_on(objects[roof], objects[column]):
                 relationships.append((column, roof, "supports", STRUCTURAL_LEVEL))
                 relationships.append((roof, column, "rests_on", STRUCTURAL_LEVEL))
 
         for floor in floors:
-            if _overlap_xy_ratio(objects[column]["bounds"], objects[floor]["bounds"]) >= 0.02:
+            if _rests_on(objects[column], objects[floor]):
                 relationships.append((floor, column, "supports", STRUCTURAL_LEVEL))
                 relationships.append((column, floor, "rests_on", STRUCTURAL_LEVEL))
 

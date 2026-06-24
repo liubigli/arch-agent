@@ -2,6 +2,7 @@ from collections import Counter
 from typing import Optional
 
 import networkx as nx
+import numpy as np
 from langchain_core.tools import tool
 
 from ..pipeline.pipeline import SceneContext, run_pipeline
@@ -11,6 +12,10 @@ from ..settings import get_config
 
 def _structural_elements() -> set[str]:
     return set(get_config()["semantic_classes"]["structural"])
+
+
+def _all_semantic_classes() -> list[str]:
+    return list(get_config()["semantic_classes"]["names"])
 
 
 def _classify_area(label_set: set) -> str:
@@ -62,8 +67,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
         feat = ctx.features.get(object_name, {})
         c = obj["centroid"]
         dims = obj["bounds"]["max"] - obj["bounds"]["min"]
-
-        return "\n".join([
+        lines = [
             f"Object: {object_name}",
             f"  Semantic class  : {obj['semantic_label']}",
             f"  Element type    : {feat.get('element_type', 'unknown')}",
@@ -74,7 +78,17 @@ def create_scene_tools(ctx: SceneContext) -> list:
             f"  Surface area    : {feat.get('surface_area', 0):.3f} m2",
             f"  Height          : {feat.get('height', 0):.2f} m",
             f"  Compactness     : {feat.get('compactness', 0):.4f}",
-        ])
+        ]
+        color = _mean_rgb(obj["points"])
+        if color is not None:
+            raw, rgb8 = color
+            lines.append(
+                "  Mean RGB        : "
+                f"raw ({raw[0]:.1f}, {raw[1]:.1f}, {raw[2]:.1f}); "
+                f"8-bit ({rgb8[0]}, {rgb8[1]}, {rgb8[2]})"
+            )
+
+        return "\n".join(lines)
 
     @tool
     def find_relationships(object_name: str) -> str:
@@ -108,6 +122,89 @@ def create_scene_tools(ctx: SceneContext) -> list:
         return "\n".join(lines)
 
     @tool
+    def list_relationships(
+        level: str = "all",
+        relationship_type: Optional[str] = None,
+        object_name: Optional[str] = None,
+        limit: int = 200,
+    ) -> str:
+        """List relationships from the scene graph.
+
+        Args:
+            level: Relationship level to list: 'L1', 'L2', 'L3', 'geometric',
+                'structural', 'mereological', or 'all'.
+            relationship_type: Optional relationship type, e.g. 'above',
+                'supports', 'is_opening_in'.
+            object_name: Optional object name. If provided, only relationships
+                where this object is source or target are listed.
+            limit: Maximum number of relationship rows to return.
+        """
+        layer_key = _relationship_layer_key(level)
+        if layer_key is None:
+            valid = "all, L1/geometric, L2/structural, L3/mereological"
+            return f"Unknown relationship level '{level}'. Valid values: {valid}."
+        if object_name and object_name not in ctx.objects:
+            sample = ", ".join(list(ctx.objects.keys())[:8])
+            return f"Object '{object_name}' not found. Examples: {sample}"
+
+        relationships = (
+            ctx.relationships
+            if layer_key == "all"
+            else ctx.relationship_layers.get(layer_key, [])
+        )
+        filtered = [
+            rel for rel in relationships
+            if (not relationship_type or rel[2] == relationship_type)
+            and (not object_name or rel[0] == object_name or rel[1] == object_name)
+        ]
+
+        title = f"Relationships ({level}): {len(filtered)}"
+        if relationship_type:
+            title += f" | type={relationship_type}"
+        if object_name:
+            title += f" | object={object_name}"
+
+        type_counts = Counter(rel[2] for rel in filtered)
+        if type_counts:
+            title += " | " + ", ".join(
+                f"{rel_type}={count}" for rel_type, count in sorted(type_counts.items())
+            )
+
+        max_rows = max(1, min(int(limit), 1000))
+        lines = [title]
+        for src, tgt, rel_type, rel_level in filtered[:max_rows]:
+            lines.append(f"  - {src} --[{rel_level}:{rel_type}]--> {tgt}")
+        if len(filtered) > max_rows:
+            lines.append(
+                f"  ... {len(filtered) - max_rows} more relationships not shown; "
+                "increase limit if needed, but avoid pasting thousands of rows into chat."
+            )
+        if len(lines) == 1:
+            lines.append("  No matching relationships found.")
+        return "\n".join(lines)
+
+    @tool
+    def find_relationship_anomalies(limit: int = 200) -> str:
+        """Find direct logical or semantic anomalies in the computed relationship graph.
+
+        Args:
+            limit: Maximum number of anomaly rows to return.
+        """
+        issues = _relationship_anomalies(ctx)
+        max_rows = max(1, min(int(limit), 1000))
+        if not issues:
+            return (
+                "No direct relationship anomalies found "
+                "(reciprocal above/below/support loops, invalid contains/inside, or invalid openings)."
+            )
+
+        lines = [f"Relationship anomalies: {len(issues)}"]
+        lines.extend(f"  - {issue}" for issue in issues[:max_rows])
+        if len(issues) > max_rows:
+            lines.append(f"  ... {len(issues) - max_rows} more anomalies not shown.")
+        return "\n".join(lines)
+
+    @tool
     def get_scene_statistics() -> str:
         """Get summary statistics for the current scene graph."""
         graphs = ctx.scene_graphs or {"L1": ctx.scene_graph}
@@ -121,6 +218,21 @@ def create_scene_tools(ctx: SceneContext) -> list:
             lines.append("Semantic classes:")
             for label, count in sorted(class_counts.items()):
                 lines.append(f"  - {label}: {count}")
+            absent = sorted(set(_all_semantic_classes()) - set(class_counts))
+            lines.append(
+                "Absent semantic classes: "
+                + (", ".join(absent) if absent else "none")
+            )
+
+        structural = _structural_elements()
+        structural_count = sum(
+            count for label, count in class_counts.items() if label in structural
+        )
+        finishing_count = len(ctx.objects) - structural_count
+        lines.append(
+            f"Element types: structural={structural_count}, "
+            f"finishing={finishing_count}"
+        )
 
         lines.append("Graphs:")
         for level, graph in graphs.items():
@@ -131,6 +243,94 @@ def create_scene_tools(ctx: SceneContext) -> list:
             )
 
         return "\n".join(lines)
+
+    @tool
+    def get_point_cloud_info() -> str:
+        """Get point-cloud level metrics: point count, classes, bounding box, and RGB availability."""
+        if ctx.df is None or ctx.df.empty:
+            return "No point-cloud dataframe is available."
+
+        mins = ctx.df[["x", "y", "z"]].min()
+        maxs = ctx.df[["x", "y", "z"]].max()
+        dims = maxs - mins
+        volume = float(dims["x"] * dims["y"] * dims["z"])
+        class_counts = ctx.df["semantic_label"].value_counts().sort_index()
+
+        lines = [
+            f"Point count: {len(ctx.df):,}",
+            "Bounding box:",
+            f"  Min (x,y,z): ({mins['x']:.2f}, {mins['y']:.2f}, {mins['z']:.2f})",
+            f"  Max (x,y,z): ({maxs['x']:.2f}, {maxs['y']:.2f}, {maxs['z']:.2f})",
+            f"  Size (x,y,z): ({dims['x']:.2f}, {dims['y']:.2f}, {dims['z']:.2f}) m",
+            f"  AABB volume: {volume:.3f} m3",
+            "Point classes:",
+        ]
+        lines.extend(f"  - {label}: {count:,}" for label, count in class_counts.items())
+        lines.append(
+            "RGB channels: "
+            + ("available" if _has_rgb(ctx.df) else "not available")
+        )
+        return "\n".join(lines)
+
+    @tool
+    def get_color_summary(
+        semantic_label: Optional[str] = None,
+        object_name: Optional[str] = None,
+    ) -> str:
+        """Summarize mean RGB values for the whole scene, a semantic class, or one object.
+
+        Args:
+            semantic_label: Optional semantic class to summarize, e.g. 'column'.
+            object_name: Optional object name to summarize, e.g. 'column_0'.
+        """
+        if object_name:
+            if object_name not in ctx.objects:
+                return f"Object '{object_name}' not found."
+            return _format_rgb_summary(object_name, ctx.objects[object_name]["points"])
+
+        if semantic_label:
+            parts = [
+                obj["points"] for obj in ctx.objects.values()
+                if obj["semantic_label"] == semantic_label
+            ]
+            if not parts:
+                return f"No objects with semantic label '{semantic_label}' found."
+            return _format_rgb_summary(semantic_label, _concat_frames(parts))
+
+        if ctx.df is None or ctx.df.empty:
+            return "No point-cloud dataframe is available."
+        return _format_rgb_summary("scene", ctx.df)
+
+    @tool
+    def estimate_room_volume() -> str:
+        """Estimate room volume from floor footprint area and representative wall/column height."""
+        floors = [
+            (name, obj) for name, obj in ctx.objects.items()
+            if obj["semantic_label"] == "floor"
+        ]
+        height_candidates = [
+            ctx.features[name]["height"]
+            for name, obj in ctx.objects.items()
+            if obj["semantic_label"] in {"wall", "column"} and name in ctx.features
+        ]
+        if not floors:
+            return "Cannot estimate room volume: no floor object was detected."
+        if not height_candidates:
+            return "Cannot estimate room volume: no wall or column height is available."
+
+        floor_name, floor = max(floors, key=lambda item: _xy_area(item[1]["bounds"]))
+        floor_area = _xy_area(floor["bounds"])
+        height = float(np.median(height_candidates))
+        volume = floor_area * height
+
+        return "\n".join([
+            "Room volume estimate:",
+            f"  Floor footprint object: {floor_name}",
+            f"  Floor footprint area (AABB XY): {floor_area:.3f} m2",
+            f"  Representative height (median wall/column height): {height:.3f} m",
+            f"  Estimated volume: {volume:.3f} m3",
+            "  Method: floor footprint area multiplied by wall/column height.",
+        ])
 
     @tool
     def find_focal_points(limit: int = 5) -> str:
@@ -248,7 +448,12 @@ def create_scene_tools(ctx: SceneContext) -> list:
         list_objects,
         get_object_info,
         find_relationships,
+        list_relationships,
+        find_relationship_anomalies,
         get_scene_statistics,
+        get_point_cloud_info,
+        get_color_summary,
+        estimate_room_volume,
         find_focal_points,
         find_pattern,
         discover_functional_areas,
@@ -261,3 +466,107 @@ def _combined_graph(ctx: SceneContext) -> nx.DiGraph:
     if not graphs:
         return ctx.scene_graph or nx.DiGraph()
     return nx.compose_all(graphs)
+
+
+def _relationship_layer_key(level: str) -> str | None:
+    normalized = (level or "all").strip().lower()
+    aliases = {
+        "all": "all",
+        "l1": "L1",
+        "geometric": "L1",
+        "geometry": "L1",
+        "l2": "L2",
+        "structural": "L2",
+        "structure": "L2",
+        "l3": "L3",
+        "mereological": "L3",
+        "composition": "L3",
+    }
+    return aliases.get(normalized)
+
+
+def _has_rgb(df) -> bool:
+    return all(column in df.columns for column in ["R", "G", "B"])
+
+
+def _mean_rgb(df) -> tuple[tuple[float, float, float], tuple[int, int, int]] | None:
+    if not _has_rgb(df) or df.empty:
+        return None
+    raw = tuple(float(value) for value in df[["R", "G", "B"]].mean().to_numpy())
+    max_channel = max(float(df[["R", "G", "B"]].max().max()), 1.0)
+    divisor = 257.0 if max_channel > 255 else 1.0
+    rgb8 = tuple(int(round(min(max(value / divisor, 0), 255))) for value in raw)
+    return raw, rgb8
+
+
+def _format_rgb_summary(name: str, df) -> str:
+    color = _mean_rgb(df)
+    if color is None:
+        return f"RGB values are not available for {name}."
+    raw, rgb8 = color
+    return "\n".join([
+        f"Color summary for {name}:",
+        f"  Mean RGB raw: ({raw[0]:.1f}, {raw[1]:.1f}, {raw[2]:.1f})",
+        f"  Mean RGB 8-bit: ({rgb8[0]}, {rgb8[1]}, {rgb8[2]})",
+    ])
+
+
+def _concat_frames(frames):
+    import pandas as pd
+
+    return pd.concat(frames, ignore_index=True)
+
+
+def _xy_area(bounds: dict) -> float:
+    dims = bounds["max"][:2] - bounds["min"][:2]
+    return float(max(dims[0], 0.0) * max(dims[1], 0.0))
+
+
+def _relationship_anomalies(ctx: SceneContext) -> list[str]:
+    pair_relations: dict[frozenset[str], list[tuple[str, str, str, str]]] = {}
+    for src, tgt, rel_type, rel_level in ctx.relationships:
+        pair_relations.setdefault(frozenset((src, tgt)), []).append(
+            (src, tgt, rel_type, rel_level)
+        )
+
+    issues: list[str] = []
+    for pair, rels in pair_relations.items():
+        if len(pair) != 2:
+            continue
+        a, b = list(pair)
+        rel_set = {(src, tgt, rel_type, rel_level) for src, tgt, rel_type, rel_level in rels}
+
+        if (
+            (a, b, "above", "geometric") in rel_set
+            and (b, a, "above", "geometric") in rel_set
+        ):
+            issues.append(f"{a} and {b}: reciprocal 'above' relation.")
+        if (
+            (a, b, "below", "geometric") in rel_set
+            and (b, a, "below", "geometric") in rel_set
+        ):
+            issues.append(f"{a} and {b}: reciprocal 'below' relation.")
+        if (
+            (a, b, "supports", "structural") in rel_set
+            and (b, a, "supports", "structural") in rel_set
+        ):
+            issues.append(f"{a} and {b}: reciprocal 'supports' relation.")
+        if (
+            (a, b, "rests_on", "structural") in rel_set
+            and (b, a, "rests_on", "structural") in rel_set
+        ):
+            issues.append(f"{a} and {b}: reciprocal 'rests_on' relation.")
+
+        for src, tgt, rel_type, _ in rels:
+            src_label = ctx.objects.get(src, {}).get("semantic_label")
+            tgt_label = ctx.objects.get(tgt, {}).get("semantic_label")
+            if rel_type in {"contains", "inside"}:
+                issues.append(f"{src} -> {tgt}: unsupported relation '{rel_type}'.")
+            if rel_type == "is_opening_in" and not (src_label == "door_window" and tgt_label == "wall"):
+                issues.append(
+                    f"{src} -> {tgt}: invalid is_opening_in for {src_label}->{tgt_label}."
+                )
+            if rel_type == "has_part" and src_label == "floor" and tgt_label == "door_window":
+                issues.append(f"{src} -> {tgt}: floor should not contain a door_window.")
+
+    return issues

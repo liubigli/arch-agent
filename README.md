@@ -34,7 +34,12 @@ LAZ point cloud
 │  • list_objects                             │
 │  • get_object_info                          │
 │  • find_relationships                       │
+│  • list_relationships                       │
+│  • find_relationship_anomalies              │
 │  • get_scene_statistics                     │
+│  • get_point_cloud_info                     │
+│  • get_color_summary                        │
+│  • estimate_room_volume                     │
 │  • find_focal_points                        │
 │  • find_pattern                             │
 │  • discover_functional_areas                │
