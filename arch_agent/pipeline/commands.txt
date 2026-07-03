@@ -1,0 +1,10 @@
+#per pushare le modifiche locali su Github
+git add .
+git commit -m "<messaggio>"
+git push 
+
+#per pullare le modifiche da Github in locale
+git pull
+
+#per vedere le modifiche locali
+git status
