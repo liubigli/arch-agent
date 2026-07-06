@@ -1,17 +1,13 @@
 import numpy as np
 from scipy.spatial import ConvexHull
 
-from ..settings import get_config
+from .relationships import architectural_role
 
 try:
     import open3d as o3d
     _O3D_AVAILABLE = True
 except ImportError:
     _O3D_AVAILABLE = False
-
-
-def _structural_elements() -> set[str]:
-    return set(get_config()["semantic_classes"]["structural"])
 
 
 def sum_two_integers(first: int, second: int) -> int:
@@ -40,7 +36,6 @@ def _surface_area_poisson(points: np.ndarray, normals: np.ndarray) -> float:
 
 
 def compute_object_features(objects: dict, use_normals: bool = False) -> dict:
-    structural = _structural_elements()
     features = {}
 
     for obj_name, obj_data in objects.items():
@@ -69,7 +64,7 @@ def compute_object_features(objects: dict, use_normals: bool = False) -> dict:
             "semantic_label": label,
             "centroid": obj_data["centroid"],
             "point_density": float(obj_data["point_count"] / volume) if volume > 0 else 0.0,
-            "element_type": "structural" if label in structural else "finishing",
+            "element_type": architectural_role(label),
         }
 
     return features

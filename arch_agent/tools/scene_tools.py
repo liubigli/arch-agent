@@ -6,6 +6,13 @@ from langchain_core.tools import tool
 
 from ..pipeline.pipeline import SceneContext, run_pipeline
 from ..pipeline.graph import analyze_scene_graph
+from ..pipeline.relationships import (
+    RELATIONSHIP_LAYER_NAMES,
+    RELATIONSHIP_LAYER_ORDER,
+    architectural_role,
+    mereological_relation_type,
+    supports_label_pair,
+)
 from ..settings import get_config
 
 
@@ -91,31 +98,33 @@ def create_scene_tools(ctx: SceneContext) -> list:
 
     @tool
     def find_relationships(object_name: str) -> str:
-        """Find all spatial relationships involving a given object.
+        """Find all relationships involving a given object, using the L1->L2->L3 cascade.
 
         Args:
             object_name: Name of the object to query.
         """
-        G = ctx.scene_graph
-        if object_name not in G:
-            return f"Object '{object_name}' not found in the scene graph."
+        if object_name not in ctx.objects:
+            sample = ", ".join(list(ctx.objects.keys())[:8])
+            return f"Object '{object_name}' not found. Examples: {sample}"
 
-        out_edges = list(G.out_edges(object_name, data=True))
-        in_edges = list(G.in_edges(object_name, data=True))
-        lines = [f"Relationships for '{object_name}':"]
+        lines = [
+            f"Relationships for '{object_name}':",
+            "Cascade: L1/geometric -> L2/structural -> L3/mereological",
+        ]
+        total = 0
 
-        if out_edges:
-            lines.append("  As source:")
-            for _, tgt, d in out_edges:
-                for rel in d.get("relations", []):
-                    lines.append(f"    {object_name} --[{rel['level']}:{rel['type']}]--> {tgt}")
-        if in_edges:
-            lines.append("  As target:")
-            for src, _, d in in_edges:
-                for rel in d.get("relations", []):
-                    lines.append(f"    {src} --[{rel['level']}:{rel['type']}]--> {object_name}")
+        for level, relationships in _relationship_layers_in_order(ctx):
+            filtered = [
+                rel for rel in relationships
+                if rel[0] == object_name or rel[1] == object_name
+            ]
+            total += len(filtered)
+            layer_name = RELATIONSHIP_LAYER_NAMES.get(level, level)
+            lines.append(f"  {level}/{layer_name}: {len(filtered)}")
+            for src, tgt, rel_type, rel_level in filtered:
+                lines.append(f"    {src} --[{rel_level}:{rel_type}]--> {tgt}")
 
-        if len(lines) == 1:
+        if total == 0:
             lines.append("  No relationships found.")
 
         return "\n".join(lines)
@@ -146,18 +155,31 @@ def create_scene_tools(ctx: SceneContext) -> list:
             sample = ", ".join(list(ctx.objects.keys())[:8])
             return f"Object '{object_name}' not found. Examples: {sample}"
 
-        relationships = (
-            ctx.relationships
+        layers = (
+            _relationship_layers_in_order(ctx)
             if layer_key == "all"
-            else ctx.relationship_layers.get(layer_key, [])
+            else [(layer_key, ctx.relationship_layers.get(layer_key, []))]
         )
+        filtered_by_layer = [
+            (
+                layer,
+                [
+                    rel for rel in relationships
+                    if (not relationship_type or rel[2] == relationship_type)
+                    and (not object_name or rel[0] == object_name or rel[1] == object_name)
+                ],
+            )
+            for layer, relationships in layers
+        ]
         filtered = [
-            rel for rel in relationships
-            if (not relationship_type or rel[2] == relationship_type)
-            and (not object_name or rel[0] == object_name or rel[1] == object_name)
+            rel
+            for _, layer_relationships in filtered_by_layer
+            for rel in layer_relationships
         ]
 
         title = f"Relationships ({level}): {len(filtered)}"
+        if layer_key == "all":
+            title += " | cascade=L1/geometric->L2/structural->L3/mereological"
         if relationship_type:
             title += f" | type={relationship_type}"
         if object_name:
@@ -171,14 +193,22 @@ def create_scene_tools(ctx: SceneContext) -> list:
 
         max_rows = max(1, min(int(limit), 1000))
         lines = [title]
-        for src, tgt, rel_type, rel_level in filtered[:max_rows]:
-            lines.append(f"  - {src} --[{rel_level}:{rel_type}]--> {tgt}")
-        if len(filtered) > max_rows:
+        remaining = max_rows
+        hidden = 0
+        for layer, layer_relationships in filtered_by_layer:
+            layer_name = RELATIONSHIP_LAYER_NAMES.get(layer, layer)
+            lines.append(f"  {layer}/{layer_name}: {len(layer_relationships)}")
+            shown = layer_relationships[:remaining] if remaining > 0 else []
+            for src, tgt, rel_type, rel_level in shown:
+                lines.append(f"    - {src} --[{rel_level}:{rel_type}]--> {tgt}")
+            hidden += max(0, len(layer_relationships) - len(shown))
+            remaining -= len(shown)
+        if hidden:
             lines.append(
-                f"  ... {len(filtered) - max_rows} more relationships not shown; "
+                f"  ... {hidden} more relationships not shown; "
                 "increase limit if needed, but avoid pasting thousands of rows into chat."
             )
-        if len(lines) == 1:
+        if not filtered:
             lines.append("  No matching relationships found.")
         return "\n".join(lines)
 
@@ -223,15 +253,13 @@ def create_scene_tools(ctx: SceneContext) -> list:
                 + (", ".join(absent) if absent else "none")
             )
 
-        structural = _structural_elements()
-        structural_count = sum(
-            count for label, count in class_counts.items() if label in structural
-        )
-        finishing_count = len(ctx.objects) - structural_count
-        lines.append(
-            f"Element types: structural={structural_count}, "
-            f"finishing={finishing_count}"
-        )
+        role_counts = Counter()
+        for label, count in class_counts.items():
+            role_counts[architectural_role(label)] += count
+        if role_counts:
+            lines.append("Element roles:")
+            for role, count in sorted(role_counts.items()):
+                lines.append(f"  - {role}: {count}")
 
         room_volume = ctx.scene_features.get("room_volume", {})
         if room_volume:
@@ -533,6 +561,15 @@ def _combined_graph(ctx: SceneContext) -> nx.DiGraph:
     return nx.compose_all(graphs)
 
 
+def _relationship_layers_in_order(ctx: SceneContext) -> list[tuple[str, list]]:
+    if not ctx.relationship_layers:
+        return [("all", ctx.relationships)]
+    return [
+        (level, ctx.relationship_layers.get(level, []))
+        for level in RELATIONSHIP_LAYER_ORDER
+    ]
+
+
 def _relationship_layer_key(level: str) -> str | None:
     normalized = (level or "all").strip().lower()
     aliases = {
@@ -710,7 +747,7 @@ def _relationship_anomalies(ctx: SceneContext) -> list[str]:
         ):
             issues.append(f"{a} and {b}: reciprocal 'rests_on' relation.")
 
-        for src, tgt, rel_type, _ in rels:
+        for src, tgt, rel_type, rel_level in rels:
             src_label = ctx.objects.get(src, {}).get("semantic_label")
             tgt_label = ctx.objects.get(tgt, {}).get("semantic_label")
             if rel_type in {"contains", "inside"}:
@@ -721,5 +758,33 @@ def _relationship_anomalies(ctx: SceneContext) -> list[str]:
                 )
             if rel_type == "has_part" and src_label == "floor" and tgt_label == "door_window":
                 issues.append(f"{src} -> {tgt}: floor should not contain a door_window.")
+            if rel_type == "supports" and not supports_label_pair(src_label, tgt_label):
+                issues.append(
+                    f"{src} -> {tgt}: invalid supports for {src_label}->{tgt_label}."
+                )
+            if rel_type == "rests_on" and not supports_label_pair(tgt_label, src_label):
+                issues.append(
+                    f"{src} -> {tgt}: invalid rests_on for {src_label}->{tgt_label}."
+                )
+            if rel_level == "mereological":
+                if rel_type == "has_part":
+                    expected = mereological_relation_type(tgt_label, src_label)
+                    if expected is None:
+                        issues.append(
+                            f"{src} -> {tgt}: has_part has no inverse class rule "
+                            f"for {src_label}->{tgt_label}."
+                        )
+                else:
+                    expected = mereological_relation_type(src_label, tgt_label)
+                    if expected is None:
+                        issues.append(
+                            f"{src} -> {tgt}: invalid mereological relation '{rel_type}' "
+                            f"for {src_label}->{tgt_label}."
+                        )
+                    elif rel_type != expected:
+                        issues.append(
+                            f"{src} -> {tgt}: expected '{expected}', got '{rel_type}' "
+                            f"for {src_label}->{tgt_label}."
+                        )
 
     return issues

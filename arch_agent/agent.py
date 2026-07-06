@@ -13,6 +13,13 @@ from typing_extensions import TypedDict
 from pathlib import Path
 
 from .pipeline.pipeline import SceneContext
+from .pipeline.relationships import (
+    RELATIONSHIP_LAYER_NAMES,
+    RELATIONSHIP_LAYER_ORDER,
+    architectural_role,
+    mereological_relation_type,
+    supports_label_pair,
+)
 from .tools.scene_tools import create_scene_tools
 from .settings import get_config
 
@@ -204,7 +211,10 @@ def _extract_relationship_level(text: str) -> str:
 
 
 def _format_relationships(ctx: SceneContext, level: str = "all", limit: int = 200) -> str:
-    relationships = ctx.relationships if level == "all" else ctx.relationship_layers.get(level, [])
+    if level == "all":
+        return _format_relationships_cascade(ctx, limit=limit)
+
+    relationships = ctx.relationship_layers.get(level, [])
     lines = [f"Relazioni {level}: {len(relationships)}"]
     type_counts = Counter(rel_type for _, _, rel_type, _ in relationships)
     if type_counts:
@@ -221,6 +231,45 @@ def _format_relationships(ctx: SceneContext, level: str = "all", limit: int = 20
             "di saturare il contesto della chat."
         )
     elif not relationships:
+        lines.append("  Nessuna relazione trovata.")
+    return "\n".join(lines)
+
+
+def _format_relationships_cascade(ctx: SceneContext, limit: int = 200) -> str:
+    max_rows = max(1, min(int(limit), 1000))
+    total = sum(len(ctx.relationship_layers.get(level, [])) for level in RELATIONSHIP_LAYER_ORDER)
+    lines = [
+        f"Relazioni all: {total}",
+        "Ordine di analisi: L1/geometric -> L2/structural -> L3/mereological",
+    ]
+
+    remaining = max_rows
+    hidden = 0
+    for level in RELATIONSHIP_LAYER_ORDER:
+        relationships = ctx.relationship_layers.get(level, [])
+        layer_name = RELATIONSHIP_LAYER_NAMES.get(level, level)
+        lines.append(f"{level}/{layer_name}: {len(relationships)}")
+
+        type_counts = Counter(rel_type for _, _, rel_type, _ in relationships)
+        if type_counts:
+            lines.append(
+                "  Tipi: "
+                + ", ".join(f"{rel_type}={count}" for rel_type, count in sorted(type_counts.items()))
+            )
+
+        shown = relationships[:remaining] if remaining > 0 else []
+        for src, tgt, rel_type, rel_level in shown:
+            lines.append(f"  - {src} --[{rel_level}:{rel_type}]--> {tgt}")
+
+        hidden += max(0, len(relationships) - len(shown))
+        remaining -= len(shown)
+
+    if hidden:
+        lines.append(
+            f"  ... {hidden} relazioni non mostrate per evitare "
+            "di saturare il contesto della chat."
+        )
+    elif total == 0:
         lines.append("  Nessuna relazione trovata.")
     return "\n".join(lines)
 
@@ -277,6 +326,34 @@ def _format_relationship_inconsistencies(ctx: SceneContext) -> str:
                 issues.append(
                     f"{src} -> {tgt}: un floor non dovrebbe contenere una door_window."
                 )
+            if rel_type == "supports" and not supports_label_pair(src_label, tgt_label):
+                issues.append(
+                    f"{src} -> {tgt}: supports non ammessa per classi {src_label}->{tgt_label}."
+                )
+            if rel_type == "rests_on" and not supports_label_pair(tgt_label, src_label):
+                issues.append(
+                    f"{src} -> {tgt}: rests_on non ammessa per classi {src_label}->{tgt_label}."
+                )
+            if rel_level == "mereological":
+                if rel_type == "has_part":
+                    expected = mereological_relation_type(tgt_label, src_label)
+                    if expected is None:
+                        issues.append(
+                            f"{src} -> {tgt}: has_part senza regola mereologica inversa "
+                            f"per classi {src_label}->{tgt_label}."
+                        )
+                else:
+                    expected = mereological_relation_type(src_label, tgt_label)
+                    if expected is None:
+                        issues.append(
+                            f"{src} -> {tgt}: relazione mereologica '{rel_type}' non ammessa "
+                            f"per classi {src_label}->{tgt_label}."
+                        )
+                    elif rel_type != expected:
+                        issues.append(
+                            f"{src} -> {tgt}: relazione mereologica '{rel_type}' diversa "
+                            f"da quella attesa '{expected}' per classi {src_label}->{tgt_label}."
+                        )
             if rel_type == "is_placed_on" and not (src_label == "stairs" and tgt_label == "floor"):
                 suspicious.append(
                     f"{src} -> {tgt}: is_placed_on inattesa per classi {src_label}->{tgt_label}."
@@ -522,9 +599,9 @@ def _format_top_object(ctx: SceneContext, metric: str, reverse: bool = True) -> 
 def _format_scene_inventory(ctx: SceneContext) -> str:
     class_counts = Counter(obj["semantic_label"] for obj in ctx.objects.values())
     all_classes = set(get_config()["semantic_classes"]["names"])
-    structural = set(get_config()["semantic_classes"]["structural"])
-    structural_count = sum(count for label, count in class_counts.items() if label in structural)
-    finishing_count = len(ctx.objects) - structural_count
+    role_counts = Counter()
+    for label, count in class_counts.items():
+        role_counts[architectural_role(label)] += count
     absent = sorted(all_classes - set(class_counts))
 
     lines = [f"La scena contiene {len(ctx.objects)} oggetti."]
@@ -533,8 +610,8 @@ def _format_scene_inventory(ctx: SceneContext) -> str:
     lines.append(
         "Classi assenti: " + (", ".join(absent) if absent else "nessuna")
     )
-    lines.append(f"Elementi strutturali: {structural_count}")
-    lines.append(f"Elementi finishing/non strutturali: {finishing_count}")
+    lines.append("Ruoli architettonici:")
+    lines.extend(f"  - {role}: {count}" for role, count in sorted(role_counts.items()))
     return "\n".join(lines)
 
 
