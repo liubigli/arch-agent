@@ -6,31 +6,124 @@ GEOMETRIC_LEVEL = "geometric"
 STRUCTURAL_LEVEL = "structural"
 MEREOLOGICAL_LEVEL = "mereological"
 
-MEREOLOGICAL_RULES = {
-    "door_window": ["wall"],
-    "moldings": ["wall", "arch", "vault", "column"],
-    "other": ["wall", olumn", "arch"],
-    "arch": ["wall", "vault"],
-    "stairs": ["floor", "wall"],
+RELATIONSHIP_LAYER_ORDER = ("L1", "L2", "L3")
+RELATIONSHIP_LAYER_NAMES = {
+    "L1": GEOMETRIC_LEVEL,
+    "L2": STRUCTURAL_LEVEL,
+    "L3": MEREOLOGICAL_LEVEL,
+}
+
+ARCHITECTURAL_CLASS_RULES = {
+    "arch": {
+        "role": "structural",
+        "can_support": {"vault", "roof"},
+        "can_rest_on": {"column", "wall"},
+        "part_of": {
+            "wall": "is_attached_to",
+            "vault": "is_rib_of",
+        },
+    },
+    "column": {
+        "role": "structural",
+        "can_support": {"arch", "vault", "roof"},
+        "can_rest_on": {"floor"},
+        "part_of": {},
+    },
+    "wall": {
+        "role": "structural",
+        "can_support": {"arch", "vault", "roof"},
+        "can_rest_on": {"floor"},
+        "part_of": {},
+    },
+    "vault": {
+        "role": "structural",
+        "can_support": {"roof"},
+        "can_rest_on": {"arch", "column", "wall"},
+        "part_of": {},
+    },
+    "roof": {
+        "role": "structural",
+        "can_support": set(),
+        "can_rest_on": {"arch", "column", "wall", "vault"},
+        "part_of": {},
+    },
+    "floor": {
+        "role": "support_surface",
+        "can_support": {"column", "wall", "stairs"},
+        "can_rest_on": set(),
+        "part_of": {},
+    },
+    "stairs": {
+        "role": "circulation",
+        "can_support": set(),
+        "can_rest_on": {"floor"},
+        "part_of": {
+            "floor": "is_placed_on",
+            "wall": "is_connected_to",
+        },
+    },
+    "moldings": {
+        "role": "ornamental",
+        "can_support": set(),
+        "can_rest_on": set(),
+        "part_of": {
+            "wall": "is_ornament_of",
+            "arch": "is_ornament_of",
+            "column": "is_ornament_of",
+        },
+    },
+    "door_window": {
+        "role": "opening",
+        "can_support": set(),
+        "can_rest_on": set(),
+        "part_of": {
+            "wall": "is_opening_in",
+        },
+    },
+    "other": {
+        "role": "unknown",
+        "can_support": set(),
+        "can_rest_on": set(),
+        "part_of": {
+            "wall": "part_of",
+            "floor": "part_of",
+            "column": "part_of",
+            "arch": "part_of",
+        },
+    },
 }
 
 SUPPORTING_LABELS = {
-    "floor",
-    "wall",
-    "column",
-    "arch",
-    "vault",
-    "stairs",
-    "roof",
+    label
+    for label, rules in ARCHITECTURAL_CLASS_RULES.items()
+    if rules.get("can_support")
 }
+
+MEREOLOGICAL_RULES = {
+    label: list(rules["part_of"])
+    for label, rules in ARCHITECTURAL_CLASS_RULES.items()
+    if rules.get("part_of")
+}
+
+UNSUPPORTED_ABOVE_PAIRS = {
+    ("column", "arch"),
+}
+
 
 def _xy_area(bounds: dict) -> float:
     dims = bounds["max"][:2] - bounds["min"][:2]
     return float(max(dims[0], 0.0) * max(dims[1], 0.0))
 
+
 def _overlap_xy_ratio(b1: dict, b2: dict) -> float:
-    x_overlap = max(0.0, min(b1["max"][0], b2["max"][0]) - max(b1["min"][0], b2["min"][0]))
-    y_overlap = max(0.0, min(b1["max"][1], b2["max"][1]) - max(b1["min"][1], b2["min"][1]))
+    x_overlap = max(
+        0.0,
+        min(b1["max"][0], b2["max"][0]) - max(b1["min"][0], b2["min"][0]),
+    )
+    y_overlap = max(
+        0.0,
+        min(b1["max"][1], b2["max"][1]) - max(b1["min"][1], b2["min"][1]),
+    )
     overlap_area = x_overlap * y_overlap
 
     reference_area = min(_xy_area(b1), _xy_area(b2))
@@ -50,7 +143,12 @@ def _axis_gap(min1: float, max1: float, min2: float, max2: float) -> float:
 
 def _bounds_gap(b1: dict, b2: dict) -> float:
     gaps = [
-        _axis_gap(float(b1["min"][axis]), float(b1["max"][axis]), float(b2["min"][axis]), float(b2["max"][axis]))
+        _axis_gap(
+            float(b1["min"][axis]),
+            float(b1["max"][axis]),
+            float(b2["min"][axis]),
+            float(b2["max"][axis]),
+        )
         for axis in range(3)
     ]
     return float(np.linalg.norm(gaps))
@@ -61,6 +159,12 @@ def _vertical_gap(upper_bounds: dict, lower_bounds: dict) -> float:
 
 
 def _is_above(upper: dict, lower: dict, max_gap: float = 0.75) -> bool:
+    upper_label = upper.get("semantic_label")
+    lower_label = lower.get("semantic_label")
+
+    if (upper_label, lower_label) in UNSUPPORTED_ABOVE_PAIRS:
+        return False
+
     upper_bounds = upper["bounds"]
     lower_bounds = lower["bounds"]
     z_gap = _vertical_gap(upper_bounds, lower_bounds)
@@ -71,8 +175,33 @@ def _is_above(upper: dict, lower: dict, max_gap: float = 0.75) -> bool:
     )
 
 
+def supports_label_pair(lower_label: str | None, upper_label: str | None) -> bool:
+    lower_rules = ARCHITECTURAL_CLASS_RULES.get(lower_label or "", {})
+    upper_rules = ARCHITECTURAL_CLASS_RULES.get(upper_label or "", {})
+    return (
+        upper_label in lower_rules.get("can_support", set())
+        and lower_label in upper_rules.get("can_rest_on", set())
+    )
+
+
+def mereological_relation_type(
+    child_label: str | None,
+    parent_label: str | None,
+) -> str | None:
+    rules = ARCHITECTURAL_CLASS_RULES.get(child_label or "", {})
+    return rules.get("part_of", {}).get(parent_label)
+
+
+def architectural_role(label: str | None) -> str:
+    rules = ARCHITECTURAL_CLASS_RULES.get(label or "", {})
+    return rules.get("role", "unknown")
+
+
 def _rests_on(upper: dict, lower: dict) -> bool:
-    if lower.get("semantic_label") not in SUPPORTING_LABELS:
+    upper_label = upper.get("semantic_label")
+    lower_label = lower.get("semantic_label")
+
+    if not supports_label_pair(lower_label, upper_label):
         return False
 
     upper_bounds = upper["bounds"]
@@ -86,6 +215,7 @@ def _rests_on(upper: dict, lower: dict) -> bool:
         and _overlap_xy_ratio(upper_bounds, lower_bounds) >= 0.10
     )
 
+
 def _deduplicate(relationships: list[Relationship]) -> list[Relationship]:
     deduped = []
     seen = set()
@@ -96,6 +226,16 @@ def _deduplicate(relationships: list[Relationship]) -> list[Relationship]:
             seen.add(relationship)
 
     return deduped
+
+
+def flatten_relationship_layers(
+    relationship_layers: dict[str, list[Relationship]],
+) -> list[Relationship]:
+    relationships: list[Relationship] = []
+    for level in RELATIONSHIP_LAYER_ORDER:
+        relationships.extend(relationship_layers.get(level, []))
+    return _deduplicate(relationships)
+
 
 def auto_threshold(objects: dict, scale: float = 2.5, fallback: float = 3.0) -> float:
     if len(objects) < 2:
@@ -118,20 +258,12 @@ def compute_all_relations(
     distance_threshold: float | None = None,
     surface_contact_thresh: float = 0.10,
 ) -> list[Relationship]:
-    threshold = distance_threshold or auto_threshold(objects)
-
-    geometric = compute_spatial_relationships(objects, threshold)
-    structural = compute_structural_relations(objects)
-    mereological = compute_mereological_relations(
+    relationship_layers = compute_all_relations_stratified(
         objects,
+        distance_threshold=distance_threshold,
         surface_contact_thresh=surface_contact_thresh,
     )
-
-    print(f"L1 geometric    : {len(geometric):>4} relationships")
-    print(f"L2 structural   : {len(structural):>4} relationships")
-    print(f"L3 mereological : {len(mereological):>4} relationships")
-
-    return _deduplicate(geometric + structural + mereological)
+    return relationship_layers["all"]
 
 
 def compute_all_relations_stratified(
@@ -147,18 +279,18 @@ def compute_all_relations_stratified(
         objects,
         surface_contact_thresh=surface_contact_thresh,
     )
-    all_relationships = _deduplicate(geometric + structural + mereological)
+    relationship_layers = {
+        "L1": geometric,
+        "L2": structural,
+        "L3": mereological,
+    }
+    all_relationships = flatten_relationship_layers(relationship_layers)
 
     print(f"L1 geometric    : {len(geometric):>4} relationships")
     print(f"L2 structural   : {len(structural):>4} relationships")
     print(f"L3 mereological : {len(mereological):>4} relationships")
 
-    return {
-        "L1": geometric,
-        "L2": structural,
-        "L3": mereological,
-        "all": all_relationships,
-    }
+    return {**relationship_layers, "all": all_relationships}
 
 
 def compute_spatial_relationships(
@@ -212,24 +344,10 @@ def _determine_geometric_relationships(
 
     return relationships
 
+
 def compute_structural_relations(objects: dict) -> list[Relationship]:
     relationships: list[Relationship] = []
     names = list(objects.keys())
-
-    floors = [name for name in names if objects[name]["semantic_label"] == "floor"]
-    columns = [name for name in names if objects[name]["semantic_label"] == "column"]
-    roofs = [name for name in names if objects[name]["semantic_label"] == "roof"]
-
-    for column in columns:
-        for roof in roofs:
-            if _rests_on(objects[roof], objects[column]):
-                relationships.append((column, roof, "supports", STRUCTURAL_LEVEL))
-                relationships.append((roof, column, "rests_on", STRUCTURAL_LEVEL))
-
-        for floor in floors:
-            if _rests_on(objects[column], objects[floor]):
-                relationships.append((floor, column, "supports", STRUCTURAL_LEVEL))
-                relationships.append((column, floor, "rests_on", STRUCTURAL_LEVEL))
 
     for i, obj1 in enumerate(names):
         for obj2 in names[i + 1:]:
@@ -284,16 +402,4 @@ def compute_mereological_relations(
 
 
 def _mereological_relation(child_label: str, parent_label: str) -> str:
-    if child_label == "door_window" and parent_label == "wall":
-        return "is_opening_in"
-    if child_label == "moldings":
-        return "is_ornament_of"
-    if child_label == "arch" and parent_label == "vault":
-        return "is_rib_of"
-    if child_label == "stairs" and parent_label == "floor":
-        return "is_placed_on"
-    if child_label == "stairs" and parent_label == "wall":
-        return "is_connected_to"
-    if child_label == "other":
-        return "part_of"
-    return "is_attached_to"
+    return mereological_relation_type(child_label, parent_label) or "is_attached_to"
