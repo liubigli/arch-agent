@@ -26,6 +26,61 @@ from .settings import get_config
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "system.md"
 
+_SEMANTIC_ALIASES = (
+    ("porta finestra", "door_window"),
+    ("porta-finestra", "door_window"),
+    ("porte finestre", "door_window"),
+    ("porte-finestre", "door_window"),
+    ("archi", "arch"),
+    ("arco", "arch"),
+    ("arches", "arch"),
+    ("arch", "arch"),
+    ("colonne", "column"),
+    ("colonna", "column"),
+    ("columns", "column"),
+    ("column", "column"),
+    ("aperture", "door_window"),
+    ("apertura", "door_window"),
+    ("muri", "wall"),
+    ("muro", "wall"),
+    ("pareti", "wall"),
+    ("parete", "wall"),
+    ("walls", "wall"),
+    ("wall", "wall"),
+    ("pavimenti", "floor"),
+    ("pavimento", "floor"),
+    ("floors", "floor"),
+    ("floor", "floor"),
+    ("tetti", "roof"),
+    ("tetto", "roof"),
+    ("coperture", "roof"),
+    ("copertura", "roof"),
+    ("roofs", "roof"),
+    ("roof", "roof"),
+    ("volte", "vault"),
+    ("volta", "vault"),
+    ("vaults", "vault"),
+    ("vault", "vault"),
+    ("scale", "stairs"),
+    ("scala", "stairs"),
+    ("stairs", "stairs"),
+    ("stair", "stairs"),
+    ("modanature", "moldings"),
+    ("modanatura", "moldings"),
+    ("moldings", "moldings"),
+    ("molding", "moldings"),
+    ("porte", "door_window"),
+    ("porta", "door_window"),
+    ("finestre", "door_window"),
+    ("finestra", "door_window"),
+    ("doors", "door_window"),
+    ("door", "door_window"),
+    ("windows", "door_window"),
+    ("window", "door_window"),
+    ("altro", "other"),
+    ("other", "other"),
+)
+
 
 def _load_system_prompt() -> str:
     return _PROMPT_PATH.read_text(encoding="utf-8")
@@ -97,6 +152,19 @@ def _try_answer_deterministic(ctx: SceneContext, user_input: str) -> str | None:
         return evaluation_answer
 
     text = _normalize_text(user_input)
+    semantic_count = _try_answer_semantic_count(ctx, text)
+    if semantic_count is not None:
+        return _format_grounded_answer(
+            observed=semantic_count,
+            relations="Nessuna relazione L1/L2/L3 usata: risposta basata sul conteggio degli oggetti per classe semantica.",
+            inference="Conteggio diretto degli oggetti segmentati; non implica valutazioni su funzione, importanza o qualita della segmentazione.",
+            confidence="alta per il conteggio nel grafo corrente; media se la segmentazione semantica e incerta.",
+        )
+
+    support_answer = _try_answer_support_between_classes(ctx, text)
+    if support_answer is not None:
+        return support_answer
+
     requested_facts = _format_requested_facts(ctx, text)
     if requested_facts is not None:
         return _format_grounded_answer(
@@ -260,6 +328,162 @@ def _format_requested_facts(ctx: SceneContext, text: str) -> str | None:
         return None
 
     return "\n\n".join(f"{title}\n{body}" for title, body in sections)
+
+
+def _try_answer_semantic_count(ctx: SceneContext, text: str) -> str | None:
+    if not _asks_for_count(text):
+        return None
+
+    label = _extract_semantic_label(text)
+    if label is None:
+        return None
+
+    names = sorted(
+        name
+        for name, obj in ctx.objects.items()
+        if obj["semantic_label"] == label
+    )
+    lines = [f"Oggetti di classe '{label}': {len(names)}."]
+    if names:
+        lines.append("Istanze: " + ", ".join(names))
+    return "\n".join(lines)
+
+
+def _asks_for_count(text: str) -> bool:
+    count_terms = (
+        "quante",
+        "quanti",
+        "numero di",
+        "conteggio",
+        "count",
+        "how many",
+    )
+    return any(term in text for term in count_terms)
+
+
+def _try_answer_support_between_classes(ctx: SceneContext, text: str) -> str | None:
+    if not _asks_for_support(text):
+        return None
+
+    labels = _extract_semantic_labels(text)
+    if len(labels) < 2:
+        return None
+
+    if _is_passive_support_question(text):
+        upper_label, lower_label = labels[0], labels[1]
+    else:
+        lower_label, upper_label = labels[0], labels[1]
+
+    lower_objects = _objects_with_semantic_label(ctx, lower_label)
+    upper_objects = _objects_with_semantic_label(ctx, upper_label)
+    supports = [
+        rel for rel in ctx.relationship_layers.get("L2", [])
+        if rel[2] == "supports"
+        and ctx.objects.get(rel[0], {}).get("semantic_label") == lower_label
+        and ctx.objects.get(rel[1], {}).get("semantic_label") == upper_label
+    ]
+
+    lines = [
+        f"Oggetti '{lower_label}': {len(lower_objects)}"
+        + (f" ({', '.join(lower_objects)})" if lower_objects else ""),
+        f"Oggetti '{upper_label}': {len(upper_objects)}"
+        + (f" ({', '.join(upper_objects)})" if upper_objects else ""),
+    ]
+    if supports:
+        lines.append(f"Relazioni L2 supports trovate: {len(supports)}.")
+        lines.extend(
+            f"  - {src} --[structural:supports]--> {tgt}"
+            for src, tgt, _, _ in supports[:20]
+        )
+        if len(supports) > 20:
+            lines.append(f"  ... {len(supports) - 20} non mostrate.")
+        inference = (
+            f"Nel grafo corrente esistono relazioni strutturali L2 in cui "
+            f"'{lower_label}' supporta '{upper_label}'."
+        )
+        confidence = (
+            "media-alta: la risposta usa L2/structural, ma dipende comunque "
+            "da soglie geometriche e segmentazione."
+        )
+    else:
+        lines.append(
+            f"Nessuna relazione L2 supports trovata da '{lower_label}' a '{upper_label}'."
+        )
+        if supports_label_pair(lower_label, upper_label):
+            inference = (
+                f"L'ontologia ammette che '{lower_label}' possa supportare "
+                f"'{upper_label}', ma la scena corrente non contiene una prova L2 diretta. "
+                "Non uso L1 above/near o L3 has_part come prova di supporto."
+            )
+            confidence = (
+                "media: assenza di L2 diretta; possibile relazione architettonica "
+                "non confermata dalla geometria calcolata."
+            )
+        else:
+            inference = (
+                f"L'ontologia corrente non ammette '{lower_label}' come supporto "
+                f"di '{upper_label}'."
+            )
+            confidence = "alta: esclusione basata sulle regole architettoniche Python."
+
+    return _format_grounded_answer(
+        observed="\n".join(lines),
+        relations="L2/structural: supports. L1/geometric e L3/mereological non sono usate come prova di sostegno.",
+        inference=inference,
+        confidence=confidence,
+    )
+
+
+def _asks_for_support(text: str) -> bool:
+    support_terms = (
+        "supporta",
+        "supportano",
+        "supportato",
+        "supportata",
+        "supportati",
+        "supportate",
+        "sostiene",
+        "sostengono",
+        "sostenuto",
+        "sostenuta",
+        "sostenuti",
+        "sostenute",
+        "sorregge",
+        "sorreggono",
+        "sorretto",
+        "sorretta",
+        "sorretti",
+        "sorrette",
+        "regge",
+        "reggono",
+    )
+    return any(term in text for term in support_terms)
+
+
+def _is_passive_support_question(text: str) -> bool:
+    passive_patterns = (
+        "supportato da",
+        "supportata da",
+        "supportati da",
+        "supportate da",
+        "sostenuto da",
+        "sostenuta da",
+        "sostenuti da",
+        "sostenute da",
+        "sorretto da",
+        "sorretta da",
+        "sorretti da",
+        "sorrette da",
+    )
+    return any(pattern in text for pattern in passive_patterns)
+
+
+def _objects_with_semantic_label(ctx: SceneContext, label: str) -> list[str]:
+    return sorted(
+        name
+        for name, obj in ctx.objects.items()
+        if obj["semantic_label"] == label
+    )
 
 
 def _try_answer_distance(ctx: SceneContext, text: str) -> str | None:
@@ -734,30 +958,28 @@ def _asks_for_scene_inventory(text: str) -> bool:
 
 
 def _extract_semantic_label(text: str) -> str | None:
-    aliases = {
-        "colonne": "column",
-        "colonna": "column",
-        "columns": "column",
-        "column": "column",
-        "muri": "wall",
-        "muro": "wall",
-        "pareti": "wall",
-        "wall": "wall",
-        "pavimento": "floor",
-        "floor": "floor",
-        "tetto": "roof",
-        "roof": "roof",
-        "volta": "vault",
-        "vault": "vault",
-        "porte": "door_window",
-        "finestre": "door_window",
-        "door": "door_window",
-        "window": "door_window",
-    }
-    for word, label in aliases.items():
+    for word, label in _SEMANTIC_ALIASES:
         if re.search(rf"\b{re.escape(word)}\b", text):
             return label
     return None
+
+
+def _extract_semantic_labels(text: str) -> list[str]:
+    matches: list[tuple[int, int, str]] = []
+    for word, label in _SEMANTIC_ALIASES:
+        for match in re.finditer(rf"\b{re.escape(word)}\b", text):
+            matches.append((match.start(), -(match.end() - match.start()), label))
+
+    labels: list[str] = []
+    occupied: set[int] = set()
+    for start, negative_length, label in sorted(matches):
+        length = -negative_length
+        span = set(range(start, start + length))
+        if occupied & span:
+            continue
+        occupied.update(span)
+        labels.append(label)
+    return labels
 
 
 def _has_rgb(df) -> bool:
