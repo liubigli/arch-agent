@@ -12,6 +12,7 @@ from typing_extensions import TypedDict
 
 from pathlib import Path
 
+from .evaluation_answers import answer_evaluation_prompt
 from .pipeline.pipeline import SceneContext
 from .pipeline.relationships import (
     RELATIONSHIP_LAYER_NAMES,
@@ -91,51 +92,152 @@ def run_agent(ctx: SceneContext, model: str = "llama3") -> None:
 
 
 def _try_answer_deterministic(ctx: SceneContext, user_input: str) -> str | None:
+    evaluation_answer = answer_evaluation_prompt(ctx, user_input)
+    if evaluation_answer is not None:
+        return evaluation_answer
+
     text = _normalize_text(user_input)
     requested_facts = _format_requested_facts(ctx, text)
     if requested_facts is not None:
-        return requested_facts
+        return _format_grounded_answer(
+            observed=requested_facts,
+            relations="Nessuna relazione L1/L2/L3 usata: risposta basata su conteggi, classi o feature.",
+            inference="Sintesi descrittiva derivata dai dati disponibili, senza interpretazioni strutturali aggiuntive.",
+            confidence="alta: i valori provengono direttamente dal contesto della scena.",
+        )
 
     distance_answer = _try_answer_distance(ctx, text)
     if distance_answer is not None:
-        return distance_answer
+        return _format_grounded_answer(
+            observed=distance_answer,
+            relations="L1/geometric: metriche di distanza, gap tra bounding box e overlap XY.",
+            inference="La vicinanza e una relazione geometrica; non implica da sola contatto, supporto o appartenenza.",
+            confidence="alta per le misure geometriche; media per eventuali interpretazioni spaziali.",
+        )
 
     if "incongruen" in text or "contraddizion" in text or "contraddittor" in text:
-        return _format_relationship_inconsistencies(ctx)
+        return _format_grounded_answer(
+            observed=_format_relationship_inconsistencies(ctx),
+            relations="Controllo incrociato su L1/geometric, L2/structural e L3/mereological.",
+            inference="Le anomalie indicano conflitti logici o relazioni non coerenti con le regole architettoniche.",
+            confidence="media: dipende dalla qualita della segmentazione e dalle soglie geometriche.",
+        )
 
     if _asks_for_relationships(text):
-        return _format_relationships(ctx, level=_extract_relationship_level(text))
+        level = _extract_relationship_level(text)
+        return _format_grounded_answer(
+            observed=_format_relationships(ctx, level=level),
+            relations=_relationship_usage_text(level),
+            inference="Nessuna inferenza aggiuntiva: elenco delle relazioni calcolate nel grafo.",
+            confidence="alta per le relazioni elencate; media per il loro significato architettonico se basato solo su L1.",
+        )
 
     if "bounding box" in text or "boundingn box" in text:
-        return _format_point_cloud_info(ctx)
+        return _format_grounded_answer(
+            observed=_format_point_cloud_info(ctx),
+            relations="Nessuna relazione usata: risposta basata sulla point cloud e sulla bounding box globale.",
+            inference="Il volume AABB descrive l'estensione geometrica, non il volume architettonico abitabile.",
+            confidence="alta: dati calcolati direttamente dalle coordinate della point cloud.",
+        )
 
     if "pointcloud" in text or "point cloud" in text or "nuvola" in text:
         if "punti" in text or "points" in text or "bounding" in text:
-            return _format_point_cloud_info(ctx)
+            return _format_grounded_answer(
+                observed=_format_point_cloud_info(ctx),
+                relations="Nessuna relazione usata: risposta basata sulla point cloud.",
+                inference="Descrizione geometrica globale della nuvola, senza interpretazione architettonica.",
+                confidence="alta: dati letti direttamente dal dataframe della point cloud.",
+            )
 
     if "volume" in text and ("stanza" in text or "room" in text):
-        return _format_room_volume(ctx)
+        return _format_grounded_answer(
+            observed=_format_room_volume(ctx),
+            relations="Relazioni non usate direttamente: stima basata su floor ed envelope verticale della scena.",
+            inference="Il volume stanza e una stima semplificata come box contenitore.",
+            confidence="media: dipende dalla qualita dei floor e degli elementi verticali rilevati.",
+        )
 
     if "volume" in text and "bounding" in text:
-        return _format_point_cloud_info(ctx)
+        return _format_grounded_answer(
+            observed=_format_point_cloud_info(ctx),
+            relations="Nessuna relazione usata: volume calcolato dalla bounding box della point cloud.",
+            inference="Volume puramente geometrico, non equivalente al volume funzionale dello spazio.",
+            confidence="alta per il calcolo AABB; bassa se interpretato come volume architettonico.",
+        )
 
     if "rgb" in text or "colore" in text or "color" in text:
         label = _extract_semantic_label(text)
-        return _format_color_summary(ctx, semantic_label=label)
+        return _format_grounded_answer(
+            observed=_format_color_summary(ctx, semantic_label=label),
+            relations="Nessuna relazione usata: risposta basata sui canali RGB dei punti.",
+            inference="Il colore medio e una feature visiva, non una prova funzionale o strutturale.",
+            confidence="alta se RGB e disponibile; altrimenti non disponibile.",
+        )
 
     if "maggior numero di punti" in text or "piu punti" in text:
-        return _format_top_object(ctx, metric="point_count")
+        return _format_grounded_answer(
+            observed=_format_top_object(ctx, metric="point_count"),
+            relations="Nessuna relazione usata: confronto basato sul numero di punti degli oggetti.",
+            inference="Un alto numero di punti puo indicare dominanza geometrica o maggiore copertura, non importanza architettonica certa.",
+            confidence="alta per il ranking numerico; media per l'interpretazione di dominanza.",
+        )
 
     if "volume maggiore" in text or "maggior volume" in text or "piu volume" in text:
-        return _format_top_object(ctx, metric="volume")
+        return _format_grounded_answer(
+            observed=_format_top_object(ctx, metric="volume"),
+            relations="Nessuna relazione usata: confronto basato sul volume AABB degli oggetti.",
+            inference="Il volume AABB misura ingombro geometrico, non necessariamente importanza funzionale.",
+            confidence="alta per il ranking geometrico; media per l'interpretazione architettonica.",
+        )
 
     if "piu compatto" in text or "geometricamente compatto" in text:
-        return _format_top_object(ctx, metric="compactness", reverse=False)
+        return _format_grounded_answer(
+            observed=_format_top_object(ctx, metric="compactness", reverse=False),
+            relations="Nessuna relazione usata: confronto basato sulla metrica di compactness.",
+            inference="La compactness e una proprieta geometrica, non una classificazione semantica.",
+            confidence="media: dipende dalla qualita della superficie stimata.",
+        )
 
     if _asks_for_scene_inventory(text):
-        return _format_scene_inventory(ctx)
+        return _format_grounded_answer(
+            observed=_format_scene_inventory(ctx),
+            relations="Nessuna relazione usata: inventario basato sulle classi semantiche degli oggetti.",
+            inference="I ruoli architettonici derivano dall'ontologia Python, non da una nuova osservazione geometrica.",
+            confidence="alta per conteggi e label; media per i ruoli se la segmentazione e incerta.",
+        )
 
     return None
+
+
+def _format_grounded_answer(
+    observed: str,
+    relations: str,
+    inference: str,
+    confidence: str,
+) -> str:
+    return "\n".join([
+        "Osservato dai dati:",
+        observed,
+        "",
+        "Relazioni usate:",
+        relations,
+        "",
+        "Inferenza:",
+        inference,
+        "",
+        "Confidenza:",
+        confidence,
+    ])
+
+
+def _relationship_usage_text(level: str) -> str:
+    if level == "L1":
+        return "L1/geometric: near, adjacent_to, above, below."
+    if level == "L2":
+        return "L2/structural: supports, rests_on, filtrate dalle regole architettoniche."
+    if level == "L3":
+        return "L3/mereological: has_part, is_opening_in, is_ornament_of, is_attached_to e relazioni parte-tutto."
+    return "Cascata completa: prima L1/geometric, poi L2/structural, infine L3/mereological."
 
 
 def _format_requested_facts(ctx: SceneContext, text: str) -> str | None:
