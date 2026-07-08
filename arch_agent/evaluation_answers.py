@@ -36,6 +36,7 @@ _PROMPT_ID_BY_TEXT = {
 
 def answer_evaluation_prompt(ctx: "SceneContext", user_input: str) -> str | None:
     text = _normalize_text(user_input)
+    language = _response_language(user_input)
     prompt_id = _PROMPT_ID_BY_TEXT.get(text) or _infer_prompt_id(text)
     if prompt_id is None:
         return None
@@ -62,7 +63,10 @@ def answer_evaluation_prompt(ctx: "SceneContext", user_input: str) -> str | None
         19: _answer_relation_quality_check,
         20: _answer_typology,
     }
-    return builders[prompt_id](ctx)
+    answer = builders[prompt_id](ctx)
+    if language == "en":
+        return _translate_grounded_answer_to_english(answer)
+    return answer
 
 
 def _infer_prompt_id(text: str) -> int | None:
@@ -80,12 +84,16 @@ def _infer_prompt_id(text: str) -> int | None:
     if _has_any(text, "confini", "confine", "boundar", "limiti", "limite"):
         return 5
 
-    if _has_any(text, "delimit", "conten", "organizz") and _has_any(
+    if _has_any(text, "delimit", "contain", "organize", "organise", "conten", "organizz") and _has_any(
         text,
         "spazio",
+        "space",
         "scena",
+        "scene",
         "elementi",
+        "elements",
         "oggetti",
+        "objects",
     ):
         return 6
 
@@ -136,6 +144,87 @@ def _infer_prompt_id(text: str) -> int | None:
 
 def _has_any(text: str, *patterns: str) -> bool:
     return any(pattern in text for pattern in patterns)
+
+
+def _response_language(text: str) -> str:
+    normalized = _normalize_text(text)
+    english_markers = (
+        "what",
+        "which",
+        "how",
+        "does",
+        "do ",
+        "is ",
+        "are ",
+        "inside",
+        "outside",
+        "mixed",
+        "boundary",
+        "boundaries",
+        "delimit",
+        "load-bearing",
+        "typology",
+        "support",
+        "relationship",
+    )
+    italian_markers = (
+        "quale",
+        "quali",
+        "quante",
+        "quanti",
+        "cosa",
+        "scena",
+        "intern",
+        "estern",
+        "mista",
+        "confini",
+        "delimit",
+        "portant",
+        "tipologia",
+        "supporta",
+        "relazioni",
+    )
+    english_score = sum(marker in normalized for marker in english_markers)
+    italian_score = sum(marker in normalized for marker in italian_markers)
+    return "en" if english_score > italian_score else "it"
+
+
+def _translate_grounded_answer_to_english(answer: str) -> str:
+    replacements = (
+        ("Osservato dai dati:", "Observed data:"),
+        ("Relazioni usate:", "Relationships used:"),
+        ("Inferenza:", "Inference:"),
+        ("Confidenza:", "Confidence:"),
+        ("Indizi presenti:", "Observed cues:"),
+        ("Relazioni considerate in cascata", "Relationships considered in cascade"),
+        ("La scena sembra coperta o semi-interna, ma i limiti laterali sono incompleti.", "The scene appears covered or semi-internal, but the lateral boundaries are incomplete."),
+        ("La scena e probabilmente interna o coperta.", "The scene is probably internal or covered."),
+        ("La distinzione interno/esterno resta ambigua dai soli oggetti disponibili.", "The internal/external distinction remains ambiguous from the available objects alone."),
+        ("Limiti principali", "Main boundaries"),
+        ("Colonne perimetrali candidate", "Candidate perimeter columns"),
+        ("Colonne interne / organizzatrici", "Internal / organizing columns"),
+        ("Elementi distributivi", "Circulation elements"),
+        ("Ruoli:", "Roles:"),
+        ("Potenzialmente portanti", "Potentially load-bearing"),
+        ("Superfici di appoggio", "Support surfaces"),
+        ("Non portanti o non determinati", "Non-load-bearing or undetermined"),
+        ("Etichetta tipologica sintetica", "Synthetic typological label"),
+        ("spazio coperto colonnato / portico o padiglione", "covered colonnaded space / portico or pavilion"),
+        ("sono presenti molte colonne, un piano di base e una copertura.", "many columns, a base plane, and a roof are present."),
+        ("media", "medium"),
+        ("alta", "high"),
+        ("bassa", "low"),
+        ("nessuno", "none"),
+        ("nessuna", "none"),
+        ("floor come piano inferiore", "floor as lower plane"),
+        ("roof/vault come copertura superiore", "roof/vault as upper cover"),
+        ("wall come possibile limite laterale", "wall as possible lateral boundary"),
+        ("column associate a copertura", "columns associated with a cover"),
+    )
+    translated = answer
+    for old, new in replacements:
+        translated = translated.replace(old, new)
+    return translated
 
 
 def _grounded(
@@ -293,23 +382,37 @@ def _answer_boundaries(ctx: "SceneContext") -> str:
 
 def _answer_organizing_elements(ctx: "SceneContext") -> str:
     labels = _class_counts(ctx)
-    organizing = _objects_with_labels(ctx, {"floor", "wall", "roof", "vault", "column", "stairs"})
+    delimiters = _objects_with_labels(ctx, {"floor", "wall", "roof", "vault"})
+    outer_columns = _outer_column_names(ctx)
+    inner_columns = [
+        name for name in _objects_with_labels(ctx, {"column"})
+        if name not in set(outer_columns)
+    ]
+    circulation = _objects_with_labels(ctx, {"stairs"})
 
     return _grounded(
         observed="\n".join([
-            _format_grouped_objects(_group_names_by_label(ctx, organizing), "Elementi organizzatori"),
+            _format_grouped_objects(_group_names_by_label(ctx, delimiters), "Limiti principali"),
+            _format_object_list("Colonne perimetrali candidate", outer_columns),
+            _format_object_list("Colonne interne / organizzatrici", inner_columns),
+            _format_object_list("Elementi distributivi", circulation),
             _role_summary(labels),
         ]),
         relations=(
-            "L1/geometric per adiacenza/sopra-sotto; L2/structural per verificare "
-            "se colonne, muri o archi sostengono altri elementi."
+            "L1/geometric per posizione planimetrica, adiacenza e sopra/sotto; "
+            "colonne perimetrali stimate dal convex hull XY dei centroidi; "
+            "L2/structural solo per eventuali supporti."
         ),
         inference=(
-            "Floor, wall, roof/vault e column organizzano lo spazio fisico; "
-            "stairs, se presenti, organizzano la distribuzione. Questa gerarchia resta "
-            "descrittiva se non ci sono relazioni L2 sufficienti."
+            "Floor, wall e roof/vault definiscono i limiti principali; le colonne "
+            "piu esterne possono contribuire al perimetro o alla scansione del bordo, "
+            "mentre le colonne interne organizzano e/o supportano lo spazio. "
+            "Non viene inferita una chiusura completa senza pareti continue."
         ),
-        confidence="media: dipende dalla continuita geometrica degli elementi rilevati.",
+        confidence=(
+            "media: le colonne perimetrali sono stimate geometricamente dai centroidi "
+            "e dipendono da segmentazione e completezza della scena."
+        ),
     )
 
 
@@ -663,6 +766,59 @@ def _objects_with_labels(ctx: "SceneContext", labels: set[str]) -> list[str]:
         name for name, obj in sorted(ctx.objects.items())
         if obj["semantic_label"] in labels
     ]
+
+
+def _outer_column_names(ctx: "SceneContext") -> list[str]:
+    columns = _objects_with_labels(ctx, {"column"})
+    if len(columns) <= 3:
+        return columns
+
+    points = [
+        (
+            float(ctx.objects[name]["centroid"][0]),
+            float(ctx.objects[name]["centroid"][1]),
+            name,
+        )
+        for name in columns
+    ]
+    hull_names = _convex_hull_point_names(points)
+    return sorted(hull_names)
+
+
+def _convex_hull_point_names(points: list[tuple[float, float, str]]) -> list[str]:
+    unique: dict[tuple[float, float], str] = {}
+    for x, y, name in points:
+        unique.setdefault((x, y), name)
+
+    sorted_points = sorted((x, y, name) for (x, y), name in unique.items())
+    if len(sorted_points) <= 3:
+        return [name for _, _, name in sorted_points]
+
+    lower: list[tuple[float, float, str]] = []
+    for point in sorted_points:
+        while len(lower) >= 2 and _cross(lower[-2], lower[-1], point) <= 0:
+            lower.pop()
+        lower.append(point)
+
+    upper: list[tuple[float, float, str]] = []
+    for point in reversed(sorted_points):
+        while len(upper) >= 2 and _cross(upper[-2], upper[-1], point) <= 0:
+            upper.pop()
+        upper.append(point)
+
+    hull = lower[:-1] + upper[:-1]
+    return [name for _, _, name in hull]
+
+
+def _cross(
+    origin: tuple[float, float, str],
+    a: tuple[float, float, str],
+    b: tuple[float, float, str],
+) -> float:
+    return (
+        (a[0] - origin[0]) * (b[1] - origin[1])
+        - (a[1] - origin[1]) * (b[0] - origin[0])
+    )
 
 
 def _objects_by_role(ctx: "SceneContext", role: str) -> list[str]:
