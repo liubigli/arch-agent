@@ -662,6 +662,11 @@ def _try_answer_class_relationships(
 
 def _asks_for_class_relationships(text: str) -> bool:
     relationship_terms = ("relazione", "relazioni", "relationship", "relationships")
+    if not any(term in text for term in relationship_terms):
+        return False
+    if _extract_semantic_labels(text):
+        return True
+
     class_terms = (
         "classe",
         "classi",
@@ -672,9 +677,7 @@ def _asks_for_class_relationships(text: str) -> bool:
         "con gli altri",
         "con altri",
     )
-    return any(term in text for term in relationship_terms) and any(
-        term in text for term in class_terms
-    )
+    return any(term in text for term in class_terms)
 
 
 def _format_class_relationship_summary(
@@ -1266,10 +1269,8 @@ def _asks_for_scene_inventory(text: str) -> bool:
 
 
 def _extract_semantic_label(text: str) -> str | None:
-    for word, label in _SEMANTIC_ALIASES:
-        if re.search(rf"\b{re.escape(word)}\b", text):
-            return label
-    return None
+    labels = _extract_semantic_labels(text)
+    return labels[0] if labels else None
 
 
 def _extract_semantic_labels(text: str) -> list[str]:
