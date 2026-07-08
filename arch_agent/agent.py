@@ -1,4 +1,4 @@
-from collections import Counter
+from collections import Counter, defaultdict
 import re
 from typing import Annotated
 import unicodedata
@@ -15,6 +15,7 @@ from pathlib import Path
 from .evaluation_answers import answer_evaluation_prompt
 from .pipeline.pipeline import SceneContext
 from .pipeline.relationships import (
+    Relationship,
     RELATIONSHIP_LAYER_NAMES,
     RELATIONSHIP_LAYER_ORDER,
     architectural_role,
@@ -121,6 +122,7 @@ def run_agent(ctx: SceneContext, model: str = "llama3") -> None:
     print("  Type 'quit' to exit.\n")
 
     messages: list[BaseMessage] = []
+    last_semantic_label: str | None = None
 
     while True:
         try:
@@ -135,7 +137,15 @@ def run_agent(ctx: SceneContext, model: str = "llama3") -> None:
         if not user_input:
             continue
 
-        deterministic_answer = _try_answer_deterministic(ctx, user_input)
+        text = _normalize_text(user_input)
+        labels_in_input = _extract_semantic_labels(text)
+        deterministic_answer = _try_answer_deterministic(
+            ctx,
+            user_input,
+            default_label=last_semantic_label,
+        )
+        if labels_in_input:
+            last_semantic_label = labels_in_input[0]
         if deterministic_answer is not None:
             print(f"\nAgent: {deterministic_answer}\n")
             continue
@@ -146,7 +156,11 @@ def run_agent(ctx: SceneContext, model: str = "llama3") -> None:
         print(f"\nAgent: {messages[-1].content}\n")
 
 
-def _try_answer_deterministic(ctx: SceneContext, user_input: str) -> str | None:
+def _try_answer_deterministic(
+    ctx: SceneContext,
+    user_input: str,
+    default_label: str | None = None,
+) -> str | None:
     evaluation_answer = answer_evaluation_prompt(ctx, user_input)
     if evaluation_answer is not None:
         return evaluation_answer
@@ -161,9 +175,30 @@ def _try_answer_deterministic(ctx: SceneContext, user_input: str) -> str | None:
             confidence="alta per il conteggio nel grafo corrente; media se la segmentazione semantica e incerta.",
         )
 
+    class_count = _try_answer_class_count(ctx, text)
+    if class_count is not None:
+        return _format_grounded_answer(
+            observed=class_count,
+            relations="Nessuna relazione L1/L2/L3 usata: risposta basata sulle classi semantiche presenti.",
+            inference="Conteggio delle classi riconosciute nella segmentazione; non descrive relazioni o funzioni.",
+            confidence="alta per le label presenti nel grafo corrente; media se la segmentazione semantica e incerta.",
+        )
+
     support_answer = _try_answer_support_between_classes(ctx, text)
     if support_answer is not None:
         return support_answer
+
+    open_support_answer = _try_answer_open_support_question(ctx, text)
+    if open_support_answer is not None:
+        return open_support_answer
+
+    class_relationships = _try_answer_class_relationships(
+        ctx,
+        text,
+        default_label=default_label,
+    )
+    if class_relationships is not None:
+        return class_relationships
 
     requested_facts = _format_requested_facts(ctx, text)
     if requested_facts is not None:
@@ -361,6 +396,34 @@ def _asks_for_count(text: str) -> bool:
     return any(term in text for term in count_terms)
 
 
+def _try_answer_class_count(ctx: SceneContext, text: str) -> str | None:
+    if not _asks_for_class_count(text):
+        return None
+
+    class_counts = Counter(obj["semantic_label"] for obj in ctx.objects.values())
+    if not class_counts:
+        return "Non sono presenti classi semantiche nella scena."
+
+    class_list = ", ".join(sorted(class_counts))
+    lines = [
+        f"Classi semantiche presenti: {len(class_counts)} ({class_list}).",
+        "Distribuzione per classe:",
+    ]
+    lines.extend(
+        f"  - {label}: {count}"
+        for label, count in sorted(class_counts.items())
+    )
+    return "\n".join(lines)
+
+
+def _asks_for_class_count(text: str) -> bool:
+    count_terms = ("quante", "quanti", "numero di", "conteggio", "how many")
+    class_terms = ("classi", "classe", "semantic classes", "semantic class")
+    return any(term in text for term in count_terms) and any(
+        term in text for term in class_terms
+    )
+
+
 def _try_answer_support_between_classes(ctx: SceneContext, text: str) -> str | None:
     if not _asks_for_support(text):
         return None
@@ -434,8 +497,248 @@ def _try_answer_support_between_classes(ctx: SceneContext, text: str) -> str | N
     )
 
 
+def _try_answer_open_support_question(ctx: SceneContext, text: str) -> str | None:
+    if not _asks_for_support(text):
+        return None
+
+    labels = _extract_semantic_labels(text)
+    if len(labels) != 1:
+        return None
+
+    label = labels[0]
+    if _is_passive_support_question(text) or _asks_what_supports_subject(text):
+        observed = _format_support_sources_for_label(ctx, label)
+        inference = (
+            f"La risposta elenca solo le relazioni L2 in cui altri elementi supportano "
+            f"oggetti di classe '{label}'."
+        )
+    elif _asks_what_subject_supports(text):
+        observed = _format_support_targets_for_label(ctx, label)
+        inference = (
+            f"La risposta elenca solo le relazioni L2 in cui oggetti di classe "
+            f"'{label}' supportano altri elementi."
+        )
+    else:
+        return None
+
+    return _format_grounded_answer(
+        observed=observed,
+        relations="L2/structural: supports. L1/geometric e L3/mereological non sono usate come prova di sostegno.",
+        inference=(
+            inference
+            + " Se l'elenco e vuoto, non viene inferito un supporto probabile da ruolo o vicinanza."
+        ),
+        confidence="media-alta se esistono relazioni L2; media se l'elenco e vuoto perche dipende dalle soglie geometriche.",
+    )
+
+
+def _asks_what_subject_supports(text: str) -> bool:
+    patterns = (
+        "cosa supportano",
+        "che cosa supportano",
+        "cosa sostengono",
+        "che cosa sostengono",
+        "cosa sorreggono",
+        "che cosa sorreggono",
+        "what do",
+        "what does",
+        "which elements do",
+        "which elements does",
+    )
+    return any(pattern in text for pattern in patterns)
+
+
+def _asks_what_supports_subject(text: str) -> bool:
+    patterns = (
+        "da cosa",
+        "da che cosa",
+        "chi support",
+        "cosa supporta",
+        "cosa sostiene",
+        "cosa sorregge",
+        "what supports",
+        "what is supporting",
+        "which elements support",
+    )
+    return any(pattern in text for pattern in patterns)
+
+
+def _format_support_targets_for_label(ctx: SceneContext, label: str) -> str:
+    object_names = _objects_with_semantic_label(ctx, label)
+    supports = [
+        rel for rel in ctx.relationship_layers.get("L2", [])
+        if rel[2] == "supports"
+        and ctx.objects.get(rel[0], {}).get("semantic_label") == label
+    ]
+    return _format_support_relationships(
+        ctx,
+        label,
+        object_names,
+        supports,
+        direction="out",
+    )
+
+
+def _format_support_sources_for_label(ctx: SceneContext, label: str) -> str:
+    object_names = _objects_with_semantic_label(ctx, label)
+    supports = [
+        rel for rel in ctx.relationship_layers.get("L2", [])
+        if rel[2] == "supports"
+        and ctx.objects.get(rel[1], {}).get("semantic_label") == label
+    ]
+    return _format_support_relationships(
+        ctx,
+        label,
+        object_names,
+        supports,
+        direction="in",
+    )
+
+
+def _format_support_relationships(
+    ctx: SceneContext,
+    label: str,
+    object_names: list[str],
+    supports: list[Relationship],
+    direction: str,
+) -> str:
+    lines = [
+        f"Oggetti di classe '{label}': {len(object_names)}"
+        + (f" ({', '.join(object_names)})" if object_names else ""),
+    ]
+    if not supports:
+        relation_text = "in uscita" if direction == "out" else "in ingresso"
+        lines.append(f"Nessuna relazione L2 supports {relation_text} trovata.")
+        return "\n".join(lines)
+
+    target_index = 1 if direction == "out" else 0
+    class_counts = Counter(
+        ctx.objects.get(rel[target_index], {}).get("semantic_label", "unknown")
+        for rel in supports
+    )
+    lines.append(f"Relazioni L2 supports trovate: {len(supports)}.")
+    lines.append(
+        "Classi coinvolte: "
+        + ", ".join(f"{class_label}={count}" for class_label, count in sorted(class_counts.items()))
+    )
+    for src, tgt, _, _ in supports[:30]:
+        lines.append(f"  - {src} --[structural:supports]--> {tgt}")
+    if len(supports) > 30:
+        lines.append(f"  ... {len(supports) - 30} non mostrate.")
+    return "\n".join(lines)
+
+
+def _try_answer_class_relationships(
+    ctx: SceneContext,
+    text: str,
+    default_label: str | None = None,
+) -> str | None:
+    if not _asks_for_class_relationships(text):
+        return None
+
+    labels = _extract_semantic_labels(text)
+    label = labels[0] if labels else default_label
+    if label is None:
+        return None
+
+    observed = _format_class_relationship_summary(ctx, label)
+    return _format_grounded_answer(
+        observed=observed,
+        relations=(
+            "Cascata L1->L2->L3: riepilogo delle relazioni che coinvolgono "
+            f"oggetti di classe '{label}', raggruppate per altra classe, tipo e direzione."
+        ),
+        inference=(
+            "Le relazioni L1 descrivono vicinanza, adiacenza e sopra/sotto; "
+            "solo L2 supports/rests_on viene trattato come evidenza strutturale. "
+            "L3, se presente, resta una relazione parte-tutto o di appartenenza."
+        ),
+        confidence=(
+            "alta per i conteggi del grafo; media per l'interpretazione architettonica "
+            "perche dipende dalle soglie geometriche e dalla segmentazione."
+        ),
+    )
+
+
+def _asks_for_class_relationships(text: str) -> bool:
+    relationship_terms = ("relazione", "relazioni", "relationship", "relationships")
+    class_terms = (
+        "classe",
+        "classi",
+        "altre classi",
+        "semantic",
+        "semantich",
+        "con le altre",
+        "con gli altri",
+        "con altri",
+    )
+    return any(term in text for term in relationship_terms) and any(
+        term in text for term in class_terms
+    )
+
+
+def _format_class_relationship_summary(
+    ctx: SceneContext,
+    label: str,
+    limit: int = 40,
+) -> str:
+    object_names = set(_objects_with_semantic_label(ctx, label))
+    if not object_names:
+        return f"Nessun oggetto di classe '{label}' trovato nella scena."
+
+    counts: Counter[tuple[str, str, str, str, str]] = Counter()
+    examples: dict[tuple[str, str, str, str, str], list[Relationship]] = defaultdict(list)
+
+    for level in RELATIONSHIP_LAYER_ORDER:
+        for relationship in ctx.relationship_layers.get(level, []):
+            src, tgt, rel_type, rel_level = relationship
+            src_is_label = src in object_names
+            tgt_is_label = tgt in object_names
+            if not src_is_label and not tgt_is_label:
+                continue
+
+            other_name = tgt if src_is_label else src
+            other_label = ctx.objects.get(other_name, {}).get("semantic_label", "unknown")
+            if other_label == label:
+                continue
+
+            direction = "out" if src_is_label else "in"
+            key = (level, rel_level, rel_type, direction, other_label)
+            counts[key] += 1
+            if len(examples[key]) < 3:
+                examples[key].append(relationship)
+
+    lines = [
+        f"Oggetti di classe '{label}': {len(object_names)} "
+        f"({', '.join(sorted(object_names))}).",
+    ]
+    if not counts:
+        lines.append("Nessuna relazione con altre classi trovata.")
+        return "\n".join(lines)
+
+    lines.append("Relazioni con altre classi:")
+    for index, ((level, rel_level, rel_type, direction, other_label), count) in enumerate(
+        sorted(counts.items(), key=lambda item: (item[0][0], item[0][4], item[0][2], item[0][3])),
+        start=1,
+    ):
+        if index > limit:
+            lines.append(f"  ... {len(counts) - limit} gruppi non mostrati.")
+            break
+        arrow = f"{label} -> {other_label}" if direction == "out" else f"{other_label} -> {label}"
+        lines.append(f"  - {level}/{rel_level}: {arrow}, {rel_type} = {count}")
+        for src, tgt, example_type, example_level in examples[
+            (level, rel_level, rel_type, direction, other_label)
+        ]:
+            lines.append(f"      es. {src} --[{example_level}:{example_type}]--> {tgt}")
+    return "\n".join(lines)
+
+
 def _asks_for_support(text: str) -> bool:
     support_terms = (
+        "support",
+        "supports",
+        "supported",
+        "supporting",
         "supporta",
         "supportano",
         "supportato",
@@ -456,6 +759,9 @@ def _asks_for_support(text: str) -> bool:
         "sorrette",
         "regge",
         "reggono",
+        "hold up",
+        "holds up",
+        "held up",
     )
     return any(term in text for term in support_terms)
 
@@ -474,6 +780,8 @@ def _is_passive_support_question(text: str) -> bool:
         "sorretta da",
         "sorretti da",
         "sorrette da",
+        "supported by",
+        "held up by",
     )
     return any(pattern in text for pattern in passive_patterns)
 
