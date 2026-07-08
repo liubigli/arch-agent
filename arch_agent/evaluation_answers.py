@@ -35,7 +35,8 @@ _PROMPT_ID_BY_TEXT = {
 
 
 def answer_evaluation_prompt(ctx: "SceneContext", user_input: str) -> str | None:
-    prompt_id = _PROMPT_ID_BY_TEXT.get(_normalize_text(user_input))
+    text = _normalize_text(user_input)
+    prompt_id = _PROMPT_ID_BY_TEXT.get(text) or _infer_prompt_id(text)
     if prompt_id is None:
         return None
 
@@ -62,6 +63,79 @@ def answer_evaluation_prompt(ctx: "SceneContext", user_input: str) -> str | None
         20: _answer_typology,
     }
     return builders[prompt_id](ctx)
+
+
+def _infer_prompt_id(text: str) -> int | None:
+    if _has_any(text, "interna", "interno", "inside", "internal") and _has_any(
+        text,
+        "esterna",
+        "esterno",
+        "mista",
+        "mixed",
+        "outside",
+        "external",
+    ):
+        return 4
+
+    if _has_any(text, "confini", "confine", "boundar", "limiti", "limite"):
+        return 5
+
+    if _has_any(text, "delimit", "conten", "organizz") and _has_any(
+        text,
+        "spazio",
+        "scena",
+        "elementi",
+        "oggetti",
+    ):
+        return 6
+
+    if _has_any(text, "adiacent", "adjacent"):
+        return 7
+
+    if _has_any(text, "sopra", "sotto", "above", "below"):
+        return 8
+
+    if _has_any(text, "intersec", "sovrapp", "overlap", "intersect"):
+        return 9
+
+    if _has_any(text, "support", "sosteng", "sostiene", "sosten", "sorregg") and _has_any(
+        text,
+        "quali elementi",
+        "quali oggetti",
+        "elementi sembrano",
+        "oggetti sembrano",
+    ):
+        return 10
+
+    if _has_any(text, "sistema costruttivo", "sistemi costruttivi"):
+        return 11
+
+    if _has_any(text, "portanti", "portante", "non portanti", "non portante", "load-bearing"):
+        return 12
+
+    if _has_any(text, "funzione strutturale", "funzioni strutturali"):
+        return 13
+
+    if _has_any(text, "distributiv", "passaggio", "accesso", "circolazione"):
+        return 14
+
+    if _has_any(text, "gerarchia", "principali", "secondari"):
+        return 15
+
+    if _has_any(text, "relazioni spaziali", "spatial relationships"):
+        return 16
+
+    if _has_any(text, "ambigui", "ambigu", "difficili da interpretare"):
+        return 17
+
+    if _has_any(text, "tipologia", "tipologica", "etichetta tipologica"):
+        return 20
+
+    return None
+
+
+def _has_any(text: str, *patterns: str) -> bool:
+    return any(pattern in text for pattern in patterns)
 
 
 def _grounded(
@@ -162,7 +236,8 @@ def _answer_high_confidence_elements(ctx: "SceneContext") -> str:
 
 
 def _answer_inside_outside(ctx: "SceneContext") -> str:
-    labels = set(_class_counts(ctx))
+    class_counts = _class_counts(ctx)
+    labels = set(class_counts)
     cues = []
     if "floor" in labels:
         cues.append("floor come piano inferiore")
@@ -173,7 +248,7 @@ def _answer_inside_outside(ctx: "SceneContext") -> str:
     if "column" in labels and ("roof" in labels or "vault" in labels):
         cues.append("column associate a copertura")
 
-    if {"floor", "wall"} <= labels and ({"roof", "vault"} & labels):
+    if "floor" in labels and ({"roof", "vault"} & labels) and class_counts["wall"] >= 2:
         inference = "La scena e probabilmente interna o coperta."
         confidence = "media-alta: floor, wall e copertura sono presenti."
     elif "floor" in labels and ({"roof", "vault"} & labels):

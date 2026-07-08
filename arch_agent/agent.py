@@ -437,8 +437,6 @@ def _try_answer_support_between_classes(ctx: SceneContext, text: str) -> str | N
     else:
         lower_label, upper_label = labels[0], labels[1]
 
-    lower_objects = _objects_with_semantic_label(ctx, lower_label)
-    upper_objects = _objects_with_semantic_label(ctx, upper_label)
     supports = [
         rel for rel in ctx.relationship_layers.get("L2", [])
         if rel[2] == "supports"
@@ -446,54 +444,21 @@ def _try_answer_support_between_classes(ctx: SceneContext, text: str) -> str | N
         and ctx.objects.get(rel[1], {}).get("semantic_label") == upper_label
     ]
 
-    lines = [
-        f"Oggetti '{lower_label}': {len(lower_objects)}"
-        + (f" ({', '.join(lower_objects)})" if lower_objects else ""),
-        f"Oggetti '{upper_label}': {len(upper_objects)}"
-        + (f" ({', '.join(upper_objects)})" if upper_objects else ""),
-    ]
     if supports:
-        lines.append(f"Relazioni L2 supports trovate: {len(supports)}.")
-        lines.extend(
-            f"  - {src} --[structural:supports]--> {tgt}"
-            for src, tgt, _, _ in supports[:20]
+        return (
+            f"Si: {len(supports)} relazioni L2 supports "
+            f"{lower_label} -> {upper_label}."
         )
-        if len(supports) > 20:
-            lines.append(f"  ... {len(supports) - 20} non mostrate.")
-        inference = (
-            f"Nel grafo corrente esistono relazioni strutturali L2 in cui "
-            f"'{lower_label}' supporta '{upper_label}'."
-        )
-        confidence = (
-            "media-alta: la risposta usa L2/structural, ma dipende comunque "
-            "da soglie geometriche e segmentazione."
-        )
-    else:
-        lines.append(
-            f"Nessuna relazione L2 supports trovata da '{lower_label}' a '{upper_label}'."
-        )
-        if supports_label_pair(lower_label, upper_label):
-            inference = (
-                f"L'ontologia ammette che '{lower_label}' possa supportare "
-                f"'{upper_label}', ma la scena corrente non contiene una prova L2 diretta. "
-                "Non uso L1 above/near o L3 has_part come prova di supporto."
-            )
-            confidence = (
-                "media: assenza di L2 diretta; possibile relazione architettonica "
-                "non confermata dalla geometria calcolata."
-            )
-        else:
-            inference = (
-                f"L'ontologia corrente non ammette '{lower_label}' come supporto "
-                f"di '{upper_label}'."
-            )
-            confidence = "alta: esclusione basata sulle regole architettoniche Python."
 
-    return _format_grounded_answer(
-        observed="\n".join(lines),
-        relations="L2/structural: supports. L1/geometric e L3/mereological non sono usate come prova di sostegno.",
-        inference=inference,
-        confidence=confidence,
+    if supports_label_pair(lower_label, upper_label):
+        return (
+            f"No: nessuna relazione L2 supports "
+            f"{lower_label} -> {upper_label} nella scena."
+        )
+
+    return (
+        f"No: l'ontologia non ammette "
+        f"{lower_label} -> {upper_label} come supporto."
     )
 
 
@@ -507,29 +472,46 @@ def _try_answer_open_support_question(ctx: SceneContext, text: str) -> str | Non
 
     label = labels[0]
     if _is_passive_support_question(text) or _asks_what_supports_subject(text):
-        observed = _format_support_sources_for_label(ctx, label)
-        inference = (
-            f"La risposta elenca solo le relazioni L2 in cui altri elementi supportano "
-            f"oggetti di classe '{label}'."
-        )
+        supports = [
+            rel for rel in ctx.relationship_layers.get("L2", [])
+            if rel[2] == "supports"
+            and ctx.objects.get(rel[1], {}).get("semantic_label") == label
+        ]
+        return _format_open_support_brief(ctx, label, supports, direction="in")
     elif _asks_what_subject_supports(text):
-        observed = _format_support_targets_for_label(ctx, label)
-        inference = (
-            f"La risposta elenca solo le relazioni L2 in cui oggetti di classe "
-            f"'{label}' supportano altri elementi."
-        )
+        supports = [
+            rel for rel in ctx.relationship_layers.get("L2", [])
+            if rel[2] == "supports"
+            and ctx.objects.get(rel[0], {}).get("semantic_label") == label
+        ]
+        return _format_open_support_brief(ctx, label, supports, direction="out")
     else:
         return None
 
-    return _format_grounded_answer(
-        observed=observed,
-        relations="L2/structural: supports. L1/geometric e L3/mereological non sono usate come prova di sostegno.",
-        inference=(
-            inference
-            + " Se l'elenco e vuoto, non viene inferito un supporto probabile da ruolo o vicinanza."
-        ),
-        confidence="media-alta se esistono relazioni L2; media se l'elenco e vuoto perche dipende dalle soglie geometriche.",
+
+def _format_open_support_brief(
+    ctx: SceneContext,
+    label: str,
+    supports: list[Relationship],
+    direction: str,
+) -> str:
+    if not supports:
+        if direction == "out":
+            return f"{label} non supporta nessuna classe tramite relazioni L2."
+        return f"{label} non e supportato da nessuna classe tramite relazioni L2."
+
+    class_index = 1 if direction == "out" else 0
+    class_counts = Counter(
+        ctx.objects.get(rel[class_index], {}).get("semantic_label", "unknown")
+        for rel in supports
     )
+    summary = ", ".join(
+        f"{class_label}={count}"
+        for class_label, count in sorted(class_counts.items())
+    )
+    if direction == "out":
+        return f"{label} supporta: {summary} (L2 supports)."
+    return f"{label} e supportato da: {summary} (L2 supports)."
 
 
 def _asks_what_subject_supports(text: str) -> bool:
