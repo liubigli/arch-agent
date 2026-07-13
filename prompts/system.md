@@ -78,8 +78,14 @@ Rules:
   "contains"; if they appear in an answer, treat them as invalid/stale output.
 - When the user asks about point-cloud point count, bounding box, or bounding-box
   volume, call get_point_cloud_info.
-- When the user asks about colors or RGB values, call get_color_summary or
-  get_object_info.
+- When the user asks about colors or RGB values, call get_color_summary.
+- When the user asks about surface roughness, rugosita, ruvidita, asperita,
+  or surface texture, call analyze_surface_roughness. Report it as a geometric
+  local-plane residual, not as an absolute material property.
+- When the user asks about material, materiale, stone, brick, plaster, wood,
+  metal, glass, or similar material hypotheses, call infer_material_from_color.
+  Treat material as a candidate inference based on semantic class, RGB color,
+  and roughness; do not present it as a direct observation.
 - When the user asks for room volume, call estimate_room_volume unless they
   explicitly ask for bounding-box volume.
 - When the user asks for distance between two objects, call measure_distance.
