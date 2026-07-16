@@ -197,6 +197,10 @@ def _try_answer_deterministic(
     language = _response_language(user_input)
     text = _normalize_text(user_input)
 
+    area_answer = _try_answer_area(ctx, text, language=language)
+    if area_answer is not None:
+        return area_answer
+
     above_support_answer = _try_answer_above_support_question(text, language=language)
     if above_support_answer is not None:
         return above_support_answer
@@ -221,6 +225,28 @@ def _try_answer_deterministic(
     )
     if class_role_answer is not None:
         return class_role_answer
+
+    if _asks_for_relationships(text):
+        level = _extract_relationship_level(text)
+        relationship_type = _extract_relationship_type(text)
+        if not _asks_for_relationship_list(text):
+            return _format_relationship_type_summary(
+                ctx,
+                level=level,
+                relationship_type=relationship_type,
+                language=language,
+            )
+        return _format_grounded_answer(
+            observed=_format_relationships(
+                ctx,
+                level=level,
+                relationship_type=relationship_type,
+                limit=30,
+            ),
+            relations=_relationship_usage_text(level),
+            inference="Nessuna inferenza aggiuntiva: elenco delle relazioni calcolate nel grafo.",
+            confidence="alta per le relazioni elencate; media per il loro significato architettonico se basato solo su L1.",
+        )
 
     evaluation_answer = answer_evaluation_prompt(ctx, user_input)
     if evaluation_answer is not None:
@@ -281,17 +307,6 @@ def _try_answer_deterministic(
             confidence="media: dipende dalla qualità della segmentazione e dalle soglie geometriche.",
         )
 
-    if _asks_for_relationships(text):
-        level = _extract_relationship_level(text)
-        if not _asks_for_relationship_list(text):
-            return _format_relationship_type_summary(ctx, level=level, language=language)
-        return _format_grounded_answer(
-            observed=_format_relationships(ctx, level=level, limit=30),
-            relations=_relationship_usage_text(level),
-            inference="Nessuna inferenza aggiuntiva: elenco delle relazioni calcolate nel grafo.",
-            confidence="alta per le relazioni elencate; media per il loro significato architettonico se basato solo su L1.",
-        )
-
     if "bounding box" in text or "boundingn box" in text:
         return _format_grounded_answer(
             observed=_format_point_cloud_info(ctx),
@@ -308,10 +323,6 @@ def _try_answer_deterministic(
                 inference="Descrizione geometrica globale della nuvola, senza interpretazione architettonica.",
                 confidence="alta: dati letti direttamente dal dataframe della point cloud.",
             )
-
-    area_answer = _try_answer_area(ctx, text, language=language)
-    if area_answer is not None:
-        return area_answer
 
     if "volume" in text and ("stanza" in text or "room" in text):
         return _format_grounded_answer(
@@ -1636,9 +1647,39 @@ def _normalize_text(text: str) -> str:
 
 def _asks_for_relationships(text: str) -> bool:
     relationship_words = ("relazione", "relazioni", "relationship", "relationships")
-    list_words = ("tutte", "tutti", "lista", "elenco", "fornisc", "elenca", "l1", "l2", "l3")
+    scope_words = (
+        "quali",
+        "che",
+        "presenti",
+        "presente",
+        "tipi",
+        "tipo",
+        "conteggio",
+        "distribuzione",
+        "tutte",
+        "tutti",
+        "lista",
+        "elenco",
+        "fornisc",
+        "elenca",
+        "l1",
+        "l2",
+        "l3",
+        "geometric",
+        "structural",
+        "mereolog",
+        "near",
+        "adjacent_to",
+        "adiac",
+        "above",
+        "below",
+        "sopra",
+        "sotto",
+        "supports",
+        "rests_on",
+    )
     return any(word in text for word in relationship_words) and any(
-        word in text for word in list_words
+        word in text for word in scope_words
     )
 
 
@@ -1671,15 +1712,40 @@ def _extract_relationship_level(text: str) -> str:
     return "all"
 
 
+def _extract_relationship_type(text: str) -> str | None:
+    type_aliases = (
+        ("adjacent_to", ("adjacent_to", "adiacente", "adiacenti", "adiacenza", "adjacent")),
+        ("above", ("above", "sopra")),
+        ("below", ("below", "sotto")),
+        ("near", ("near", "vicino", "vicini", "prossim")),
+        ("supports", ("supports", "supporta", "supportano", "sostiene", "sostengono", "sorregge", "sorreggono")),
+        ("rests_on", ("rests_on", "appoggia", "appoggiato", "appoggiati", "rests on")),
+        ("is_opening_in", ("is_opening_in", "apertura")),
+        ("is_ornament_of", ("is_ornament_of", "ornament")),
+        ("is_rib_of", ("is_rib_of", "rib")),
+        ("is_placed_on", ("is_placed_on", "placed_on")),
+        ("is_connected_to", ("is_connected_to", "connected")),
+        ("part_of", ("part_of", "parte")),
+    )
+    for rel_type, aliases in type_aliases:
+        if any(alias in text for alias in aliases):
+            return rel_type
+    return None
+
+
 def _format_relationship_type_summary(
     ctx: SceneContext,
     level: str = "all",
+    relationship_type: str | None = None,
     language: str = "it",
 ) -> str:
     if level == "all":
         parts = []
         for layer in RELATIONSHIP_LAYER_ORDER:
-            relationships = ctx.relationship_layers.get(layer, [])
+            relationships = [
+                rel for rel in ctx.relationship_layers.get(layer, [])
+                if relationship_type is None or rel[2] == relationship_type
+            ]
             type_counts = Counter(rel_type for _, _, rel_type, _ in relationships)
             type_text = ", ".join(
                 f"{rel_type}={count}"
@@ -1693,7 +1759,10 @@ def _format_relationship_type_summary(
         )
         return "; ".join(parts) + f". {suffix}"
 
-    relationships = ctx.relationship_layers.get(level, [])
+    relationships = [
+        rel for rel in ctx.relationship_layers.get(level, [])
+        if relationship_type is None or rel[2] == relationship_type
+    ]
     layer_name = RELATIONSHIP_LAYER_NAMES.get(level, level)
     type_counts = Counter(rel_type for _, _, rel_type, _ in relationships)
     type_text = ", ".join(
@@ -1710,11 +1779,23 @@ def _format_relationship_type_summary(
     return f"{level}/{layer_name}: {type_text}.{suffix}"
 
 
-def _format_relationships(ctx: SceneContext, level: str = "all", limit: int = 30) -> str:
+def _format_relationships(
+    ctx: SceneContext,
+    level: str = "all",
+    relationship_type: str | None = None,
+    limit: int = 30,
+) -> str:
     if level == "all":
-        return _format_relationships_cascade(ctx, limit=limit)
+        return _format_relationships_cascade(
+            ctx,
+            relationship_type=relationship_type,
+            limit=limit,
+        )
 
-    relationships = ctx.relationship_layers.get(level, [])
+    relationships = [
+        rel for rel in ctx.relationship_layers.get(level, [])
+        if relationship_type is None or rel[2] == relationship_type
+    ]
     lines = [f"Relazioni {level}: {len(relationships)}"]
     type_counts = Counter(rel_type for _, _, rel_type, _ in relationships)
     if type_counts:
@@ -1735,9 +1816,19 @@ def _format_relationships(ctx: SceneContext, level: str = "all", limit: int = 30
     return "\n".join(lines)
 
 
-def _format_relationships_cascade(ctx: SceneContext, limit: int = 30) -> str:
+def _format_relationships_cascade(
+    ctx: SceneContext,
+    relationship_type: str | None = None,
+    limit: int = 30,
+) -> str:
     max_rows = max(1, min(int(limit), 1000))
-    total = sum(len(ctx.relationship_layers.get(level, [])) for level in RELATIONSHIP_LAYER_ORDER)
+    total = sum(
+        len([
+            rel for rel in ctx.relationship_layers.get(level, [])
+            if relationship_type is None or rel[2] == relationship_type
+        ])
+        for level in RELATIONSHIP_LAYER_ORDER
+    )
     lines = [
         f"Relazioni all: {total}",
         "Ordine di analisi: L1/geometric -> L2/structural -> L3/mereological",
@@ -1746,7 +1837,10 @@ def _format_relationships_cascade(ctx: SceneContext, limit: int = 30) -> str:
     remaining = max_rows
     hidden = 0
     for level in RELATIONSHIP_LAYER_ORDER:
-        relationships = ctx.relationship_layers.get(level, [])
+        relationships = [
+            rel for rel in ctx.relationship_layers.get(level, [])
+            if relationship_type is None or rel[2] == relationship_type
+        ]
         layer_name = RELATIONSHIP_LAYER_NAMES.get(level, level)
         lines.append(f"{level}/{layer_name}: {len(relationships)}")
 

@@ -79,6 +79,9 @@ Rules:
   names included, call list_relationships. Do not call find_relationships with
   words like "geometric", "structural", "L1", "relazioni", or "incongruenze" as
   if they were object names.
+- If the user asks which relationship types are present, provide a compact
+  count summary by type. List individual edges only when the user explicitly
+  asks for "elenco", "lista", "tutte", "mostra", "dettaglio", or "details".
 - When analyzing relationships without a single requested layer, follow the
   cascade order: first L1/geometric, then L2/structural, then L3/mereological.
   Use structural or mereological interpretations only after checking the
@@ -91,8 +94,10 @@ Rules:
   "contains"; if they appear in an answer, treat them as invalid/stale output.
 - When the user asks about point-cloud point count, bounding box, or bounding-box
   volume, call get_point_cloud_info.
-- When the user asks for occupied area, area della scena, or footprint, answer
-  with the XY footprint/AABB area. Do not use room-volume formulas for area.
+- When the user asks for occupied area, area della scena, superficie occupata,
+  impronta, or footprint, call measure_occupied_area and answer with the XY
+  footprint/AABB area in m2. Never call estimate_room_volume for area questions;
+  estimate_room_volume is only for volume in m3.
 - When the user asks for distance between floor and vault/roof/arch, prefer the
   vertical gap between the top of the lower object and the bottom of the upper
   object. Do not use centroid distance as the primary answer for this case.

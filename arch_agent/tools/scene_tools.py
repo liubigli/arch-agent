@@ -142,7 +142,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
         level: str = "all",
         relationship_type: Optional[str] = None,
         object_name: Optional[str] = None,
-        limit: int = 200,
+        limit: int = 30,
     ) -> str:
         """List relationships from the scene graph.
 
@@ -153,7 +153,8 @@ def create_scene_tools(ctx: SceneContext) -> list:
                 'supports', 'is_opening_in'.
             object_name: Optional object name. If provided, only relationships
                 where this object is source or target are listed.
-            limit: Maximum number of relationship rows to return.
+            limit: Maximum number of relationship rows to return. Default is
+                intentionally small to avoid flooding the chat.
         """
         layer_key = _relationship_layer_key(level)
         if layer_key is None:
@@ -199,7 +200,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
                 f"{rel_type}={count}" for rel_type, count in sorted(type_counts.items())
             )
 
-        max_rows = max(1, min(int(limit), 1000))
+        max_rows = max(1, min(int(limit), 200))
         lines = [title]
         remaining = max_rows
         hidden = 0
@@ -289,13 +290,14 @@ def create_scene_tools(ctx: SceneContext) -> list:
 
     @tool
     def get_point_cloud_info() -> str:
-        """Get point-cloud level metrics: point count, classes, bounding box, and RGB availability."""
+        """Get point-cloud level metrics: point count, classes, bounding box, footprint, and RGB availability."""
         if ctx.df is None or ctx.df.empty:
             return "No point-cloud dataframe is available."
 
         mins = ctx.df[["x", "y", "z"]].min()
         maxs = ctx.df[["x", "y", "z"]].max()
         dims = maxs - mins
+        footprint_area = float(dims["x"] * dims["y"])
         volume = float(dims["x"] * dims["y"] * dims["z"])
         class_counts = ctx.df["semantic_label"].value_counts().sort_index()
 
@@ -305,6 +307,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
             f"  Min (x,y,z): ({mins['x']:.2f}, {mins['y']:.2f}, {mins['z']:.2f})",
             f"  Max (x,y,z): ({maxs['x']:.2f}, {maxs['y']:.2f}, {maxs['z']:.2f})",
             f"  Size (x,y,z): ({dims['x']:.2f}, {dims['y']:.2f}, {dims['z']:.2f}) m",
+            f"  XY footprint area: {footprint_area:.3f} m2",
             f"  AABB volume: {volume:.3f} m3",
             "Point classes:",
         ]
@@ -314,6 +317,63 @@ def create_scene_tools(ctx: SceneContext) -> list:
             + ("available" if has_rgb(ctx.df) else "not available")
         )
         return "\n".join(lines)
+
+    @tool
+    def measure_occupied_area(
+        semantic_label: Optional[str] = None,
+        object_name: Optional[str] = None,
+    ) -> str:
+        """Measure occupied area/footprint in square meters.
+
+        Use this for questions about area, occupied area, footprint, area della
+        scena, superficie occupata, or impronta. This returns XY AABB footprint
+        area in m2, not room volume. Do not use estimate_room_volume for area.
+
+        Args:
+            semantic_label: Optional semantic class, e.g. 'floor' or 'column'.
+            object_name: Optional object name, e.g. 'floor_0'.
+        """
+        if object_name:
+            if object_name not in ctx.objects:
+                return _object_not_found_message(object_name, ctx.objects)
+            area = _xy_area(ctx.objects[object_name]["bounds"])
+            label = ctx.objects[object_name]["semantic_label"]
+            return (
+                f"Occupied area for {object_name} ({label}): {area:.3f} m2 "
+                "(XY AABB footprint, not volume)."
+            )
+
+        if semantic_label:
+            matching = [
+                (name, obj)
+                for name, obj in ctx.objects.items()
+                if obj["semantic_label"] == semantic_label
+            ]
+            if not matching:
+                return f"No objects with semantic label '{semantic_label}' found."
+            rows = [
+                (name, _xy_area(obj["bounds"]))
+                for name, obj in matching
+            ]
+            total = sum(area for _, area in rows)
+            largest_name, largest_area = max(rows, key=lambda row: row[1])
+            return (
+                f"Occupied area for class {semantic_label}: {total:.3f} m2 "
+                f"summing {len(rows)} XY AABB footprints. "
+                f"Largest object: {largest_name} = {largest_area:.3f} m2."
+            )
+
+        if ctx.df is None or ctx.df.empty:
+            return "No point-cloud dataframe is available."
+        mins = ctx.df[["x", "y"]].min()
+        maxs = ctx.df[["x", "y"]].max()
+        dx = float(maxs["x"] - mins["x"])
+        dy = float(maxs["y"] - mins["y"])
+        area = dx * dy
+        return (
+            f"Scene occupied area: {area:.3f} m2 "
+            f"(XY AABB footprint: {dx:.3f} x {dy:.3f} m; not volume)."
+        )
 
     @tool
     def get_color_summary(
@@ -453,7 +513,12 @@ def create_scene_tools(ctx: SceneContext) -> list:
 
     @tool
     def estimate_room_volume() -> str:
-        """Estimate room volume as a containing box: floor footprint times envelope height."""
+        """Estimate room volume in cubic meters.
+
+        Use only for room-volume questions. Do not use this for area, occupied
+        area, footprint, area della scena, superficie occupata, or impronta:
+        those require measure_occupied_area and must be reported in m2.
+        """
         room_volume = ctx.scene_features.get("room_volume", {})
         if not room_volume:
             return (
@@ -658,6 +723,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
         find_relationship_anomalies,
         get_scene_statistics,
         get_point_cloud_info,
+        measure_occupied_area,
         get_color_summary,
         analyze_surface_roughness,
         infer_material_from_color,
