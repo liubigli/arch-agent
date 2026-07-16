@@ -2,7 +2,7 @@
 
 An LLM-powered agent for interactive analysis of 3D architectural point clouds.
 
-Given a semantically labelled point cloud (LAZ), the system builds a **three stratified scene graphs** of the architectural space and launches a conversational agent that lets you explore it in natural language.
+Given a semantically labelled point cloud (LAZ), the system builds **three separate stratified scene graphs** of the architectural space and launches a conversational agent that lets you explore it in natural language.
 
 ## How it works
 
@@ -20,10 +20,10 @@ LAZ point cloud
 |      - L1 geometric                                   |
 |      - L2 structural                                  |
 |     - L3 mereological                                 │
-│  5. Scene graph (NetworkX DiGraph)                    │
-│      - geometric graph                                │
-|      - structural graph                               │
-|      - mereological graph                             │
+│  5. Three scene graphs (NetworkX DiGraph)             │
+│      - L1 geometric graph                             │
+|      - L2 structural graph                            │
+|      - L3 mereological graph                          │
 └───────────────────────────────────────────────────────┘
 
       │
@@ -33,8 +33,8 @@ LAZ point cloud
 │  Tools:                                     │
 │  • list_objects                             │
 │  • get_object_info                          │
-│  • find_relationships                       │
 │  • list_relationships                       │
+│  • find_relationships                       │
 │  • find_relationship_anomalies              │
 │  • get_scene_statistics                     │
 │  • get_point_cloud_info                     │
@@ -103,13 +103,15 @@ Each detected object stores the segmentation method used:
 ```md
 ## Stratified relationship model
 
-The scene is represented through three relationship levels. Each level is stored as a separate `networkx.DiGraph`, avoiding duplicated edges inside a graph while preserving multiple interpretations of the same object pair across levels.
+The scene is represented as three stratified relationship levels. Each level is stored as a separate `networkx.DiGraph`: `ctx.scene_graphs["L1"]`, `ctx.scene_graphs["L2"]`, and `ctx.scene_graphs["L3"]`. The system does not store a single graph with multi-level edge labels; it keeps one graph per layer to avoid duplicated edges inside a graph while preserving multiple interpretations of the same object pair across levels.
 
 | Level | Graph | Relations | Meaning |
 |---|---|---|---|
 | L1 | geometric | `near`, `adjacent_to`, `above`, `below` | spatial position and proximity |
 | L2 | structural | `supports`, `rests_on` | vertical support and load-bearing interpretation |
-| L3 | mereological | `part_of`, `has_part`, `is_opening_in`, `is_rib_of`, `is_ornament_of`, `is_attached_to`, `is_placed_on`, `is_connected_to` | architectural composition and functional membership |
+| L3 | mereological | `has_part`, `is_opening_in`, `is_ornament_of`, `is_attached_to` | architectural composition and functional membership |
+
+For relationship queries, `list_relationships` is the primary tool for listing or counting relationships by layer, type, or object. `find_relationships` is kept for object-centric inspection of all relationships involving one specific object.
 
 The three graphs are available in the scene context:
 
