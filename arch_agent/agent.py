@@ -38,6 +38,8 @@ _SEMANTIC_ALIASES = (
     ("porta-finestra", "door_window"),
     ("porte finestre", "door_window"),
     ("porte-finestre", "door_window"),
+    ("openings", "door_window"),
+    ("opening", "door_window"),
     ("archi", "arch"),
     ("arco", "arch"),
     ("arches", "arch"),
@@ -72,6 +74,9 @@ _SEMANTIC_ALIASES = (
     ("scala", "stairs"),
     ("stairs", "stairs"),
     ("stair", "stairs"),
+    ("modanaturwe", "moldings"),
+    ("modanaturw", "moldings"),
+    ("modanatur", "moldings"),
     ("modanature", "moldings"),
     ("modanatura", "moldings"),
     ("moldings", "moldings"),
@@ -208,6 +213,10 @@ def _try_answer_deterministic(
     dominant_answer = _try_answer_dominant_element(ctx, text, language=language)
     if dominant_answer is not None:
         return dominant_answer
+
+    opening_answer = _try_answer_opening_in_wall_question(ctx, text, language=language)
+    if opening_answer is not None:
+        return opening_answer
 
     mereological_answer = _try_answer_mereological_between_classes(
         ctx,
@@ -859,6 +868,68 @@ def _asks_for_dominant_element(text: str) -> bool:
     return any(term in text for term in terms)
 
 
+def _try_answer_opening_in_wall_question(
+    ctx: SceneContext,
+    text: str,
+    language: str = "it",
+) -> str | None:
+    if not _asks_if_opening_in_wall(text):
+        return None
+
+    labels = _extract_semantic_labels(text)
+    subject_labels = [label for label in labels if label != "wall"]
+    subject_label = subject_labels[0] if subject_labels else None
+    if subject_label is None:
+        return None
+
+    if subject_label != "door_window":
+        alternate = mereological_relation_type(subject_label, "wall")
+        if language == "en":
+            if alternate:
+                return (
+                    f"No. `{subject_label}` is not an opening in `wall`; "
+                    f"the applicable L3 relation is `{alternate}`."
+                )
+            return f"No. `{subject_label}` is not defined as an opening in `wall`."
+        if alternate:
+            return (
+                f"No. `{subject_label}` non è un'apertura nel `wall`; "
+                f"la relazione L3 applicabile è `{alternate}`."
+            )
+        return f"No. `{subject_label}` non è definito come apertura nel `wall`."
+
+    relationships = [
+        rel for rel in ctx.relationship_layers.get("L3", [])
+        if rel[2] == "is_opening_in"
+        and ctx.objects.get(rel[0], {}).get("semantic_label") == "door_window"
+        and ctx.objects.get(rel[1], {}).get("semantic_label") == "wall"
+    ]
+    if relationships:
+        return _phrase(
+            language,
+            it=f"Sì. Trovate {len(relationships)} relazioni L3 `is_opening_in` door_window -> wall.",
+            en=f"Yes. Found {len(relationships)} L3 `is_opening_in` relationships door_window -> wall.",
+        )
+    return _phrase(
+        language,
+        it="No. La regola door_window -> wall esiste, ma nella scena non ci sono relazioni L3 `is_opening_in`.",
+        en="No. The door_window -> wall rule exists, but the scene has no L3 `is_opening_in` relationships.",
+    )
+
+
+def _asks_if_opening_in_wall(text: str) -> bool:
+    opening_terms = (
+        "apertura",
+        "aperture",
+        "opening",
+        "openings",
+    )
+    wall_terms = ("wall", "muro", "muri", "parete", "pareti")
+    return any(term in text for term in opening_terms) and any(
+        term in text for term in wall_terms
+    )
+
+
 def _try_answer_mereological_between_classes(
     ctx: SceneContext,
     text: str,
@@ -869,6 +940,15 @@ def _try_answer_mereological_between_classes(
         return None
     if not _asks_for_mereological_relation(text):
         return None
+
+    strict_opening_answer = _try_answer_strict_opening_mereology(
+        ctx,
+        labels,
+        text,
+        language=language,
+    )
+    if strict_opening_answer is not None:
+        return strict_opening_answer
 
     pair = _mereological_label_pair(labels)
     if pair is None:
@@ -922,6 +1002,47 @@ def _try_answer_mereological_between_classes(
             f"No. The rule allows it ({child_label} -> {parent_label}: "
             f"`{relation_type}`), but the current graph has no matching L3 relationship."
         ),
+    )
+
+
+def _try_answer_strict_opening_mereology(
+    ctx: SceneContext,
+    labels: list[str],
+    text: str,
+    language: str = "it",
+) -> str | None:
+    if not _asks_if_opening_in_wall(text):
+        return None
+
+    subject = next((label for label in labels if label != "wall"), None)
+    if subject != "door_window":
+        subject_text = f"`{subject}`" if subject else "questa classe"
+        if language == "en":
+            return (
+                f"No. {subject_text} is not an opening in `wall`; "
+                "only `door_window -> wall` can have L3 `is_opening_in`."
+            )
+        return (
+            f"No. {subject_text} non è un'apertura nel `wall`; "
+            "solo `door_window -> wall` può avere L3 `is_opening_in`."
+        )
+
+    relationships = [
+        rel for rel in ctx.relationship_layers.get("L3", [])
+        if rel[2] == "is_opening_in"
+        and ctx.objects.get(rel[0], {}).get("semantic_label") == "door_window"
+        and ctx.objects.get(rel[1], {}).get("semantic_label") == "wall"
+    ]
+    if relationships:
+        return _phrase(
+            language,
+            it=f"Sì. Trovate {len(relationships)} relazioni L3 `is_opening_in` door_window -> wall.",
+            en=f"Yes. Found {len(relationships)} L3 `is_opening_in` relationships door_window -> wall.",
+        )
+    return _phrase(
+        language,
+        it="No. La regola `door_window -> wall` esiste, ma nella scena non ci sono relazioni L3 `is_opening_in`.",
+        en="No. The `door_window -> wall` rule exists, but the scene has no L3 `is_opening_in` relationships.",
     )
 
 
