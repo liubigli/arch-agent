@@ -247,14 +247,22 @@ def material_hypotheses(
         evidence.append(f"semantic_label={semantic_label}")
     if color is not None:
         family = _color_family(color["mean_rgb8"])
+        color_strength = _color_strength(color["mean_rgb8"])
         evidence.append(
             "mean_rgb8="
             f"({color['mean_rgb8'][0]}, {color['mean_rgb8'][1]}, {color['mean_rgb8'][2]})"
         )
         evidence.append(f"color_family={family}")
-        _add_color_material_candidates(candidates, family, semantic_label)
+        evidence.append(f"color_strength={color_strength}")
+        _add_color_material_candidates(
+            candidates,
+            family,
+            semantic_label,
+            color_strength=color_strength,
+        )
     else:
         family = "unknown"
+        color_strength = "none"
         evidence.append("RGB unavailable")
 
     if roughness.get("available"):
@@ -287,13 +295,19 @@ def material_hypotheses(
         reverse=True,
     )
     top_score = sorted_candidates[0]["score"]
-    confidence = _material_confidence(top_score, color is not None, roughness_level)
+    confidence = _material_confidence(
+        top_score,
+        color is not None,
+        roughness_level,
+        color_strength,
+    )
 
     return {
         "available": True,
         "semantic_label": semantic_label,
         "color": color,
         "color_family": family,
+        "color_strength": color_strength,
         "roughness": roughness,
         "candidates": sorted_candidates[:5],
         "confidence": confidence,
@@ -359,7 +373,7 @@ def format_material_summary(
             f"Inferenza materiale per {name}:",
             f"  Classe semantica: {semantic_label or 'non specificata'}",
             f"  {color_line_it}",
-            f"  Famiglia colore: {result['color_family']}",
+            f"  Famiglia colore: {result['color_family']} ({_color_strength_label(result['color_strength'], language)})",
             f"  {roughness_line_it}",
             "  Materiali candidati:",
         ]
@@ -379,7 +393,7 @@ def format_material_summary(
         f"Material inference for {name}:",
         f"  Semantic class: {semantic_label or 'not specified'}",
         f"  {color_line_en}",
-        f"  Color family: {result['color_family']}",
+        f"  Color family: {result['color_family']} ({_color_strength_label(result['color_strength'], language)})",
         f"  {roughness_line_en}",
         "  Candidate materials:",
     ]
@@ -425,28 +439,38 @@ def _add_color_material_candidates(
     candidates: dict[str, dict],
     family: str,
     semantic_label: str | None,
+    color_strength: str = "medium",
 ) -> None:
     structural_labels = {"arch", "column", "wall", "vault", "roof", "stairs", "floor"}
     is_structural = semantic_label in structural_labels
+    strength_weight = {
+        "none": 0.0,
+        "weak": 0.35,
+        "medium": 0.7,
+        "strong": 1.0,
+    }.get(color_strength, 0.7)
 
     if family in {"red_orange", "terracotta", "brown_orange", "ochre"}:
-        _add_candidate(candidates, "brick masonry", 0.55, "reddish/orange RGB")
-        _add_candidate(candidates, "terracotta/tile", 0.45, "reddish/orange RGB")
+        _add_candidate(candidates, "brick masonry", 0.55 * strength_weight, "reddish/orange RGB")
+        _add_candidate(candidates, "terracotta/tile", 0.45 * strength_weight, "reddish/orange RGB")
         if semantic_label == "roof":
-            _add_candidate(candidates, "tile/terracotta", 0.65, "roof class with warm red/orange color")
+            _add_candidate(candidates, "tile/terracotta", 0.65 * strength_weight, "roof class with warm red/orange color")
     elif family == "brown":
-        _add_candidate(candidates, "wood", 0.45, "brown RGB")
-        _add_candidate(candidates, "weathered stone", 0.35, "brown/earthy RGB")
+        _add_candidate(candidates, "wood", 0.45 * strength_weight, "brown RGB")
+        _add_candidate(candidates, "weathered stone", 0.35 * strength_weight, "brown/earthy RGB")
         if semantic_label in {"floor", "stairs", "door_window", "roof"}:
-            _add_candidate(candidates, "wood", 0.25, "class often compatible with timber")
+            _add_candidate(candidates, "wood", 0.25 * strength_weight, "class often compatible with timber")
     elif family in {"white", "light_gray"}:
         _add_candidate(candidates, "plaster/stucco", 0.45, "light neutral RGB")
         _add_candidate(candidates, "marble/limestone", 0.45, "light neutral RGB")
         if is_structural:
             _add_candidate(candidates, "stone", 0.25, "structural class with light neutral color")
-    elif family in {"gray", "dark_gray"}:
-        _add_candidate(candidates, "stone", 0.5, "gray neutral RGB")
-        _add_candidate(candidates, "concrete", 0.4, "gray neutral RGB")
+    elif family in {"gray", "dark_gray", "muted_dark", "muted_gray"}:
+        neutral_weight = 0.6 if family in {"muted_dark", "muted_gray"} else 1.0
+        _add_candidate(candidates, "stone", 0.5 * neutral_weight, "gray neutral RGB")
+        _add_candidate(candidates, "concrete", 0.4 * neutral_weight, "gray neutral RGB")
+        if family in {"muted_dark", "muted_gray"}:
+            _add_candidate(candidates, "weathered stone", 0.25, "muted low-saturation RGB")
         if semantic_label == "door_window":
             _add_candidate(candidates, "metal", 0.25, "gray RGB on opening class")
     elif family in {"blue", "cyan"}:
@@ -491,9 +515,16 @@ def _add_candidate(
         entry["reasons"].append(reason)
 
 
-def _material_confidence(score: float, has_color_data: bool, roughness_level: str) -> str:
+def _material_confidence(
+    score: float,
+    has_color_data: bool,
+    roughness_level: str,
+    color_strength: str,
+) -> str:
     if not has_color_data:
         return "low"
+    if color_strength == "weak":
+        return "medium" if score >= 0.65 and roughness_level != "unknown" else "low"
     if score >= 0.8 and roughness_level != "unknown":
         return "medium-high"
     if score >= 0.55:
@@ -514,16 +545,19 @@ def _confidence_label(level: str, language: str) -> str:
 def _color_family(rgb: tuple[int, int, int]) -> str:
     r, g, b = [float(value) for value in rgb]
     h, s, v = _rgb_to_hsv(r, g, b)
+    chroma = max(r, g, b) - min(r, g, b)
 
     if v < 35:
         return "black"
-    if s < 0.12:
+    if s < 0.25 or chroma < 24:
         if v > 205:
             return "white"
         if v > 145:
             return "light_gray"
+        if v > 95:
+            return "muted_gray"
         if v > 70:
-            return "gray"
+            return "muted_dark"
         return "dark_gray"
     if 0 <= h < 18 or h >= 345:
         return "red_orange"
@@ -542,6 +576,33 @@ def _color_family(rgb: tuple[int, int, int]) -> str:
     if v < 120:
         return "brown"
     return "mixed"
+
+
+def _color_strength(rgb: tuple[int, int, int]) -> str:
+    r, g, b = [float(value) for value in rgb]
+    _, saturation, value = _rgb_to_hsv(r, g, b)
+    chroma = max(r, g, b) - min(r, g, b)
+    if saturation < 0.18 or chroma < 18:
+        return "weak"
+    if saturation < 0.35 or chroma < 45 or value < 90:
+        return "medium"
+    return "strong"
+
+
+def _color_strength_label(strength: str, language: str) -> str:
+    if language == "it":
+        return {
+            "none": "colore non disponibile",
+            "weak": "indizio cromatico debole",
+            "medium": "indizio cromatico medio",
+            "strong": "indizio cromatico forte",
+        }.get(strength, strength)
+    return {
+        "none": "color unavailable",
+        "weak": "weak color cue",
+        "medium": "medium color cue",
+        "strong": "strong color cue",
+    }.get(strength, strength)
 
 
 def _rgb_to_hsv(r: float, g: float, b: float) -> tuple[float, float, float]:

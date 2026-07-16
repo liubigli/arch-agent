@@ -168,11 +168,21 @@ def _try_answer_deterministic(
     default_label: str | None = None,
 ) -> str | None:
     language = _response_language(user_input)
+    text = _normalize_text(user_input)
+
+    class_role_answer = _try_answer_class_role(
+        ctx,
+        text,
+        default_label=default_label,
+        language=language,
+    )
+    if class_role_answer is not None:
+        return class_role_answer
+
     evaluation_answer = answer_evaluation_prompt(ctx, user_input)
     if evaluation_answer is not None:
         return evaluation_answer
 
-    text = _normalize_text(user_input)
     semantic_count = _try_answer_semantic_count(ctx, text, language=language)
     if semantic_count is not None:
         return _format_grounded_answer(
@@ -333,8 +343,14 @@ def _try_answer_deterministic(
             ),
             confidence=_phrase(
                 language,
-                it="media-bassa: inferenza euristica, non analisi materica calibrata.",
-                en="medium-low: heuristic inference, not calibrated material analysis.",
+                it=(
+                    "vedi la confidenza materiale riportata nei dati osservati; "
+                    "resta comunque un'inferenza euristica, non un'analisi materica calibrata."
+                ),
+                en=(
+                    "see the material confidence reported in the observed data; "
+                    "it remains a heuristic inference, not calibrated material analysis."
+                ),
             ),
             language=language,
         )
@@ -651,6 +667,196 @@ def _asks_for_class_count(text: str) -> bool:
     return any(term in text for term in count_terms) and any(
         term in text for term in class_terms
     )
+
+
+def _try_answer_class_role(
+    ctx: SceneContext,
+    text: str,
+    default_label: str | None = None,
+    language: str = "it",
+) -> str | None:
+    labels = _extract_semantic_labels(text)
+    label = labels[0] if labels else default_label
+    if label is None:
+        return None
+    if not (_asks_for_role_or_function(text) or _is_scene_scope_correction(text)):
+        return None
+
+    object_names = _objects_with_semantic_label(ctx, label)
+    role = architectural_role(label)
+    role_text = _role_display(role, language)
+    role_is_structural = role == "structural"
+    requested_role = _requested_role(text)
+
+    if requested_role in {"structural", "load_bearing"}:
+        answer = _phrase(language, it="Si", en="Yes") if role_is_structural else _phrase(language, it="No", en="No")
+    elif requested_role == "non_load_bearing":
+        answer = _phrase(language, it="No", en="No") if role_is_structural else _phrase(language, it="Si", en="Yes")
+    elif requested_role and requested_role == role:
+        answer = _phrase(language, it="Si", en="Yes")
+    elif requested_role:
+        answer = _phrase(language, it="No", en="No")
+    else:
+        answer = _phrase(language, it="Ruolo della classe", en="Class role")
+
+    supports_out = [
+        rel for rel in ctx.relationship_layers.get("L2", [])
+        if rel[2] == "supports"
+        and ctx.objects.get(rel[0], {}).get("semantic_label") == label
+    ]
+    supports_in = [
+        rel for rel in ctx.relationship_layers.get("L2", [])
+        if rel[2] == "supports"
+        and ctx.objects.get(rel[1], {}).get("semantic_label") == label
+    ]
+    instances = _format_limited_names(object_names, limit=25)
+
+    if language == "en":
+        observed = "\n".join([
+            f"{answer}: class '{label}' has architectural role '{role}' ({role_text}).",
+            f"Objects of class '{label}': {len(object_names)}.",
+            f"Instances: {instances}.",
+            f"L2 supports from '{label}': {len(supports_out)}.",
+            f"L2 supports toward '{label}': {len(supports_in)}.",
+        ])
+        inference = (
+            f"Objects of class '{label}' are treated as {role_text}. "
+            "This is an ontology-based role; actual load transfer in the current scene "
+            "must be checked with L2 supports relationships."
+        )
+        confidence = (
+            "high for the class role in the Python ontology; medium for actual "
+            "load-bearing behavior because it depends on L2 relationships and segmentation."
+        )
+        relations = (
+            "No L1/L2/L3 relationship is needed to answer the class-role question. "
+            "L2 supports counts are reported only as additional scene evidence."
+        )
+    else:
+        observed = "\n".join([
+            f"{answer}: la classe '{label}' ha ruolo architettonico '{role}' ({role_text}).",
+            f"Oggetti di classe '{label}': {len(object_names)}.",
+            f"Istanze: {instances}.",
+            f"Relazioni L2 supports da '{label}': {len(supports_out)}.",
+            f"Relazioni L2 supports verso '{label}': {len(supports_in)}.",
+        ])
+        inference = (
+            f"Gli oggetti di classe '{label}' sono trattati come {role_text}. "
+            "Questo e un ruolo definito dall'ontologia; la portanza effettiva nella scena "
+            "va verificata con relazioni L2 supports."
+        )
+        confidence = (
+            "alta per il ruolo di classe nell'ontologia Python; media per la portanza "
+            "effettiva perche dipende da relazioni L2 e segmentazione."
+        )
+        relations = (
+            "Nessuna relazione L1/L2/L3 necessaria per rispondere al ruolo di classe. "
+            "I conteggi L2 supports sono riportati solo come evidenza aggiuntiva della scena."
+        )
+
+    return _format_grounded_answer(
+        observed=observed,
+        relations=relations,
+        inference=inference,
+        confidence=confidence,
+        language=language,
+    )
+
+
+def _asks_for_role_or_function(text: str) -> bool:
+    role_terms = (
+        "strutturale",
+        "strutturali",
+        "structural",
+        "portante",
+        "portanti",
+        "load-bearing",
+        "load bearing",
+        "non portante",
+        "non portanti",
+        "non strutturale",
+        "non strutturali",
+        "non-structural",
+        "non structural",
+        "ornamentale",
+        "ornamentali",
+        "ornamental",
+        "decorativo",
+        "decorativi",
+        "opening",
+        "apertura",
+        "aperture",
+        "circolazione",
+        "distributiva",
+        "passaggio",
+        "accesso",
+        "ruolo",
+        "role",
+        "funzione",
+        "function",
+    )
+    return any(term in text for term in role_terms)
+
+
+def _is_scene_scope_correction(text: str) -> bool:
+    correction_terms = (
+        "non tutta la scena",
+        "non la scena",
+        "solo questa classe",
+        "solo la classe",
+        "solo queste",
+        "solo questi",
+        "not the whole scene",
+        "not whole scene",
+        "only this class",
+    )
+    return any(term in text for term in correction_terms)
+
+
+def _requested_role(text: str) -> str | None:
+    if any(term in text for term in ("non portante", "non portanti", "non-load-bearing", "non load-bearing")):
+        return "non_load_bearing"
+    if any(term in text for term in ("portante", "portanti", "load-bearing", "load bearing")):
+        return "load_bearing"
+    if any(term in text for term in ("strutturale", "strutturali", "structural")):
+        return "structural"
+    if any(term in text for term in ("ornamentale", "ornamentali", "ornamental", "decorativo", "decorativi")):
+        return "ornamental"
+    if any(term in text for term in ("apertura", "aperture", "opening")):
+        return "opening"
+    if any(term in text for term in ("circolazione", "distributiva", "passaggio", "accesso", "circulation")):
+        return "circulation"
+    if any(term in text for term in ("support_surface", "superficie di appoggio", "piano di appoggio")):
+        return "support_surface"
+    return None
+
+
+def _role_display(role: str, language: str = "it") -> str:
+    if language == "en":
+        return {
+            "structural": "structural",
+            "support_surface": "support surface",
+            "circulation": "circulation/access",
+            "ornamental": "ornamental",
+            "opening": "opening",
+            "unknown": "unknown/undetermined",
+        }.get(role, role)
+    return {
+        "structural": "strutturale",
+        "support_surface": "superficie di appoggio",
+        "circulation": "circolazione/accesso",
+        "ornamental": "ornamentale",
+        "opening": "apertura",
+        "unknown": "sconosciuto/non determinato",
+    }.get(role, role)
+
+
+def _format_limited_names(names: list[str], limit: int = 25) -> str:
+    if not names:
+        return "nessuna"
+    shown = names[:limit]
+    suffix = f", ... (+{len(names) - limit})" if len(names) > limit else ""
+    return ", ".join(shown) + suffix
 
 
 def _try_answer_support_between_classes(
