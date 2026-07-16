@@ -217,6 +217,10 @@ def _try_answer_deterministic(
     if mereological_answer is not None:
         return mereological_answer
 
+    load_bearing_answer = _try_answer_load_bearing_elements(ctx, text, language=language)
+    if load_bearing_answer is not None:
+        return load_bearing_answer
+
     class_role_answer = _try_answer_class_role(
         ctx,
         text,
@@ -225,6 +229,40 @@ def _try_answer_deterministic(
     )
     if class_role_answer is not None:
         return class_role_answer
+
+    class_relationships = _try_answer_class_relationships(
+        ctx,
+        text,
+        default_label=default_label,
+        language=language,
+    )
+    if class_relationships is not None:
+        return class_relationships
+
+    if _asks_for_relationship_inconsistencies(text):
+        return _format_grounded_answer(
+            observed=_format_relationship_inconsistencies(ctx),
+            relations=_phrase(
+                language,
+                it="Controllo incrociato su L1/geometric, L2/structural e L3/mereological.",
+                en="Cross-check across L1/geometric, L2/structural, and L3/mereological.",
+            ),
+            inference=_phrase(
+                language,
+                it="Le anomalie indicano conflitti logici o relazioni non coerenti con le regole architettoniche.",
+                en="Anomalies indicate logical conflicts or relationships that do not match the architectural rules.",
+            ),
+            confidence=_phrase(
+                language,
+                it="media: dipende dalla qualità della segmentazione e dalle soglie geometriche.",
+                en="medium: it depends on segmentation quality and geometric thresholds.",
+            ),
+            language=language,
+        )
+
+    relationship_layer_conflict = _try_answer_relationship_layer_conflict(text, language=language)
+    if relationship_layer_conflict is not None:
+        return relationship_layer_conflict
 
     if _asks_for_relationships(text):
         level = _extract_relationship_level(text)
@@ -247,6 +285,14 @@ def _try_answer_deterministic(
             inference="Nessuna inferenza aggiuntiva: elenco delle relazioni calcolate nel grafo.",
             confidence="alta per le relazioni elencate; media per il loro significato architettonico se basato solo su L1.",
         )
+
+    above_below_answer = _try_answer_above_below_elements(ctx, text, language=language)
+    if above_below_answer is not None:
+        return above_below_answer
+
+    scene_brief = _try_answer_scene_brief(ctx, text, language=language)
+    if scene_brief is not None:
+        return scene_brief
 
     evaluation_answer = answer_evaluation_prompt(ctx, user_input)
     if evaluation_answer is not None:
@@ -271,15 +317,6 @@ def _try_answer_deterministic(
     open_support_answer = _try_answer_open_support_question(ctx, text, language=language)
     if open_support_answer is not None:
         return open_support_answer
-
-    class_relationships = _try_answer_class_relationships(
-        ctx,
-        text,
-        default_label=default_label,
-        language=language,
-    )
-    if class_relationships is not None:
-        return class_relationships
 
     requested_facts = _format_requested_facts(ctx, text)
     if requested_facts is not None:
@@ -917,6 +954,101 @@ def _mereological_label_pair(labels: list[str]) -> tuple[str, str, str] | None:
     return None
 
 
+def _try_answer_load_bearing_elements(
+    ctx: SceneContext,
+    text: str,
+    language: str = "it",
+) -> str | None:
+    if not _asks_for_global_load_bearing(text):
+        return None
+
+    structural = _objects_with_roles(ctx, {"structural"})
+    support_surfaces = _objects_with_roles(ctx, {"support_surface"})
+    non_bearing = _objects_with_roles(ctx, {"ornamental", "opening", "circulation", "unknown"})
+    supports = [
+        rel for rel in ctx.relationship_layers.get("L2", [])
+        if rel[2] == "supports"
+    ]
+
+    if language == "en":
+        return _format_grounded_answer(
+            observed="\n".join([
+                "Potentially load-bearing by ontology: " + _format_role_groups(ctx, structural),
+                "Support surfaces: " + _format_role_groups(ctx, support_surfaces),
+                "Non-load-bearing or undetermined: " + _format_role_groups(ctx, non_bearing),
+                f"L2 supports relationships found: {len(supports)}.",
+            ]),
+            relations="Architectural roles from the ontology; L2/structural supports only as supporting evidence.",
+            inference=(
+                "Columns, walls, vaults, roofs, and arches are treated as structural classes. "
+                "This is not a mechanical verification of load transfer."
+            ),
+            confidence="medium: role is semantic; actual load transfer depends on L2 relations and segmentation.",
+            language=language,
+        )
+
+    return _format_grounded_answer(
+        observed="\n".join([
+            "Potenzialmente portanti da ontologia: " + _format_role_groups(ctx, structural),
+            "Superfici di appoggio: " + _format_role_groups(ctx, support_surfaces),
+            "Non portanti o non determinati: " + _format_role_groups(ctx, non_bearing),
+            f"Relazioni L2 supports trovate: {len(supports)}.",
+        ]),
+        relations="Ruoli architettonici dall'ontologia; L2/structural supports solo come evidenza di supporto.",
+        inference=(
+            "Column, wall, vault, roof e arch sono trattati come classi strutturali. "
+            "Non è una verifica meccanica del trasferimento dei carichi."
+        ),
+        confidence="media: il ruolo è semantico; la portanza effettiva dipende da L2 e segmentazione.",
+        language=language,
+    )
+
+
+def _asks_for_global_load_bearing(text: str) -> bool:
+    role_terms = (
+        "load-bearing",
+        "load bearing",
+        "portanti",
+        "portante",
+        "strutturali",
+        "strutturale",
+    )
+    global_terms = (
+        "which elements",
+        "what elements",
+        "which objects",
+        "what objects",
+        "quali elementi",
+        "quali oggetti",
+        "elementi sembrano",
+        "oggetti sembrano",
+    )
+    return any(term in text for term in role_terms) and any(
+        term in text for term in global_terms
+    )
+
+
+def _objects_with_roles(ctx: SceneContext, roles: set[str]) -> list[str]:
+    return sorted(
+        name
+        for name, obj in ctx.objects.items()
+        if architectural_role(obj["semantic_label"]) in roles
+    )
+
+
+def _format_role_groups(ctx: SceneContext, object_names: list[str]) -> str:
+    if not object_names:
+        return "none"
+    groups: dict[str, list[str]] = defaultdict(list)
+    for name in object_names:
+        label = ctx.objects.get(name, {}).get("semantic_label", "unknown")
+        groups[label].append(name)
+    return "; ".join(
+        f"{label}: {', '.join(names)}"
+        for label, names in sorted(groups.items())
+    )
+
+
 def _try_answer_class_role(
     ctx: SceneContext,
     text: str,
@@ -1039,7 +1171,14 @@ def _is_pronoun_role_followup(text: str) -> bool:
             "l3",
             "quali elementi",
             "quali oggetti",
+            "which elements",
+            "what elements",
+            "which objects",
+            "what objects",
+            "all elements",
+            "all objects",
             "scena",
+            "scene",
         )
     ):
         return False
@@ -1335,7 +1474,24 @@ def _try_answer_class_relationships(
     if label is None:
         return None
 
-    observed = _format_class_relationship_summary(ctx, label, language=language)
+    level = _extract_relationship_level(text)
+    relationship_type = _extract_relationship_type(text)
+    if _asks_for_relationship_list(text):
+        observed = _format_class_relationship_details(
+            ctx,
+            label,
+            level=level,
+            relationship_type=relationship_type,
+            language=language,
+        )
+    else:
+        observed = _format_class_relationship_summary(
+            ctx,
+            label,
+            level=level,
+            relationship_type=relationship_type,
+            language=language,
+        )
     return _format_grounded_answer(
         observed=observed,
         relations=_phrase(
@@ -1400,6 +1556,8 @@ def _asks_for_class_relationships(text: str) -> bool:
 def _format_class_relationship_summary(
     ctx: SceneContext,
     label: str,
+    level: str = "all",
+    relationship_type: str | None = None,
     limit: int = 40,
     language: str = "it",
 ) -> str:
@@ -1414,9 +1572,12 @@ def _format_class_relationship_summary(
     counts: Counter[tuple[str, str, str, str, str]] = Counter()
     examples: dict[tuple[str, str, str, str, str], list[Relationship]] = defaultdict(list)
 
-    for level in RELATIONSHIP_LAYER_ORDER:
-        for relationship in ctx.relationship_layers.get(level, []):
+    levels = RELATIONSHIP_LAYER_ORDER if level == "all" else (level,)
+    for current_level in levels:
+        for relationship in ctx.relationship_layers.get(current_level, []):
             src, tgt, rel_type, rel_level = relationship
+            if relationship_type is not None and rel_type != relationship_type:
+                continue
             src_is_label = src in object_names
             tgt_is_label = tgt in object_names
             if not src_is_label and not tgt_is_label:
@@ -1428,7 +1589,7 @@ def _format_class_relationship_summary(
                 continue
 
             direction = "out" if src_is_label else "in"
-            key = (level, rel_level, rel_type, direction, other_label)
+            key = (current_level, rel_level, rel_type, direction, other_label)
             counts[key] += 1
             if len(examples[key]) < 3:
                 examples[key].append(relationship)
@@ -1470,6 +1631,76 @@ def _format_class_relationship_summary(
             (level, rel_level, rel_type, direction, other_label)
         ]:
             lines.append(f"      es. {src} --[{example_level}:{example_type}]--> {tgt}")
+    return "\n".join(lines)
+
+
+def _format_class_relationship_details(
+    ctx: SceneContext,
+    label: str,
+    level: str = "all",
+    relationship_type: str | None = None,
+    limit: int = 120,
+    language: str = "it",
+) -> str:
+    object_names = set(_objects_with_semantic_label(ctx, label))
+    if not object_names:
+        return _phrase(
+            language,
+            it=f"Nessun oggetto di classe '{label}' trovato nella scena.",
+            en=f"No object of class '{label}' found in the scene.",
+        )
+
+    levels = RELATIONSHIP_LAYER_ORDER if level == "all" else (level,)
+    rows: list[Relationship] = []
+    for current_level in levels:
+        for relationship in ctx.relationship_layers.get(current_level, []):
+            src, tgt, rel_type, _ = relationship
+            if relationship_type is not None and rel_type != relationship_type:
+                continue
+            if src in object_names or tgt in object_names:
+                rows.append(relationship)
+
+    header = _phrase(
+        language,
+        it=(
+            f"Relazioni che coinvolgono '{label}': {len(rows)} "
+            f"(oggetti: {', '.join(sorted(object_names))})."
+        ),
+        en=(
+            f"Relationships involving '{label}': {len(rows)} "
+            f"(objects: {', '.join(sorted(object_names))})."
+        ),
+    )
+    if not rows:
+        return header + "\n" + _phrase(
+            language,
+            it="Nessuna relazione trovata con i filtri richiesti.",
+            en="No relationship found with the requested filters.",
+        )
+
+    lines = [header]
+    type_counts = Counter(rel_type for _, _, rel_type, _ in rows)
+    lines.append(
+        _phrase(language, it="Distribuzione: ", en="Distribution: ")
+        + ", ".join(f"{rel_type}={count}" for rel_type, count in sorted(type_counts.items()))
+    )
+
+    shown = rows[:limit]
+    for src, tgt, rel_type, rel_level in shown:
+        src_label = ctx.objects.get(src, {}).get("semantic_label", "unknown")
+        tgt_label = ctx.objects.get(tgt, {}).get("semantic_label", "unknown")
+        lines.append(
+            f"  - {src} ({src_label}) --[{rel_level}:{rel_type}]--> "
+            f"{tgt} ({tgt_label})"
+        )
+    if len(rows) > limit:
+        lines.append(
+            _phrase(
+                language,
+                it=f"  ... {len(rows) - limit} relazioni non mostrate.",
+                en=f"  ... {len(rows) - limit} relationships not shown.",
+            )
+        )
     return "\n".join(lines)
 
 
@@ -1683,6 +1914,58 @@ def _asks_for_relationships(text: str) -> bool:
     )
 
 
+def _asks_for_relationship_inconsistencies(text: str) -> bool:
+    relationship_terms = (
+        "relazione",
+        "relazioni",
+        "relationship",
+        "relationships",
+        "grafo",
+        "graph",
+    )
+    anomaly_terms = (
+        "incongruen",
+        "contraddizion",
+        "contraddittor",
+        "inconsistent",
+        "inconsistency",
+        "inconsistencies",
+        "contradiction",
+        "contradictory",
+        "anomaly",
+        "anomalies",
+        "invalid",
+        "ambiguous relationship",
+        "ambiguous relationships",
+        "relazioni ambigue",
+        "relazione ambigua",
+    )
+    return any(term in text for term in anomaly_terms) and any(
+        term in text for term in relationship_terms
+    )
+
+
+def _try_answer_relationship_layer_conflict(text: str, language: str = "it") -> str | None:
+    asks_l1_structural = "l1" in text and any(
+        term in text for term in ("structural", "strutturale", "strutturali")
+    )
+    if asks_l1_structural:
+        return _phrase(
+            language,
+            it=(
+                "Nessuna relazione strutturale è in L1. "
+                "L1 contiene solo relazioni geometriche (`near`, `adjacent_to`, `above`, `below`); "
+                "le relazioni strutturali sono in L2 (`supports`, `rests_on`)."
+            ),
+            en=(
+                "There are no structural relationships in L1. "
+                "L1 contains only geometric relationships (`near`, `adjacent_to`, `above`, `below`); "
+                "structural relationships are in L2 (`supports`, `rests_on`)."
+            ),
+        )
+    return None
+
+
 def _asks_for_relationship_list(text: str) -> bool:
     list_words = (
         "tutte",
@@ -1703,6 +1986,8 @@ def _asks_for_relationship_list(text: str) -> bool:
 
 
 def _extract_relationship_level(text: str) -> str:
+    if any(term in text for term in ("relazioni spaziali", "relazione spaziale", "spatial relationships", "spatial relations")):
+        return "L1"
     if "l1" in text or "geometric" in text or "geometrich" in text:
         return "L1"
     if "l2" in text or "structural" in text or "struttural" in text:
@@ -1868,6 +2153,84 @@ def _format_relationships_cascade(
     return "\n".join(lines)
 
 
+def _try_answer_above_below_elements(
+    ctx: SceneContext,
+    text: str,
+    language: str = "it",
+) -> str | None:
+    if not _asks_for_above_below_elements(text):
+        return None
+
+    above = [
+        rel for rel in ctx.relationship_layers.get("L1", [])
+        if rel[2] == "above"
+    ]
+    below_count = sum(
+        1 for rel in ctx.relationship_layers.get("L1", [])
+        if rel[2] == "below"
+    )
+    shown = above[:20]
+    if language == "en":
+        observed_lines = [
+            f"L1 above relationships: {len(above)}; L1 below relationships: {below_count}.",
+            "First above relationships:",
+        ]
+        observed_lines.extend(
+            f"  - {src} is above {tgt}"
+            for src, tgt, _, _ in shown
+        )
+        if len(above) > len(shown):
+            observed_lines.append(f"  ... {len(above) - len(shown)} not shown.")
+        return _format_grounded_answer(
+            observed="\n".join(observed_lines),
+            relations="L1/geometric: `above` and `below`; `below` is the inverse of `above`.",
+            inference=(
+                "These relationships describe vertical order only. "
+                "They are not structural support unless matching L2 `supports` relationships exist."
+            ),
+            confidence="high for vertical geometry; medium-low for structural interpretation.",
+            language=language,
+        )
+
+    observed_lines = [
+        f"Relazioni L1 above: {len(above)}; relazioni L1 below: {below_count}.",
+        "Prime relazioni above:",
+    ]
+    observed_lines.extend(
+        f"  - {src} è sopra {tgt}"
+        for src, tgt, _, _ in shown
+    )
+    if len(above) > len(shown):
+        observed_lines.append(f"  ... {len(above) - len(shown)} non mostrate.")
+    return _format_grounded_answer(
+        observed="\n".join(observed_lines),
+        relations="L1/geometric: `above` e `below`; `below` è l'inverso di `above`.",
+        inference=(
+            "Queste relazioni descrivono solo l'ordine verticale. "
+            "Non sono supporto strutturale senza relazioni L2 `supports` coerenti."
+        ),
+        confidence="alta per la geometria verticale; media-bassa per l'interpretazione strutturale.",
+        language=language,
+    )
+
+
+def _asks_for_above_below_elements(text: str) -> bool:
+    vertical_terms = ("above", "below", "sopra", "sotto")
+    global_terms = (
+        "which elements",
+        "what elements",
+        "which objects",
+        "what objects",
+        "other elements",
+        "altri elementi",
+        "quali elementi",
+        "quali oggetti",
+    )
+    return any(term in text for term in vertical_terms) and any(
+        term in text for term in global_terms
+    )
+
+
 def _format_relationship_inconsistencies(ctx: SceneContext) -> str:
     pair_relations: dict[frozenset[str], list[tuple[str, str, str, str]]] = {}
     for src, tgt, rel_type, rel_level in ctx.relationships:
@@ -1969,6 +2332,76 @@ def _format_relationship_inconsistencies(ctx: SceneContext) -> str:
         if len(suspicious) > 100:
             lines.append(f"  ... {len(suspicious) - 100} anomalie non mostrate.")
     return "\n".join(lines)
+
+
+def _try_answer_scene_brief(
+    ctx: SceneContext,
+    text: str,
+    language: str = "it",
+) -> str | None:
+    if not _asks_for_scene_brief(text):
+        return None
+
+    class_counts = Counter(obj["semantic_label"] for obj in ctx.objects.values())
+    classes = ", ".join(
+        f"{label}={count}" for label, count in sorted(class_counts.items())
+    ) or "none"
+    l1 = len(ctx.relationship_layers.get("L1", []))
+    l2 = len(ctx.relationship_layers.get("L2", []))
+    l3 = len(ctx.relationship_layers.get("L3", []))
+
+    if language == "en":
+        return _format_grounded_answer(
+            observed=(
+                f"The scene contains {len(ctx.objects)} objects. "
+                f"Classes: {classes}. Relationships: L1={l1}, L2={l2}, L3={l3}."
+            ),
+            relations="No specific relation is required for this brief inventory.",
+            inference=_brief_scene_inference(class_counts, language=language),
+            confidence="medium: this is a compact semantic summary, not a visual review of the point cloud.",
+            language=language,
+        )
+
+    return _format_grounded_answer(
+        observed=(
+            f"La scena contiene {len(ctx.objects)} oggetti. "
+            f"Classi: {classes}. Relazioni: L1={l1}, L2={l2}, L3={l3}."
+        ),
+        relations="Nessuna relazione specifica richiesta per questo inventario breve.",
+        inference=_brief_scene_inference(class_counts, language=language),
+        confidence="media: è una sintesi semantica compatta, non una revisione visiva della point cloud.",
+        language=language,
+    )
+
+
+def _asks_for_scene_brief(text: str) -> bool:
+    return (
+        any(term in text for term in ("describe", "descrivi", "description", "descrizione"))
+        and any(term in text for term in ("scene", "scena"))
+        and any(term in text for term in ("brief", "briefly", "sintet", "short"))
+    )
+
+
+def _brief_scene_inference(class_counts: Counter, language: str = "it") -> str:
+    labels = set(class_counts)
+    if language == "en":
+        if {"wall", "door_window"} & labels and "moldings" in labels:
+            return (
+                "It appears to be an architectural scene with walls/openings and ornamental elements; "
+                "structural interpretation should rely on L2 relations."
+            )
+        if "column" in labels and ({"roof", "vault"} & labels):
+            return "It appears to be a covered or semi-covered colonnaded architectural space."
+        return "It is an architectural scene summarized from semantic object classes."
+
+    if {"wall", "door_window"} & labels and "moldings" in labels:
+        return (
+            "Sembra una scena architettonica con muri/aperture ed elementi ornamentali; "
+            "l'interpretazione strutturale va fondata sulle relazioni L2."
+        )
+    if "column" in labels and ({"roof", "vault"} & labels):
+        return "Sembra uno spazio architettonico coperto o semi-coperto con colonne."
+    return "È una scena architettonica sintetizzata dalle classi semantiche degli oggetti."
 
 
 def _format_point_cloud_info(ctx: SceneContext) -> str:

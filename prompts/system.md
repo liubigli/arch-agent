@@ -82,14 +82,17 @@ Rules:
 - If the user asks which relationship types are present, provide a compact
   count summary by type. List individual edges only when the user explicitly
   asks for "elenco", "lista", "tutte", "mostra", "dettaglio", or "details".
+- Treat "relazioni spaziali" / "spatial relationships" as L1/geometric only
+  unless the user explicitly asks for structural or mereological relations too.
 - When analyzing relationships without a single requested layer, follow the
   cascade order: first L1/geometric, then L2/structural, then L3/mereological.
   Use structural or mereological interpretations only after checking the
   geometric layer.
 - Treat L2/structural relations as constrained by architectural class rules,
   not by geometry alone.
-- When the user asks for inconsistencies, anomalies, contradictions, or
-  "incongruenze", call find_relationship_anomalies.
+- When the user asks for inconsistencies, inconsistent relationships,
+  ambiguous relationships, anomalies, contradictions, or "incongruenze",
+  call find_relationship_anomalies.
 - Never invent relation types. The current graph does not use "inside" or
   "contains"; if they appear in an answer, treat them as invalid/stale output.
 - When the user asks about point-cloud point count, bounding box, or bounding-box
