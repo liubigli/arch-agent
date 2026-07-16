@@ -70,6 +70,17 @@ def answer_evaluation_prompt(ctx: "SceneContext", user_input: str) -> str | None
 
 
 def _infer_prompt_id(text: str) -> int | None:
+    if _has_any(
+        text,
+        "elemento dominante",
+        "oggetto dominante",
+        "elemento piu importante",
+        "elemento più importante",
+        "dominant element",
+        "most important element",
+    ):
+        return 2
+
     if _has_any(text, "interna", "interno", "inside", "internal") and _has_any(
         text,
         "esterna",
@@ -198,7 +209,7 @@ def _translate_grounded_answer_to_english(answer: str) -> str:
         ("Indizi presenti:", "Observed cues:"),
         ("Relazioni considerate in cascata", "Relationships considered in cascade"),
         ("La scena sembra coperta o semi-interna, ma i limiti laterali sono incompleti.", "The scene appears covered or semi-internal, but the lateral boundaries are incomplete."),
-        ("La scena e probabilmente interna o coperta.", "The scene is probably internal or covered."),
+        ("La scena è probabilmente interna o coperta.", "The scene is probably internal or covered."),
         ("La distinzione interno/esterno resta ambigua dai soli oggetti disponibili.", "The internal/external distinction remains ambiguous from the available objects alone."),
         ("Limiti principali", "Main boundaries"),
         ("Colonne perimetrali candidate", "Candidate perimeter columns"),
@@ -253,7 +264,7 @@ def _answer_scene_summary(ctx: "SceneContext") -> str:
         observed="\n".join([
             _inventory_summary(ctx),
             _relationship_layer_summary(ctx),
-            _top_metric_line(ctx, "point_count", "Oggetto piu campionato"),
+            _top_metric_line(ctx, "point_count", "Oggetto più campionato"),
         ]),
         relations=(
             "Cascata L1->L2->L3 usata solo come sintesi quantitativa; "
@@ -280,15 +291,15 @@ def _answer_dominant_element(ctx: "SceneContext") -> str:
     ]
     if dominant:
         inference = (
-            "L'elemento dominante e probabilmente "
+            "L'elemento dominante è probabilmente "
             + ", ".join(dominant)
-            + ": compare ai primi posti in piu metriche. "
-            "La dominanza e geometrica/relazionale, non automaticamente tipologica."
+            + ": compare ai primi posti in più metriche. "
+            "La dominanza è geometrica/relazionale, non automaticamente tipologica."
         )
         confidence = "media: la dominanza dipende dalla metrica scelta."
     else:
         inference = (
-            "Non emerge un unico elemento dominante: punto-count, volume e centralita "
+            "Non emerge un unico elemento dominante: punto-count, volume e centralità "
             "non convergono sullo stesso oggetto."
         )
         confidence = "media-bassa: serve scegliere esplicitamente il criterio di dominanza."
@@ -309,18 +320,18 @@ def _answer_high_confidence_elements(ctx: "SceneContext") -> str:
 
     return _grounded(
         observed="\n".join([
-            f"Classi piu ricorrenti: {labels}.",
-            _format_rank("Oggetti con piu punti", robust_objects, value_suffix=" punti"),
+            f"Classi più ricorrenti: {labels}.",
+            _format_rank("Oggetti con più punti", robust_objects, value_suffix=" punti"),
         ]),
         relations=(
             "Nessuna relazione necessaria per la confidenza di riconoscimento; "
-            "la stima usa label semantiche e densita/campionamento degli oggetti."
+            "la stima usa label semantiche e densità/campionamento degli oggetti."
         ),
         inference=(
             "Gli elementi identificabili con maggiore sicurezza sono quelli con label ripetute "
-            "o molti punti. Le classi con un solo frammento piccolo vanno considerate piu incerte."
+            "o molti punti. Le classi con un solo frammento piccolo vanno considerate più incerte."
         ),
-        confidence="media: la confidenza reale dipende anche dalla qualita della segmentazione.",
+        confidence="media: la confidenza reale dipende anche dalla qualità della segmentazione.",
     )
 
 
@@ -338,13 +349,13 @@ def _answer_inside_outside(ctx: "SceneContext") -> str:
         cues.append("column associate a copertura")
 
     if "floor" in labels and ({"roof", "vault"} & labels) and class_counts["wall"] >= 2:
-        inference = "La scena e probabilmente interna o coperta."
+        inference = "La scena è probabilmente interna o coperta."
         confidence = "media-alta: floor, wall e copertura sono presenti."
     elif "floor" in labels and ({"roof", "vault"} & labels):
         inference = "La scena sembra coperta o semi-interna, ma i limiti laterali sono incompleti."
         confidence = "media: manca una chiusura laterale completa."
     elif "wall" in labels and "floor" in labels:
-        inference = "La scena potrebbe essere interna o di facciata, ma la copertura non e esplicita."
+        inference = "La scena potrebbe essere interna o di facciata, ma la copertura non è esplicita."
         confidence = "media-bassa: evidenza parziale."
     else:
         inference = "La distinzione interno/esterno resta ambigua dai soli oggetti disponibili."
@@ -369,11 +380,11 @@ def _answer_boundaries(ctx: "SceneContext") -> str:
         observed=_format_grouped_objects(groups, "Possibili confini rilevati"),
         relations=(
             "L1/geometric sopra-sotto e adiacenze possono indicare posizione dei confini; "
-            "nessuna relazione di contenimento e definita nel grafo corrente."
+            "nessuna relazione di contenimento è definita nel grafo corrente."
         ),
         inference=(
-            "Il floor puo agire come limite inferiore, roof/vault come limite superiore, "
-            "wall come limite laterale. Questa e una lettura architettonica dei ruoli, "
+            "Il floor può agire come limite inferiore, roof/vault come limite superiore, "
+            "wall come limite laterale. Questa è una lettura architettonica dei ruoli, "
             "non una relazione 'inside/contains'."
         ),
         confidence="media: i confini sono plausibili se gli oggetti sono continui e ben segmentati.",
@@ -405,7 +416,7 @@ def _answer_organizing_elements(ctx: "SceneContext") -> str:
         ),
         inference=(
             "Floor, wall e roof/vault definiscono i limiti principali; le colonne "
-            "piu esterne possono contribuire al perimetro o alla scansione del bordo, "
+            "più esterne possono contribuire al perimetro o alla scansione del bordo, "
             "mentre le colonne interne organizzano e/o supportano lo spazio. "
             "Non viene inferita una chiusura completa senza pareti continue."
         ),
@@ -437,7 +448,7 @@ def _answer_above_below(ctx: "SceneContext") -> str:
 
     return _grounded(
         observed=examples,
-        relations="L1/geometric: above/below. La direzione below e l'inverso di above.",
+        relations="L1/geometric: above/below. La direzione below è l'inverso di above.",
         inference=(
             "Le relazioni sopra/sotto descrivono ordine verticale. Non sono una prova "
             "di supporto strutturale se non compaiono anche relazioni L2 coerenti."
@@ -462,7 +473,7 @@ def _answer_intersections(ctx: "SceneContext") -> str:
         relations="Controllo geometrico indiretto su bounding box; nessuna relazione L1 dedicata all'intersezione.",
         inference=(
             "Si possono segnalare contatti o sovrapposizioni di bounding box, ma non "
-            "affermare una vera intersezione fisica senza una relazione o un test geometrico piu fine."
+            "affermare una vera intersezione fisica senza una relazione o un test geometrico più fine."
         ),
         confidence="bassa per l'assenza di intersezioni; media per eventuali overlap AABB.",
     )
@@ -477,12 +488,12 @@ def _answer_supports(ctx: "SceneContext") -> str:
             _format_relationship_examples(supports, title="Supporti L2", limit=20),
             _format_relationship_examples(rests_on, title="Appoggi L2", limit=20),
         ]),
-        relations="L2/structural: supports e rests_on, gia filtrate da regole architettoniche di classe.",
+        relations="L2/structural: supports e rests_on, già filtrate da regole architettoniche di classe.",
         inference=(
             "Gli elementi che supportano sono solo quelli presenti come sorgente di 'supports'. "
             "Le relazioni L1 'above' non vengono trasformate automaticamente in supporto."
         ),
-        confidence="media-alta se L2 non e vuoto; media se il supporto dipende da soglie di contatto.",
+        confidence="media-alta se L2 non è vuoto; media se il supporto dipende da soglie di contatto.",
     )
 
 
@@ -509,7 +520,7 @@ def _answer_construction_systems(ctx: "SceneContext") -> str:
             "architettonico e, quando disponibile, per relazioni L2/L3. Le ripetizioni "
             "di columns indicano un possibile sistema modulare."
         ),
-        confidence="media: il sistema costruttivo e una sintesi, non una label osservata direttamente.",
+        confidence="media: il sistema costruttivo è una sintesi, non una label osservata direttamente.",
     )
 
 
@@ -540,7 +551,7 @@ def _answer_bearing_vs_non_bearing(ctx: "SceneContext") -> str:
             "Moldings e door_window sono non portanti; stairs e other non vanno considerati "
             "portanti senza evidenza aggiuntiva."
         ),
-        confidence="media: la distinzione e semantica, non una verifica meccanica.",
+        confidence="media: la distinzione è semantica, non una verifica meccanica.",
     )
 
 
@@ -556,9 +567,9 @@ def _answer_structural_function(ctx: "SceneContext") -> str:
         relations="L2/structural per supporti; ruoli architettonici per la lista degli elementi strutturali.",
         inference=(
             "Gli elementi con funzione strutturale sono quelli dell'ontologia strutturale; "
-            "una funzione portante effettiva e piu solida quando compare una relazione L2."
+            "una funzione portante effettiva è più solida quando compare una relazione L2."
         ),
-        confidence="media-alta per i ruoli; media per la funzione effettiva se L2 e scarso.",
+        confidence="media-alta per i ruoli; media per la funzione effettiva se L2 è scarso.",
     )
 
 
@@ -576,7 +587,7 @@ def _answer_circulation_access(ctx: "SceneContext") -> str:
         relations="L3 se stairs is_placed_on floor o door_window is_opening_in wall; altrimenti solo ruoli semantici.",
         inference=(
             "Stairs indicano distribuzione verticale; door_window indica possibile accesso o apertura; "
-            "floor puo essere piano di percorrenza ma non definisce da solo un percorso."
+            "floor può essere piano di percorrenza ma non definisce da solo un percorso."
         ),
         confidence="media se stairs o door_window sono presenti; bassa se resta solo floor.",
     )
@@ -606,7 +617,7 @@ def _answer_hierarchy(ctx: "SceneContext") -> str:
             "La scena mostra una gerarchia parziale: elementi strutturali e oggetti dominanti "
             "possono essere principali, mentre ornamentazioni/aperture/frammenti restano secondari."
         )
-        confidence = "media: la gerarchia e supportata da metriche e relazioni, ma non da una tipologia completa."
+        confidence = "media: la gerarchia è supportata da metriche e relazioni, ma non da una tipologia completa."
     else:
         inference = "Non emerge una gerarchia chiara tra elementi principali e secondari."
         confidence = "bassa: mancano convergenza metrica e relazioni L2."
@@ -627,13 +638,10 @@ def _answer_evident_spatial_relations(ctx: "SceneContext") -> str:
     ) or "nessuna relazione L1"
 
     return _grounded(
-        observed="\n".join([
-            f"Distribuzione L1/geometric: {top_types}.",
-            _format_relationship_examples(_unique_undirected(geometric), title="Esempi L1", limit=20),
-        ]),
+        observed=f"Distribuzione L1/geometric: {top_types}.",
         relations="L1/geometric: near, adjacent_to, above, below.",
         inference=(
-            "Le relazioni spaziali piu evidenti sono quelle con conteggio maggiore. "
+            "Le relazioni spaziali più evidenti sono quelle con conteggio maggiore. "
             "Sono evidenze geometriche e non vanno lette automaticamente come struttura o funzione."
         ),
         confidence="alta per i conteggi; media per la loro interpretazione architettonica.",
@@ -664,12 +672,12 @@ def _answer_ambiguities(ctx: "SceneContext") -> str:
 
     return _grounded(
         observed=observed,
-        relations="Confronto tra L1, L2 e L3 per individuare dove l'interpretazione e piu debole.",
+        relations="Confronto tra L1, L2 e L3 per individuare dove l'interpretazione è più debole.",
         inference=(
-            "Ambiguita principali: "
-            + (", ".join(notes) if notes else "nessuna ambiguita forte rilevata dai criteri automatici.")
+            "Ambiguità principali: "
+            + (", ".join(notes) if notes else "nessuna ambiguità forte rilevata dai criteri automatici.")
         ),
-        confidence="media: e un controllo automatico, non una revisione visiva della point cloud.",
+        confidence="media: è un controllo automatico, non una revisione visiva della point cloud.",
     )
 
 
@@ -677,7 +685,7 @@ def _answer_observation_inference_check(ctx: "SceneContext") -> str:
     return _grounded(
         observed=(
             "Questa domanda valuta una risposta del modello, ma nel contesto corrente "
-            "non e presente una risposta precedente da analizzare."
+            "non è presente una risposta precedente da analizzare."
         ),
         relations="Nessuna relazione di scena usata direttamente.",
         inference=(
@@ -699,10 +707,10 @@ def _answer_relation_quality_check(ctx: "SceneContext") -> str:
         relations="Controllo del bilanciamento L1/L2/L3, non di una risposta testuale precedente.",
         inference=(
             "Senza una risposta del modello da confrontare non posso dire se quella risposta "
-            "sia troppo generica. Posso pero segnalare il rischio: se L2/L3 sono pochi o assenti, "
+            "sia troppo generica. Posso però segnalare il rischio: se L2/L3 sono pochi o assenti, "
             "le conclusioni strutturali e tipologiche devono restare caute."
         ),
-        confidence="alta sul criterio; non valutabile sulla qualita di una risposta assente.",
+        confidence="alta sul criterio; non valutabile sulla qualità di una risposta assente.",
     )
 
 
@@ -1017,7 +1025,7 @@ def _typology_label(ctx: "SceneContext") -> tuple[str, str, str]:
         return (
             "spazio coperto colonnato / portico o padiglione",
             "sono presenti molte colonne, un piano di base e una copertura.",
-            "media: la lettura tipologica e plausibile ma non distingue portico, aula o padiglione.",
+            "media: la lettura tipologica è plausibile ma non distingue portico, aula o padiglione.",
         )
     if has_wall and has_floor and has_cover:
         return (
@@ -1029,16 +1037,16 @@ def _typology_label(ctx: "SceneContext") -> tuple[str, str, str]:
         return (
             "spazio voltato o sistema ad archi",
             "arch/vault sono elementi tipologicamente caratterizzanti.",
-            "media: servono continuita geometrica e relazioni L2/L3 per maggiore certezza.",
+            "media: servono continuità geometrica e relazioni L2/L3 per maggiore certezza.",
         )
     if has_stairs:
         return (
             "spazio di distribuzione verticale",
-            "stairs e l'elemento funzionale piu specifico rilevato.",
+            "stairs è l'elemento funzionale più specifico rilevato.",
             "media: dipende dal rapporto con floor, wall e aperture.",
         )
     return (
         "scena architettonica parziale",
-        "le classi presenti non bastano per una tipologia piu specifica.",
+        "le classi presenti non bastano per una tipologia più specifica.",
         "bassa-media: l'etichetta resta descrittiva.",
     )

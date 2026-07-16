@@ -183,13 +183,13 @@ def format_roughness_summary(
     )
     if not stats.get("available"):
         if language == "it":
-            return f"Rugosita non disponibile per {name}: {stats['reason']}."
+            return f"Rugosità non disponibile per {name}: {stats['reason']}."
         return f"Surface roughness is not available for {name}: {stats['reason']}."
 
     level = _roughness_level_label(stats["roughness_level"], language)
     if language == "it":
         return "\n".join([
-            f"Rugosita superficiale stimata per {name}:",
+            f"Rugosità superficiale stimata per {name}:",
             "  Metodo: PCA locale su vicini k-nearest; misura dello scarto dal piano locale.",
             f"  Punti disponibili: {stats['point_count']:,}",
             f"  Punti campionati: {stats['sample_count']:,}",
@@ -201,7 +201,7 @@ def format_roughness_summary(
             f"  Scarto massimo: {stats['max_residual_m']:.4f} m",
             f"  Surface variation media: {stats['mean_surface_variation']:.6f}",
             f"  Livello qualitativo: {level}",
-            "  Nota: la metrica puo includere rumore, curvatura e segmentazione, non solo rugosita materica.",
+            "  Nota: la metrica può includere rumore, curvatura e segmentazione, non solo rugosità materica.",
         ])
 
     return "\n".join([
@@ -355,7 +355,7 @@ def format_material_summary(
 
     if roughness.get("available"):
         roughness_line_it = (
-            "Rugosita: "
+            "Rugosità: "
             f"{_roughness_level_label(roughness['roughness_level'], 'it')} "
             f"(scarto medio {roughness['mean_residual_m']:.4f} m)"
         )
@@ -365,7 +365,7 @@ def format_material_summary(
             f"(mean residual {roughness['mean_residual_m']:.4f} m)"
         )
     else:
-        roughness_line_it = "Rugosita: non disponibile"
+        roughness_line_it = "Rugosità: non disponibile"
         roughness_line_en = "Roughness: unavailable"
 
     if language == "it":
@@ -384,7 +384,7 @@ def format_material_summary(
         )
         lines.extend([
             f"  Confidenza: {_confidence_label(result['confidence'], language)}",
-            "  Nota: e una classificazione euristica basata su colore, classe e rugosita; "
+            "  Nota: è una classificazione euristica basata su colore, classe e rugosità; "
             "non sostituisce analisi materiche o radiometriche calibrate.",
         ])
         return "\n".join(lines)

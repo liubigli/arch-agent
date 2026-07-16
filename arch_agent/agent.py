@@ -143,6 +143,33 @@ def run_agent(ctx: SceneContext, model: str = "llama3") -> None:
         if not user_input:
             continue
 
+        question_parts = _split_user_questions(user_input)
+        if len(question_parts) > 1:
+            combined_answers: list[str] = []
+            handled_all = True
+            current_default_label = last_semantic_label
+
+            for index, question in enumerate(question_parts, start=1):
+                question_text = _normalize_text(question)
+                question_labels = _extract_semantic_labels(question_text)
+                answer = _try_answer_deterministic(
+                    ctx,
+                    question,
+                    default_label=current_default_label,
+                )
+                if answer is None:
+                    handled_all = False
+                    break
+                if question_labels:
+                    current_default_label = question_labels[0]
+                combined_answers.append(f"Risposta {index}:\n{answer}")
+
+            if handled_all:
+                last_semantic_label = current_default_label
+                combined_text = "\n\n".join(combined_answers)
+                print(f"\nAgent: {combined_text}\n")
+                continue
+
         text = _normalize_text(user_input)
         labels_in_input = _extract_semantic_labels(text)
         deterministic_answer = _try_answer_deterministic(
@@ -170,6 +197,22 @@ def _try_answer_deterministic(
     language = _response_language(user_input)
     text = _normalize_text(user_input)
 
+    above_support_answer = _try_answer_above_support_question(text, language=language)
+    if above_support_answer is not None:
+        return above_support_answer
+
+    dominant_answer = _try_answer_dominant_element(ctx, text, language=language)
+    if dominant_answer is not None:
+        return dominant_answer
+
+    mereological_answer = _try_answer_mereological_between_classes(
+        ctx,
+        text,
+        language=language,
+    )
+    if mereological_answer is not None:
+        return mereological_answer
+
     class_role_answer = _try_answer_class_role(
         ctx,
         text,
@@ -185,47 +228,15 @@ def _try_answer_deterministic(
 
     semantic_count = _try_answer_semantic_count(ctx, text, language=language)
     if semantic_count is not None:
-        return _format_grounded_answer(
-            observed=semantic_count,
-            relations=_phrase(
-                language,
-                it="Nessuna relazione L1/L2/L3 usata: risposta basata sul conteggio degli oggetti per classe semantica.",
-                en="No L1/L2/L3 relationship used: answer based on the semantic-class object count.",
-            ),
-            inference=_phrase(
-                language,
-                it="Conteggio diretto degli oggetti segmentati; non implica valutazioni su funzione, importanza o qualita della segmentazione.",
-                en="Direct count of segmented objects; it does not imply function, importance, or segmentation quality.",
-            ),
-            confidence=_phrase(
-                language,
-                it="alta per il conteggio nel grafo corrente; media se la segmentazione semantica e incerta.",
-                en="high for the count in the current graph; medium if semantic segmentation is uncertain.",
-            ),
-            language=language,
-        )
+        return semantic_count
+
+    present_classes = _try_answer_present_classes(ctx, text, language=language)
+    if present_classes is not None:
+        return present_classes
 
     class_count = _try_answer_class_count(ctx, text, language=language)
     if class_count is not None:
-        return _format_grounded_answer(
-            observed=class_count,
-            relations=_phrase(
-                language,
-                it="Nessuna relazione L1/L2/L3 usata: risposta basata sulle classi semantiche presenti.",
-                en="No L1/L2/L3 relationship used: answer based on the semantic classes present.",
-            ),
-            inference=_phrase(
-                language,
-                it="Conteggio delle classi riconosciute nella segmentazione; non descrive relazioni o funzioni.",
-                en="Count of classes recognized by segmentation; it does not describe relationships or functions.",
-            ),
-            confidence=_phrase(
-                language,
-                it="alta per le label presenti nel grafo corrente; media se la segmentazione semantica e incerta.",
-                en="high for labels present in the current graph; medium if semantic segmentation is uncertain.",
-            ),
-            language=language,
-        )
+        return class_count
 
     support_answer = _try_answer_support_between_classes(ctx, text, language=language)
     if support_answer is not None:
@@ -258,7 +269,7 @@ def _try_answer_deterministic(
         return _format_grounded_answer(
             observed=distance_answer,
             relations="L1/geometric: metriche di distanza, gap tra bounding box e overlap XY.",
-            inference="La vicinanza e una relazione geometrica; non implica da sola contatto, supporto o appartenenza.",
+            inference="La vicinanza è una relazione geometrica; non implica da sola contatto, supporto o appartenenza.",
             confidence="alta per le misure geometriche; media per eventuali interpretazioni spaziali.",
         )
 
@@ -267,13 +278,15 @@ def _try_answer_deterministic(
             observed=_format_relationship_inconsistencies(ctx),
             relations="Controllo incrociato su L1/geometric, L2/structural e L3/mereological.",
             inference="Le anomalie indicano conflitti logici o relazioni non coerenti con le regole architettoniche.",
-            confidence="media: dipende dalla qualita della segmentazione e dalle soglie geometriche.",
+            confidence="media: dipende dalla qualità della segmentazione e dalle soglie geometriche.",
         )
 
     if _asks_for_relationships(text):
         level = _extract_relationship_level(text)
+        if not _asks_for_relationship_list(text):
+            return _format_relationship_type_summary(ctx, level=level, language=language)
         return _format_grounded_answer(
-            observed=_format_relationships(ctx, level=level),
+            observed=_format_relationships(ctx, level=level, limit=30),
             relations=_relationship_usage_text(level),
             inference="Nessuna inferenza aggiuntiva: elenco delle relazioni calcolate nel grafo.",
             confidence="alta per le relazioni elencate; media per il loro significato architettonico se basato solo su L1.",
@@ -296,12 +309,16 @@ def _try_answer_deterministic(
                 confidence="alta: dati letti direttamente dal dataframe della point cloud.",
             )
 
+    area_answer = _try_answer_area(ctx, text, language=language)
+    if area_answer is not None:
+        return area_answer
+
     if "volume" in text and ("stanza" in text or "room" in text):
         return _format_grounded_answer(
             observed=_format_room_volume(ctx),
             relations="Relazioni non usate direttamente: stima basata su floor ed envelope verticale della scena.",
-            inference="Il volume stanza e una stima semplificata come box contenitore.",
-            confidence="media: dipende dalla qualita dei floor e degli elementi verticali rilevati.",
+            inference="Il volume stanza è una stima semplificata come box contenitore.",
+            confidence="media: dipende dalla qualità dei floor e degli elementi verticali rilevati.",
         )
 
     if "volume" in text and "bounding" in text:
@@ -327,13 +344,13 @@ def _try_answer_deterministic(
             ),
             relations=_phrase(
                 language,
-                it="Nessuna relazione L1/L2/L3 usata: risposta basata su classe semantica, RGB e rugosita locale.",
+                it="Nessuna relazione L1/L2/L3 usata: risposta basata su classe semantica, RGB e rugosità locale.",
                 en="No L1/L2/L3 relationship used: answer based on semantic class, RGB, and local roughness.",
             ),
             inference=_phrase(
                 language,
                 it=(
-                    "Il materiale e proposto come candidato probabilistico: colore e rugosita "
+                    "Il materiale è proposto come candidato probabilistico: colore e rugosità "
                     "possono dipendere da illuminazione, acquisizione, rumore o degrado."
                 ),
                 en=(
@@ -374,8 +391,8 @@ def _try_answer_deterministic(
             inference=_phrase(
                 language,
                 it=(
-                    "La rugosita stimata descrive lo scarto locale dei punti da un piano; "
-                    "puo includere rumore, curvatura e artefatti di segmentazione."
+                    "La rugosità stimata descrive lo scarto locale dei punti da un piano; "
+                    "può includere rumore, curvatura e artefatti di segmentazione."
                 ),
                 en=(
                     "Estimated roughness describes local point residuals from a plane; "
@@ -408,12 +425,12 @@ def _try_answer_deterministic(
             ),
             inference=_phrase(
                 language,
-                it="Il colore e una feature visiva, non una prova funzionale o strutturale.",
+                it="Il colore è una feature visiva, non una prova funzionale o strutturale.",
                 en="Color is a visual feature, not functional or structural evidence.",
             ),
             confidence=_phrase(
                 language,
-                it="alta se RGB e disponibile; altrimenti non disponibile.",
+                it="alta se RGB è disponibile; altrimenti non disponibile.",
                 en="high if RGB is available; otherwise unavailable.",
             ),
             language=language,
@@ -423,7 +440,7 @@ def _try_answer_deterministic(
         return _format_grounded_answer(
             observed=_format_top_object(ctx, metric="point_count"),
             relations="Nessuna relazione usata: confronto basato sul numero di punti degli oggetti.",
-            inference="Un alto numero di punti puo indicare dominanza geometrica o maggiore copertura, non importanza architettonica certa.",
+            inference="Un alto numero di punti può indicare dominanza geometrica o maggiore copertura, non importanza architettonica certa.",
             confidence="alta per il ranking numerico; media per l'interpretazione di dominanza.",
         )
 
@@ -439,8 +456,8 @@ def _try_answer_deterministic(
         return _format_grounded_answer(
             observed=_format_top_object(ctx, metric="compactness", reverse=False),
             relations="Nessuna relazione usata: confronto basato sulla metrica di compactness.",
-            inference="La compactness e una proprieta geometrica, non una classificazione semantica.",
-            confidence="media: dipende dalla qualita della superficie stimata.",
+            inference="La compactness è una proprietà geometrica, non una classificazione semantica.",
+            confidence="media: dipende dalla qualità della superficie stimata.",
         )
 
     if _asks_for_scene_inventory(text):
@@ -448,10 +465,21 @@ def _try_answer_deterministic(
             observed=_format_scene_inventory(ctx),
             relations="Nessuna relazione usata: inventario basato sulle classi semantiche degli oggetti.",
             inference="I ruoli architettonici derivano dall'ontologia Python, non da una nuova osservazione geometrica.",
-            confidence="alta per conteggi e label; media per i ruoli se la segmentazione e incerta.",
+            confidence="alta per conteggi e label; media per i ruoli se la segmentazione è incerta.",
         )
 
     return None
+
+
+def _split_user_questions(user_input: str) -> list[str]:
+    parts = [
+        part.strip()
+        for part in re.split(r"(?<=[?])\s*", user_input)
+        if part.strip()
+    ]
+    if len(parts) <= 1:
+        return [user_input]
+    return parts
 
 
 def _format_grounded_answer(
@@ -565,11 +593,11 @@ def _format_requested_facts(ctx: SceneContext, text: str) -> str | None:
     if _asks_for_scene_inventory(text):
         sections.append(("Inventario", _format_scene_inventory(ctx)))
     if "maggior numero di punti" in text or "piu punti" in text:
-        sections.append(("Elemento con piu punti", _format_top_object(ctx, metric="point_count")))
+        sections.append(("Elemento con più punti", _format_top_object(ctx, metric="point_count")))
     if "volume maggiore" in text or "maggior volume" in text or "piu volume" in text:
         sections.append(("Elemento con volume maggiore", _format_top_object(ctx, metric="volume")))
     if "piu compatto" in text or "geometricamente compatto" in text:
-        sections.append(("Elemento piu compatto", _format_top_object(ctx, metric="compactness", reverse=False)))
+        sections.append(("Elemento più compatto", _format_top_object(ctx, metric="compactness", reverse=False)))
     if "volume" in text and ("stanza" in text or "room" in text):
         sections.append(("Volume stanza", _format_room_volume(ctx)))
     if "bounding box" in text or "boundingn box" in text:
@@ -661,12 +689,221 @@ def _try_answer_class_count(
     return "\n".join(lines)
 
 
+def _try_answer_present_classes(
+    ctx: SceneContext,
+    text: str,
+    language: str = "it",
+) -> str | None:
+    if not _asks_for_present_classes(text):
+        return None
+
+    class_counts = Counter(obj["semantic_label"] for obj in ctx.objects.values())
+    if not class_counts:
+        return _phrase(
+            language,
+            it="Nessuna classe presente nella scena.",
+            en="No class is present in the scene.",
+        )
+
+    present = ", ".join(
+        f"{label}={count}"
+        for label, count in sorted(class_counts.items())
+    )
+    absent = sorted(set(get_config()["semantic_classes"]["names"]) - set(class_counts))
+    absent_text = ", ".join(absent) if absent else "nessuna"
+    return _phrase(
+        language,
+        it=f"Classi presenti: {present}. Assenti: {absent_text}.",
+        en=f"Present classes: {present}. Absent: {absent_text}.",
+    )
+
+
+def _asks_for_present_classes(text: str) -> bool:
+    present_terms = (
+        "quali classi sono presenti",
+        "che classi sono presenti",
+        "classi presenti",
+        "classi ci sono",
+        "which classes are present",
+        "what classes are present",
+        "present classes",
+    )
+    return any(term in text for term in present_terms)
+
+
 def _asks_for_class_count(text: str) -> bool:
     count_terms = ("quante", "quanti", "numero di", "conteggio", "how many")
     class_terms = ("classi", "classe", "semantic classes", "semantic class")
     return any(term in text for term in count_terms) and any(
         term in text for term in class_terms
     )
+
+
+def _try_answer_above_support_question(text: str, language: str = "it") -> str | None:
+    has_above = any(term in text for term in ("above", "sopra", "sopra/sotto"))
+    asks_support = any(
+        term in text
+        for term in (
+            "supporto",
+            "supporta",
+            "strutturale",
+            "strutturali",
+            "sostegno",
+            "sostiene",
+            "indicano",
+            "indica",
+            "mean support",
+            "structural support",
+        )
+    )
+    if not (has_above and asks_support):
+        return None
+    return _phrase(
+        language,
+        it="No. `above` è solo una relazione L1 geometrica; il supporto strutturale richiede una relazione L2 `supports`.",
+        en="No. `above` is only an L1 geometric relation; structural support requires an L2 `supports` relation.",
+    )
+
+
+def _try_answer_dominant_element(
+    ctx: SceneContext,
+    text: str,
+    language: str = "it",
+) -> str | None:
+    if not _asks_for_dominant_element(text):
+        return None
+    if not ctx.objects:
+        return _phrase(
+            language,
+            it="Non posso indicare un elemento dominante: non ci sono oggetti nella scena.",
+            en="I cannot identify a dominant element: there are no objects in the scene.",
+        )
+
+    name, obj = max(ctx.objects.items(), key=lambda item: item[1].get("point_count", 0))
+    label = obj["semantic_label"]
+    point_count = obj.get("point_count", 0)
+    total_points = sum(item.get("point_count", 0) for item in ctx.objects.values())
+    percent = (point_count / total_points * 100.0) if total_points else 0.0
+
+    return _phrase(
+        language,
+        it=(
+            f"Elemento dominante: `{name}` ({label}), per numero di punti "
+            f"({point_count:,}, {percent:.1f}% della scena). Non deduco una tipologia da questo solo dato."
+        ),
+        en=(
+            f"Dominant element: `{name}` ({label}), by point count "
+            f"({point_count:,}, {percent:.1f}% of the scene). I do not infer a typology from this alone."
+        ),
+    )
+
+
+def _asks_for_dominant_element(text: str) -> bool:
+    terms = (
+        "elemento dominante",
+        "oggetto dominante",
+        "elemento piu importante",
+        "elemento più importante",
+        "dominant element",
+        "most important element",
+        "most dominant",
+    )
+    return any(term in text for term in terms)
+
+
+def _try_answer_mereological_between_classes(
+    ctx: SceneContext,
+    text: str,
+    language: str = "it",
+) -> str | None:
+    labels = _extract_semantic_labels(text)
+    if len(labels) < 2:
+        return None
+    if not _asks_for_mereological_relation(text):
+        return None
+
+    pair = _mereological_label_pair(labels)
+    if pair is None:
+        return None
+
+    child_label, parent_label, relation_type = pair
+    child_names = _objects_with_semantic_label(ctx, child_label)
+    parent_names = _objects_with_semantic_label(ctx, parent_label)
+    relationships = [
+        rel for rel in ctx.relationship_layers.get("L3", [])
+        if rel[2] == relation_type
+        and ctx.objects.get(rel[0], {}).get("semantic_label") == child_label
+        and ctx.objects.get(rel[1], {}).get("semantic_label") == parent_label
+    ]
+
+    if relationships:
+        return _phrase(
+            language,
+            it=(
+                f"Sì. Trovate {len(relationships)} relazioni L3 `{relation_type}` "
+                f"{child_label} -> {parent_label}."
+            ),
+            en=(
+                f"Yes. Found {len(relationships)} L3 `{relation_type}` relationships "
+                f"{child_label} -> {parent_label}."
+            ),
+        )
+
+    if not child_names or not parent_names:
+        return _phrase(
+            language,
+            it=(
+                f"No nella scena. La regola esiste ({child_label} -> {parent_label}: "
+                f"`{relation_type}`), ma qui ci sono {len(child_names)} `{child_label}` "
+                f"e {len(parent_names)} `{parent_label}`."
+            ),
+            en=(
+                f"No in this scene. The rule exists ({child_label} -> {parent_label}: "
+                f"`{relation_type}`), but here there are {len(child_names)} `{child_label}` "
+                f"and {len(parent_names)} `{parent_label}`."
+            ),
+        )
+
+    return _phrase(
+        language,
+        it=(
+            f"No. La regola lo ammette ({child_label} -> {parent_label}: "
+            f"`{relation_type}`), ma il grafo corrente non contiene relazioni L3 corrispondenti."
+        ),
+        en=(
+            f"No. The rule allows it ({child_label} -> {parent_label}: "
+            f"`{relation_type}`), but the current graph has no matching L3 relationship."
+        ),
+    )
+
+
+def _asks_for_mereological_relation(text: str) -> bool:
+    terms = (
+        "apertur",
+        "opening",
+        "openings",
+        "ornament",
+        "decor",
+        "parte",
+        "part of",
+        "has_part",
+        "is_opening_in",
+        "is_ornament_of",
+        "appartien",
+        "apparten",
+    )
+    return any(term in text for term in terms)
+
+
+def _mereological_label_pair(labels: list[str]) -> tuple[str, str, str] | None:
+    for child_label in labels:
+        for parent_label in labels:
+            if child_label == parent_label:
+                continue
+            relation_type = mereological_relation_type(child_label, parent_label)
+            if relation_type is not None:
+                return child_label, parent_label, relation_type
+    return None
 
 
 def _try_answer_class_role(
@@ -676,7 +913,12 @@ def _try_answer_class_role(
     language: str = "it",
 ) -> str | None:
     labels = _extract_semantic_labels(text)
-    label = labels[0] if labels else default_label
+    if labels:
+        label = labels[0]
+    elif default_label and (_is_scene_scope_correction(text) or _is_pronoun_role_followup(text)):
+        label = default_label
+    else:
+        label = None
     if label is None:
         return None
     if not (_asks_for_role_or_function(text) or _is_scene_scope_correction(text)):
@@ -689,77 +931,35 @@ def _try_answer_class_role(
     requested_role = _requested_role(text)
 
     if requested_role in {"structural", "load_bearing"}:
-        answer = _phrase(language, it="Si", en="Yes") if role_is_structural else _phrase(language, it="No", en="No")
+        answer = _phrase(language, it="Sì", en="Yes") if role_is_structural else _phrase(language, it="No", en="No")
     elif requested_role == "non_load_bearing":
-        answer = _phrase(language, it="No", en="No") if role_is_structural else _phrase(language, it="Si", en="Yes")
+        answer = _phrase(language, it="No", en="No") if role_is_structural else _phrase(language, it="Sì", en="Yes")
     elif requested_role and requested_role == role:
-        answer = _phrase(language, it="Si", en="Yes")
+        answer = _phrase(language, it="Sì", en="Yes")
     elif requested_role:
         answer = _phrase(language, it="No", en="No")
     else:
         answer = _phrase(language, it="Ruolo della classe", en="Class role")
 
-    supports_out = [
-        rel for rel in ctx.relationship_layers.get("L2", [])
-        if rel[2] == "supports"
-        and ctx.objects.get(rel[0], {}).get("semantic_label") == label
-    ]
-    supports_in = [
-        rel for rel in ctx.relationship_layers.get("L2", [])
-        if rel[2] == "supports"
-        and ctx.objects.get(rel[1], {}).get("semantic_label") == label
-    ]
-    instances = _format_limited_names(object_names, limit=25)
-
     if language == "en":
-        observed = "\n".join([
-            f"{answer}: class '{label}' has architectural role '{role}' ({role_text}).",
-            f"Objects of class '{label}': {len(object_names)}.",
-            f"Instances: {instances}.",
-            f"L2 supports from '{label}': {len(supports_out)}.",
-            f"L2 supports toward '{label}': {len(supports_in)}.",
-        ])
-        inference = (
-            f"Objects of class '{label}' are treated as {role_text}. "
-            "This is an ontology-based role; actual load transfer in the current scene "
-            "must be checked with L2 supports relationships."
-        )
-        confidence = (
-            "high for the class role in the Python ontology; medium for actual "
-            "load-bearing behavior because it depends on L2 relationships and segmentation."
-        )
-        relations = (
-            "No L1/L2/L3 relationship is needed to answer the class-role question. "
-            "L2 supports counts are reported only as additional scene evidence."
-        )
-    else:
-        observed = "\n".join([
-            f"{answer}: la classe '{label}' ha ruolo architettonico '{role}' ({role_text}).",
-            f"Oggetti di classe '{label}': {len(object_names)}.",
-            f"Istanze: {instances}.",
-            f"Relazioni L2 supports da '{label}': {len(supports_out)}.",
-            f"Relazioni L2 supports verso '{label}': {len(supports_in)}.",
-        ])
-        inference = (
-            f"Gli oggetti di classe '{label}' sono trattati come {role_text}. "
-            "Questo e un ruolo definito dall'ontologia; la portanza effettiva nella scena "
-            "va verificata con relazioni L2 supports."
-        )
-        confidence = (
-            "alta per il ruolo di classe nell'ontologia Python; media per la portanza "
-            "effettiva perche dipende da relazioni L2 e segmentazione."
-        )
-        relations = (
-            "Nessuna relazione L1/L2/L3 necessaria per rispondere al ruolo di classe. "
-            "I conteggi L2 supports sono riportati solo come evidenza aggiuntiva della scena."
+        if object_names:
+            return (
+                f"{answer}. `{label}` is {role_text}; "
+                f"{len(object_names)} object(s) found in this scene."
+            )
+        return (
+            f"{answer} as an ontology class: `{label}` is {role_text}, "
+            "but no object of this class is present in this scene."
         )
 
-    return _format_grounded_answer(
-        observed=observed,
-        relations=relations,
-        inference=inference,
-        confidence=confidence,
-        language=language,
+    if object_names:
+        return (
+            f"{answer}. `{label}` è {role_text}; "
+            f"in questa scena ci sono {len(object_names)} oggetti."
+        )
+    return (
+        f"{answer} come classe ontologica: `{label}` è {role_text}, "
+        "ma in questa scena non ci sono oggetti di questa classe."
     )
 
 
@@ -811,6 +1011,39 @@ def _is_scene_scope_correction(text: str) -> bool:
         "only this class",
     )
     return any(term in text for term in correction_terms)
+
+
+def _is_pronoun_role_followup(text: str) -> bool:
+    if any(
+        term in text
+        for term in (
+            "relazione",
+            "relazioni",
+            "relationship",
+            "relationships",
+            "above",
+            "below",
+            "l1",
+            "l2",
+            "l3",
+            "quali elementi",
+            "quali oggetti",
+            "scena",
+        )
+    ):
+        return False
+    followup_terms = (
+        "sono struttural",
+        "sono portant",
+        "sono ornamental",
+        "sono aperture",
+        "sono non portant",
+        "are structural",
+        "are load-bearing",
+        "are ornamental",
+        "are openings",
+    )
+    return any(term in text for term in followup_terms)
 
 
 def _requested_role(text: str) -> str | None:
@@ -886,7 +1119,7 @@ def _try_answer_support_between_classes(
     if supports:
         return _phrase(
             language,
-            it=f"Si: {len(supports)} relazioni L2 supports {lower_label} -> {upper_label}.",
+            it=f"Sì: {len(supports)} relazioni L2 supports {lower_label} -> {upper_label}.",
             en=f"Yes: {len(supports)} L2 supports relationships {lower_label} -> {upper_label}.",
         )
 
@@ -917,6 +1150,13 @@ def _try_answer_open_support_question(
         return None
 
     label = labels[0]
+    if _asks_what_subject_supports(text):
+        supports = [
+            rel for rel in ctx.relationship_layers.get("L2", [])
+            if rel[2] == "supports"
+            and ctx.objects.get(rel[0], {}).get("semantic_label") == label
+        ]
+        return _format_open_support_brief(ctx, label, supports, direction="out", language=language)
     if _is_passive_support_question(text) or _asks_what_supports_subject(text):
         supports = [
             rel for rel in ctx.relationship_layers.get("L2", [])
@@ -924,13 +1164,6 @@ def _try_answer_open_support_question(
             and ctx.objects.get(rel[1], {}).get("semantic_label") == label
         ]
         return _format_open_support_brief(ctx, label, supports, direction="in", language=language)
-    elif _asks_what_subject_supports(text):
-        supports = [
-            rel for rel in ctx.relationship_layers.get("L2", [])
-            if rel[2] == "supports"
-            and ctx.objects.get(rel[0], {}).get("semantic_label") == label
-        ]
-        return _format_open_support_brief(ctx, label, supports, direction="out", language=language)
     else:
         return None
 
@@ -951,7 +1184,7 @@ def _format_open_support_brief(
             )
         return _phrase(
             language,
-            it=f"{label} non e supportato da nessuna classe tramite relazioni L2.",
+            it=f"{label} non è supportato da nessuna classe tramite relazioni L2.",
             en=f"{label} is not supported by any class through L2 relationships.",
         )
 
@@ -972,7 +1205,7 @@ def _format_open_support_brief(
         )
     return _phrase(
         language,
-        it=f"{label} e supportato da: {summary} (L2 supports).",
+        it=f"{label} è supportato da: {summary} (L2 supports).",
         en=f"{label} is supported by: {summary} (L2 supports).",
     )
 
@@ -998,14 +1231,18 @@ def _asks_what_supports_subject(text: str) -> bool:
         "da cosa",
         "da che cosa",
         "chi support",
-        "cosa supporta",
-        "cosa sostiene",
-        "cosa sorregge",
         "what supports",
         "what is supporting",
         "which elements support",
     )
-    return any(pattern in text for pattern in patterns)
+    if any(pattern in text for pattern in patterns):
+        return True
+    singular_patterns = (
+        r"\bcosa supporta\b",
+        r"\bcosa sostiene\b",
+        r"\bcosa sorregge\b",
+    )
+    return any(re.search(pattern, text) for pattern in singular_patterns)
 
 
 def _format_support_targets_for_label(ctx: SceneContext, label: str) -> str:
@@ -1118,7 +1355,7 @@ def _try_answer_class_relationships(
             language,
             it=(
                 "alta per i conteggi del grafo; media per l'interpretazione architettonica "
-                "perche dipende dalle soglie geometriche e dalla segmentazione."
+                "perché dipende dalle soglie geometriche e dalla segmentazione."
             ),
             en=(
                 "high for graph counts; medium for architectural interpretation "
@@ -1295,6 +1532,10 @@ def _try_answer_distance(ctx: SceneContext, text: str) -> str | None:
     if len(object_names) >= 2:
         return _format_distance(ctx, object_names[0], object_names[1])
 
+    labels = _extract_semantic_labels(text)
+    if len(labels) >= 2:
+        return _format_class_distance(ctx, labels[0], labels[1], text)
+
     if len(object_names) == 1 and any(term in text for term in ("vicino", "vicini", "nearest", "closest")):
         semantic_label = _extract_semantic_label(text)
         if semantic_label == ctx.objects[object_names[0]]["semantic_label"]:
@@ -1302,6 +1543,34 @@ def _try_answer_distance(ctx: SceneContext, text: str) -> str | None:
         return _format_nearest_objects(ctx, object_names[0], semantic_label=semantic_label)
 
     return None
+
+
+def _try_answer_area(
+    ctx: SceneContext,
+    text: str,
+    language: str = "it",
+) -> str | None:
+    if not _asks_for_area(text):
+        return None
+
+    label = _extract_semantic_label(text)
+    if label:
+        return _format_semantic_footprint_area(ctx, label, language=language)
+    return _format_scene_footprint_area(ctx, language=language)
+
+
+def _asks_for_area(text: str) -> bool:
+    area_terms = (
+        "area",
+        "superficie occupata",
+        "impronta",
+        "footprint",
+        "occupied area",
+    )
+    volume_terms = ("volume", "volumetr")
+    return any(term in text for term in area_terms) and not any(
+        term in text for term in volume_terms
+    )
 
 
 def _asks_for_material(text: str) -> bool:
@@ -1373,6 +1642,25 @@ def _asks_for_relationships(text: str) -> bool:
     )
 
 
+def _asks_for_relationship_list(text: str) -> bool:
+    list_words = (
+        "tutte",
+        "tutti",
+        "lista",
+        "elenco",
+        "elenca",
+        "mostra",
+        "dettaglio",
+        "dettagli",
+        "prime",
+        "all relationships",
+        "list",
+        "show",
+        "details",
+    )
+    return any(word in text for word in list_words)
+
+
 def _extract_relationship_level(text: str) -> str:
     if "l1" in text or "geometric" in text or "geometrich" in text:
         return "L1"
@@ -1383,7 +1671,46 @@ def _extract_relationship_level(text: str) -> str:
     return "all"
 
 
-def _format_relationships(ctx: SceneContext, level: str = "all", limit: int = 200) -> str:
+def _format_relationship_type_summary(
+    ctx: SceneContext,
+    level: str = "all",
+    language: str = "it",
+) -> str:
+    if level == "all":
+        parts = []
+        for layer in RELATIONSHIP_LAYER_ORDER:
+            relationships = ctx.relationship_layers.get(layer, [])
+            type_counts = Counter(rel_type for _, _, rel_type, _ in relationships)
+            type_text = ", ".join(
+                f"{rel_type}={count}"
+                for rel_type, count in sorted(type_counts.items())
+            ) or "nessuna"
+            parts.append(f"{layer}/{RELATIONSHIP_LAYER_NAMES.get(layer, layer)}: {type_text}")
+        suffix = _phrase(
+            language,
+            it="L1 è geometrico; non implica supporto strutturale.",
+            en="L1 is geometric; it does not imply structural support.",
+        )
+        return "; ".join(parts) + f". {suffix}"
+
+    relationships = ctx.relationship_layers.get(level, [])
+    layer_name = RELATIONSHIP_LAYER_NAMES.get(level, level)
+    type_counts = Counter(rel_type for _, _, rel_type, _ in relationships)
+    type_text = ", ".join(
+        f"{rel_type}={count}"
+        for rel_type, count in sorted(type_counts.items())
+    ) or "nessuna"
+    suffix = ""
+    if level == "L1":
+        suffix = _phrase(
+            language,
+            it=" Sono relazioni geometriche, non prove di supporto.",
+            en=" These are geometric relations, not support evidence.",
+        )
+    return f"{level}/{layer_name}: {type_text}.{suffix}"
+
+
+def _format_relationships(ctx: SceneContext, level: str = "all", limit: int = 30) -> str:
     if level == "all":
         return _format_relationships_cascade(ctx, limit=limit)
 
@@ -1408,7 +1735,7 @@ def _format_relationships(ctx: SceneContext, level: str = "all", limit: int = 20
     return "\n".join(lines)
 
 
-def _format_relationships_cascade(ctx: SceneContext, limit: int = 200) -> str:
+def _format_relationships_cascade(ctx: SceneContext, limit: int = 30) -> str:
     max_rows = max(1, min(int(limit), 1000))
     total = sum(len(ctx.relationship_layers.get(level, [])) for level in RELATIONSHIP_LAYER_ORDER)
     lines = [
@@ -1576,8 +1903,81 @@ def _format_point_cloud_info(ctx: SceneContext) -> str:
     return "\n".join(lines)
 
 
+def _format_scene_footprint_area(ctx: SceneContext, language: str = "it") -> str:
+    if ctx.df is None or ctx.df.empty:
+        return _phrase(
+            language,
+            it="Non posso calcolare l'area: la point cloud non è disponibile.",
+            en="I cannot compute the area: the point cloud is not available.",
+        )
+
+    mins = ctx.df[["x", "y"]].min()
+    maxs = ctx.df[["x", "y"]].max()
+    dx = float(maxs["x"] - mins["x"])
+    dy = float(maxs["y"] - mins["y"])
+    area = dx * dy
+    return _phrase(
+        language,
+        it=(
+            f"Area occupata dalla scena: {area:.3f} m2 "
+            f"(impronta XY AABB: {dx:.3f} x {dy:.3f} m)."
+        ),
+        en=(
+            f"Scene occupied area: {area:.3f} m2 "
+            f"(XY AABB footprint: {dx:.3f} x {dy:.3f} m)."
+        ),
+    )
+
+
+def _format_semantic_footprint_area(
+    ctx: SceneContext,
+    label: str,
+    language: str = "it",
+) -> str:
+    objects = _objects_with_semantic_label(ctx, label)
+    if not objects:
+        return _phrase(
+            language,
+            it=f"Non posso calcolare l'area di `{label}`: classe assente nella scena.",
+            en=f"I cannot compute `{label}` area: this class is absent from the scene.",
+        )
+
+    rows = [
+        (name, _xy_area(ctx.objects[name]["bounds"]))
+        for name in objects
+    ]
+    total = sum(area for _, area in rows)
+    largest_name, largest_area = max(rows, key=lambda item: item[1])
+    if len(rows) == 1:
+        return _phrase(
+            language,
+            it=f"Area occupata da `{largest_name}` ({label}): {largest_area:.3f} m2 (impronta XY AABB).",
+            en=f"Area occupied by `{largest_name}` ({label}): {largest_area:.3f} m2 (XY AABB footprint).",
+        )
+    return _phrase(
+        language,
+        it=(
+            f"Area `{label}`: {total:.3f} m2 sommando {len(rows)} impronte AABB XY; "
+            f"oggetto maggiore `{largest_name}` = {largest_area:.3f} m2."
+        ),
+        en=(
+            f"`{label}` area: {total:.3f} m2 summing {len(rows)} XY AABB footprints; "
+            f"largest object `{largest_name}` = {largest_area:.3f} m2."
+        ),
+    )
+
+
 def _format_distance(ctx: SceneContext, object_a: str, object_b: str) -> str:
     metrics = _distance_metrics(ctx.objects[object_a], ctx.objects[object_b])
+    label_a = ctx.objects[object_a]["semantic_label"]
+    label_b = ctx.objects[object_b]["semantic_label"]
+    if _prefers_vertical_distance(label_a, label_b, ""):
+        lower, upper = _lower_upper_object(ctx.objects[object_a], ctx.objects[object_b])
+        return (
+            f"Distanza verticale tra {object_a} e {object_b}: "
+            f"{metrics['vertical_gap']:.3f} m "
+            f"(tra top di `{lower}` e bottom di `{upper}`)."
+        )
     return "\n".join([
         f"Distanza tra {object_a} e {object_b}:",
         f"  Distanza tra centroidi: {metrics['centroid_distance']:.3f} m",
@@ -1588,6 +1988,57 @@ def _format_distance(ctx: SceneContext, object_a: str, object_b: str) -> str:
         "  Bounding box a contatto/sovrapposte: "
         + ("si" if metrics["touching_or_overlapping"] else "no"),
     ])
+
+
+def _format_class_distance(
+    ctx: SceneContext,
+    label_a: str,
+    label_b: str,
+    text: str,
+) -> str:
+    objects_a = _objects_with_semantic_label(ctx, label_a)
+    objects_b = _objects_with_semantic_label(ctx, label_b)
+    if not objects_a or not objects_b:
+        return (
+            f"Non posso calcolare la distanza: `{label_a}`={len(objects_a)}, "
+            f"`{label_b}`={len(objects_b)} nella scena."
+        )
+
+    prefer_vertical = _prefers_vertical_distance(label_a, label_b, text)
+    rows = []
+    for name_a in objects_a:
+        for name_b in objects_b:
+            metrics = _distance_metrics(ctx.objects[name_a], ctx.objects[name_b])
+            rows.append((name_a, name_b, metrics))
+
+    if prefer_vertical:
+        name_a, name_b, metrics = min(rows, key=lambda row: row[2]["vertical_gap"])
+        lower, upper = _lower_upper_object(ctx.objects[name_a], ctx.objects[name_b])
+        return (
+            f"Distanza verticale `{label_a}`-`{label_b}`: "
+            f"{metrics['vertical_gap']:.3f} m "
+            f"(tra top di `{lower}` e bottom di `{upper}`; coppia {name_a}/{name_b})."
+        )
+
+    name_a, name_b, metrics = min(rows, key=lambda row: row[2]["bbox_gap"])
+    return (
+        f"Distanza minima `{label_a}`-`{label_b}`: "
+        f"{metrics['bbox_gap']:.3f} m tra bounding box "
+        f"(coppia {name_a}/{name_b}; gap verticale {metrics['vertical_gap']:.3f} m)."
+    )
+
+
+def _prefers_vertical_distance(label_a: str, label_b: str, text: str) -> bool:
+    if any(term in text for term in ("verticale", "altezza", "quota", "height", "vertical")):
+        return True
+    labels = {label_a, label_b}
+    return "floor" in labels and bool(labels & {"vault", "roof", "arch"})
+
+
+def _lower_upper_object(obj_a: dict, obj_b: dict) -> tuple[str, str]:
+    if obj_a["bounds"]["max"][2] <= obj_b["bounds"]["max"][2]:
+        return obj_a.get("semantic_label", "oggetto inferiore"), obj_b.get("semantic_label", "oggetto superiore")
+    return obj_b.get("semantic_label", "oggetto inferiore"), obj_a.get("semantic_label", "oggetto superiore")
 
 
 def _format_nearest_objects(
@@ -1607,7 +2058,7 @@ def _format_nearest_objects(
 
     rows.sort(key=lambda row: (row[2]["bbox_gap"], row[2]["centroid_distance"]))
     lines = [
-        f"Oggetti piu vicini a {object_name}"
+        f"Oggetti più vicini a {object_name}"
         + (f" filtrati per classe {semantic_label}" if semantic_label else "")
         + f": {len(rows)} candidati"
     ]
@@ -1695,7 +2146,7 @@ def _format_room_volume(ctx: SceneContext) -> str:
     if not room_volume:
         return (
             "Non posso stimare il volume della stanza: la feature "
-            "scene_features['room_volume'] non e disponibile. Servono almeno "
+            "scene_features['room_volume'] non è disponibile. Servono almeno "
             "un floor e un elemento tra wall, column, roof o vault."
         )
     floor_dims = room_volume["floor_base_dimensions"]
