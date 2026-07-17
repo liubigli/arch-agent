@@ -31,6 +31,7 @@ LAZ point cloud
 ┌─────────────────────────────────────────────┐
 │         LangGraph Agent (Llama 3)           │
 │  Tools:                                     │
+│  • count_objects                            │
 │  • list_objects                             │
 │  • get_object_info                          │
 │  • list_relationships                       │
@@ -38,7 +39,10 @@ LAZ point cloud
 │  • find_relationship_anomalies              │
 │  • get_scene_statistics                     │
 │  • get_point_cloud_info                     │
+│  • measure_occupied_area                    │
 │  • get_color_summary                        │
+│  • analyze_surface_roughness                │
+│  • infer_material_from_color                │
 │  • estimate_room_volume                     │
 │  • measure_distance                         │
 │  • find_nearest_objects                     │
@@ -109,9 +113,13 @@ The scene is represented as three stratified relationship levels. Each level is 
 |---|---|---|---|
 | L1 | geometric | `near`, `adjacent_to`, `above`, `below` | spatial position and proximity |
 | L2 | structural | `supports`, `rests_on` | vertical support and load-bearing interpretation |
-| L3 | mereological | `has_part`, `is_opening_in`, `is_ornament_of`, `is_attached_to` | architectural composition and functional membership |
+| L3 | mereological | `has_part`, `part_of`, `is_opening_in`, `is_rib_of`, `is_ornament_of`, `is_attached_to`, `is_placed_on`, `is_connected_to` | architectural composition and functional membership |
 
-For relationship queries, `list_relationships` is the primary tool for listing or counting relationships by layer, type, or object. `find_relationships` is kept for object-centric inspection of all relationships involving one specific object.
+L2 and L3 can be interpreted as lightweight scene-level knowledge graphs, not as full ontology-backed knowledge graphs. L2 encodes rule-constrained structural knowledge derived from geometry and semantic classes; L3 encodes semantic and mereological knowledge about architectural composition.
+
+The L3 relation names are directional and not interchangeable. `has_part` is emitted from parent to child. `part_of`, `is_opening_in`, `is_rib_of`, `is_ornament_of`, `is_attached_to`, `is_placed_on`, and `is_connected_to` are emitted from child to parent according to the semantic class rules in `relationships.py`. The README and prompt use this same definitive taxonomy.
+
+For relationship queries, `list_relationships` is the primary tool for listing or counting relationships by layer, type, or object. `find_relationships` has one narrower purpose: inspect all relationships involving one named object.
 
 The three graphs are available in the scene context:
 
