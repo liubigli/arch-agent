@@ -328,18 +328,12 @@ def _try_answer_deterministic(
             inference=_phrase(
                 language,
                 it="Nessuna inferenza aggiuntiva: elenco delle relazioni calcolate nel grafo.",
-                en="No additional inference: this is a list of relationships computed in the graph.",
+                en="No additional inference: this is the list of relationships computed in the graph.",
             ),
             confidence=_phrase(
                 language,
-                it=(
-                    "alta per le relazioni elencate; media per il loro significato "
-                    "architettonico se basato solo su L1."
-                ),
-                en=(
-                    "high for the listed relationships; medium for their architectural "
-                    "meaning when based only on L1."
-                ),
+                it="alta per le relazioni elencate; media per il loro significato architettonico se basato solo su L1.",
+                en="high for the listed relationships; medium for their architectural meaning if based only on L1.",
             ),
             language=language,
         )
@@ -406,15 +400,6 @@ def _try_answer_deterministic(
             inference="La vicinanza è una relazione geometrica; non implica da sola contatto, supporto o appartenenza.",
             confidence="alta per le misure geometriche; media per eventuali interpretazioni spaziali.",
         )
-
-    if "pointcloud" in text or "point cloud" in text or "nuvola" in text:
-        if "punti" in text or "points" in text or "bounding" in text:
-            return _format_grounded_answer(
-                observed=_format_point_cloud_info(ctx),
-                relations="Nessuna relazione usata: risposta basata sulla point cloud.",
-                inference="Descrizione geometrica globale della nuvola, senza interpretazione architettonica.",
-                confidence="alta: dati letti direttamente dal dataframe della point cloud.",
-            )
 
     if _asks_for_material(text):
         object_names = _extract_object_names(text, ctx.objects)
@@ -646,29 +631,27 @@ def _format_llm_error(exc: Exception, model: str) -> str:
 
 def _relationship_usage_text(level: str, language: str = "it") -> str:
     if level == "L1":
-        return "L1/geometric: near, adjacent_to, above, below."
+        return _phrase(
+            language,
+            it="L1/geometric: near, adjacent_to, above, below.",
+            en="L1/geometric: near, adjacent_to, above, below.",
+        )
     if level == "L2":
         return _phrase(
             language,
             it="L2/structural: supports, rests_on, filtrate dalle regole architettoniche.",
-            en="L2/structural: supports and rests_on, filtered by architectural rules.",
+            en="L2/structural: supports, rests_on, filtered by architectural rules.",
         )
     if level == "L3":
         return _phrase(
             language,
-            it=(
-                "L3/mereological: has_part, is_opening_in, is_ornament_of, "
-                "is_attached_to e relazioni parte-tutto."
-            ),
-            en=(
-                "L3/mereological: has_part, is_opening_in, is_ornament_of, "
-                "is_attached_to, and part-whole relationships."
-            ),
+            it="L3/mereological: has_part, is_opening_in, is_ornament_of, is_attached_to e relazioni parte-tutto.",
+            en="L3/mereological: has_part, is_opening_in, is_ornament_of, is_attached_to, and part-whole relations.",
         )
     return _phrase(
         language,
         it="Cascata completa: prima L1/geometric, poi L2/structural, infine L3/mereological.",
-        en="Full cascade: first L1/geometric, then L2/structural, then L3/mereological.",
+        en="Full cascade: first L1/geometric, then L2/structural, finally L3/mereological.",
     )
 
 
@@ -725,6 +708,9 @@ def _format_requested_facts(
         ))
     if "bounding box" in text or "boundingn box" in text:
         sections.append(("Point cloud", _format_point_cloud_info(ctx)))
+    elif "pointcloud" in text or "point cloud" in text or "nuvola" in text:
+        if "punti" in text or "points" in text or "bounding" in text:
+            sections.append(("Point cloud", _format_point_cloud_info(ctx)))
 
     if not sections:
         return None
@@ -1798,7 +1784,7 @@ def _format_class_relationship_summary(
         return "\n".join(lines)
 
     lines.append(_phrase(language, it="Relazioni con altre classi:", en="Relationships with other classes:"))
-    for index, ((current_level, rel_level, rel_type, direction, other_label), count) in enumerate(
+    for index, ((rel_layer, rel_level, rel_type, direction, other_label), count) in enumerate(
         sorted(counts.items(), key=lambda item: (item[0][0], item[0][4], item[0][2], item[0][3])),
         start=1,
     ):
@@ -1812,9 +1798,9 @@ def _format_class_relationship_summary(
             )
             break
         arrow = f"{label} -> {other_label}" if direction == "out" else f"{other_label} -> {label}"
-        lines.append(f"  - {current_level}/{rel_level}: {arrow}, {rel_type} = {count}")
+        lines.append(f"  - {rel_layer}/{rel_level}: {arrow}, {rel_type} = {count}")
         for src, tgt, example_type, example_level in examples[
-            (current_level, rel_level, rel_type, direction, other_label)
+            (rel_layer, rel_level, rel_type, direction, other_label)
         ]:
             lines.append(f"      es. {src} --[{example_level}:{example_type}]--> {tgt}")
     return "\n".join(lines)
