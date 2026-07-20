@@ -1,4 +1,5 @@
 from collections import Counter, defaultdict
+import os
 import re
 from typing import Annotated
 import unicodedata
@@ -32,6 +33,7 @@ from .tools.scene_tools import create_scene_tools
 from .settings import get_config
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "system.md"
+_OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 
 _SEMANTIC_ALIASES = (
     ("porta finestra", "door_window"),
@@ -74,8 +76,6 @@ _SEMANTIC_ALIASES = (
     ("scala", "stairs"),
     ("stairs", "stairs"),
     ("stair", "stairs"),
-    ("modanaturwe", "moldings"),
-    ("modanaturw", "moldings"),
     ("modanatur", "moldings"),
     ("modanature", "moldings"),
     ("modanatura", "moldings"),
@@ -104,7 +104,7 @@ class AgentState(TypedDict):
 
 def create_agent(ctx: SceneContext, model: str = "llama3"):
     tools = create_scene_tools(ctx)
-    llm = ChatOllama(model=model, base_url="http://localhost:11434", temperature=0.0)
+    llm = ChatOllama(model=model, base_url=_OLLAMA_BASE_URL, temperature=0.0)
     llm_with_tools = llm.bind_tools(tools)
     tool_node = ToolNode(tools)
 
@@ -189,7 +189,12 @@ def run_agent(ctx: SceneContext, model: str = "llama3") -> None:
             continue
 
         messages.append(HumanMessage(content=user_input))
-        result = agent.invoke({"messages": messages})
+        try:
+            result = agent.invoke({"messages": messages})
+        except Exception as exc:
+            messages.pop()
+            print(f"\nAgent: {_format_llm_error(exc, model)}\n")
+            continue
         messages = result["messages"]
         print(f"\nAgent: {messages[-1].content}\n")
 
@@ -201,6 +206,35 @@ def _try_answer_deterministic(
 ) -> str | None:
     language = _response_language(user_input)
     text = _normalize_text(user_input)
+
+    if _asks_for_area(text) and "volume" in text:
+        requested_facts = _format_requested_facts(ctx, text, language=language)
+        if requested_facts is not None:
+            return _format_grounded_answer(
+                observed=requested_facts,
+                relations=_phrase(
+                    language,
+                    it="Nessuna relazione L1/L2/L3 usata: risposta basata su feature geometriche.",
+                    en="No L1/L2/L3 relationship used: answer based on geometric features.",
+                ),
+                inference=_phrase(
+                    language,
+                    it=(
+                        "Area e volume sono misure geometriche AABB/footprint; "
+                        "non corrispondono automaticamente a superfici o volumi architettonici netti."
+                    ),
+                    en=(
+                        "Area and volume are AABB/footprint geometric measures; "
+                        "they do not automatically match net architectural surfaces or volumes."
+                    ),
+                ),
+                confidence=_phrase(
+                    language,
+                    it="alta per i calcoli geometrici; media per l'interpretazione architettonica.",
+                    en="high for geometric calculations; medium for architectural interpretation.",
+                ),
+                language=language,
+            )
 
     area_answer = _try_answer_area(ctx, text, language=language)
     if area_answer is not None:
@@ -290,9 +324,24 @@ def _try_answer_deterministic(
                 relationship_type=relationship_type,
                 limit=30,
             ),
-            relations=_relationship_usage_text(level),
-            inference="Nessuna inferenza aggiuntiva: elenco delle relazioni calcolate nel grafo.",
-            confidence="alta per le relazioni elencate; media per il loro significato architettonico se basato solo su L1.",
+            relations=_relationship_usage_text(level, language=language),
+            inference=_phrase(
+                language,
+                it="Nessuna inferenza aggiuntiva: elenco delle relazioni calcolate nel grafo.",
+                en="No additional inference: this is a list of relationships computed in the graph.",
+            ),
+            confidence=_phrase(
+                language,
+                it=(
+                    "alta per le relazioni elencate; media per il loro significato "
+                    "architettonico se basato solo su L1."
+                ),
+                en=(
+                    "high for the listed relationships; medium for their architectural "
+                    "meaning when based only on L1."
+                ),
+            ),
+            language=language,
         )
 
     above_below_answer = _try_answer_above_below_elements(ctx, text, language=language)
@@ -327,13 +376,26 @@ def _try_answer_deterministic(
     if open_support_answer is not None:
         return open_support_answer
 
-    requested_facts = _format_requested_facts(ctx, text)
+    requested_facts = _format_requested_facts(ctx, text, language=language)
     if requested_facts is not None:
         return _format_grounded_answer(
             observed=requested_facts,
-            relations="Nessuna relazione L1/L2/L3 usata: risposta basata su conteggi, classi o feature.",
-            inference="Sintesi descrittiva derivata dai dati disponibili, senza interpretazioni strutturali aggiuntive.",
-            confidence="alta: i valori provengono direttamente dal contesto della scena.",
+            relations=_phrase(
+                language,
+                it="Nessuna relazione L1/L2/L3 usata: risposta basata su conteggi, classi o feature.",
+                en="No L1/L2/L3 relationship used: answer based on counts, classes, or features.",
+            ),
+            inference=_phrase(
+                language,
+                it="Sintesi descrittiva derivata dai dati disponibili, senza interpretazioni strutturali aggiuntive.",
+                en="Descriptive summary derived from available data, without additional structural interpretation.",
+            ),
+            confidence=_phrase(
+                language,
+                it="alta: i valori provengono direttamente dal contesto della scena.",
+                en="high: values come directly from the scene context.",
+            ),
+            language=language,
         )
 
     distance_answer = _try_answer_distance(ctx, text)
@@ -345,22 +407,6 @@ def _try_answer_deterministic(
             confidence="alta per le misure geometriche; media per eventuali interpretazioni spaziali.",
         )
 
-    if "incongruen" in text or "contraddizion" in text or "contraddittor" in text:
-        return _format_grounded_answer(
-            observed=_format_relationship_inconsistencies(ctx),
-            relations="Controllo incrociato su L1/geometric, L2/structural e L3/mereological.",
-            inference="Le anomalie indicano conflitti logici o relazioni non coerenti con le regole architettoniche.",
-            confidence="media: dipende dalla qualità della segmentazione e dalle soglie geometriche.",
-        )
-
-    if "bounding box" in text or "boundingn box" in text:
-        return _format_grounded_answer(
-            observed=_format_point_cloud_info(ctx),
-            relations="Nessuna relazione usata: risposta basata sulla point cloud e sulla bounding box globale.",
-            inference="Il volume AABB descrive l'estensione geometrica, non il volume architettonico abitabile.",
-            confidence="alta: dati calcolati direttamente dalle coordinate della point cloud.",
-        )
-
     if "pointcloud" in text or "point cloud" in text or "nuvola" in text:
         if "punti" in text or "points" in text or "bounding" in text:
             return _format_grounded_answer(
@@ -369,22 +415,6 @@ def _try_answer_deterministic(
                 inference="Descrizione geometrica globale della nuvola, senza interpretazione architettonica.",
                 confidence="alta: dati letti direttamente dal dataframe della point cloud.",
             )
-
-    if "volume" in text and ("stanza" in text or "room" in text):
-        return _format_grounded_answer(
-            observed=_format_room_volume(ctx),
-            relations="Relazioni non usate direttamente: stima basata su floor ed envelope verticale della scena.",
-            inference="Il volume stanza è una stima semplificata come box contenitore.",
-            confidence="media: dipende dalla qualità dei floor e degli elementi verticali rilevati.",
-        )
-
-    if "volume" in text and "bounding" in text:
-        return _format_grounded_answer(
-            observed=_format_point_cloud_info(ctx),
-            relations="Nessuna relazione usata: volume calcolato dalla bounding box della point cloud.",
-            inference="Volume puramente geometrico, non equivalente al volume funzionale dello spazio.",
-            confidence="alta per il calcolo AABB; bassa se interpretato come volume architettonico.",
-        )
 
     if _asks_for_material(text):
         object_names = _extract_object_names(text, ctx.objects)
@@ -491,38 +521,6 @@ def _try_answer_deterministic(
                 en="high if RGB is available; otherwise unavailable.",
             ),
             language=language,
-        )
-
-    if "maggior numero di punti" in text or "piu punti" in text:
-        return _format_grounded_answer(
-            observed=_format_top_object(ctx, metric="point_count"),
-            relations="Nessuna relazione usata: confronto basato sul numero di punti degli oggetti.",
-            inference="Un alto numero di punti può indicare dominanza geometrica o maggiore copertura, non importanza architettonica certa.",
-            confidence="alta per il ranking numerico; media per l'interpretazione di dominanza.",
-        )
-
-    if "volume maggiore" in text or "maggior volume" in text or "piu volume" in text:
-        return _format_grounded_answer(
-            observed=_format_top_object(ctx, metric="volume"),
-            relations="Nessuna relazione usata: confronto basato sul volume AABB degli oggetti.",
-            inference="Il volume AABB misura ingombro geometrico, non necessariamente importanza funzionale.",
-            confidence="alta per il ranking geometrico; media per l'interpretazione architettonica.",
-        )
-
-    if "piu compatto" in text or "geometricamente compatto" in text:
-        return _format_grounded_answer(
-            observed=_format_top_object(ctx, metric="compactness", reverse=False),
-            relations="Nessuna relazione usata: confronto basato sulla metrica di compactness.",
-            inference="La compactness è una proprietà geometrica, non una classificazione semantica.",
-            confidence="media: dipende dalla qualità della superficie stimata.",
-        )
-
-    if _asks_for_scene_inventory(text):
-        return _format_grounded_answer(
-            observed=_format_scene_inventory(ctx),
-            relations="Nessuna relazione usata: inventario basato sulle classi semantiche degli oggetti.",
-            inference="I ruoli architettonici derivano dall'ontologia Python, non da una nuova osservazione geometrica.",
-            confidence="alta per conteggi e label; media per i ruoli se la segmentazione è incerta.",
         )
 
     return None
@@ -634,29 +632,97 @@ def _phrase(language: str, *, it: str, en: str) -> str:
     return en if language == "en" else it
 
 
-def _relationship_usage_text(level: str) -> str:
+def _format_llm_error(exc: Exception, model: str) -> str:
+    detail = str(exc).strip()
+    hint = (
+        f"Non sono riuscito a contattare Ollama su {_OLLAMA_BASE_URL} "
+        f"per il modello '{model}'. Verifica che il servizio sia avviato "
+        "e che il modello sia disponibile."
+    )
+    if detail:
+        return f"{hint}\nDettaglio tecnico: {detail}"
+    return hint
+
+
+def _relationship_usage_text(level: str, language: str = "it") -> str:
     if level == "L1":
         return "L1/geometric: near, adjacent_to, above, below."
     if level == "L2":
-        return "L2/structural: supports, rests_on, filtrate dalle regole architettoniche."
+        return _phrase(
+            language,
+            it="L2/structural: supports, rests_on, filtrate dalle regole architettoniche.",
+            en="L2/structural: supports and rests_on, filtered by architectural rules.",
+        )
     if level == "L3":
-        return "L3/mereological: has_part, is_opening_in, is_ornament_of, is_attached_to e relazioni parte-tutto."
-    return "Cascata completa: prima L1/geometric, poi L2/structural, infine L3/mereological."
+        return _phrase(
+            language,
+            it=(
+                "L3/mereological: has_part, is_opening_in, is_ornament_of, "
+                "is_attached_to e relazioni parte-tutto."
+            ),
+            en=(
+                "L3/mereological: has_part, is_opening_in, is_ornament_of, "
+                "is_attached_to, and part-whole relationships."
+            ),
+        )
+    return _phrase(
+        language,
+        it="Cascata completa: prima L1/geometric, poi L2/structural, infine L3/mereological.",
+        en="Full cascade: first L1/geometric, then L2/structural, then L3/mereological.",
+    )
 
 
-def _format_requested_facts(ctx: SceneContext, text: str) -> str | None:
+def _format_requested_facts(
+    ctx: SceneContext,
+    text: str,
+    language: str = "it",
+) -> str | None:
     sections: list[tuple[str, str]] = []
 
     if _asks_for_scene_inventory(text):
-        sections.append(("Inventario", _format_scene_inventory(ctx)))
+        sections.append((
+            _phrase(language, it="Inventario", en="Inventory"),
+            _format_scene_inventory(ctx),
+        ))
+    if _asks_for_area(text):
+        label = _extract_semantic_label(text)
+        sections.append((
+            _phrase(language, it="Area", en="Area"),
+            (
+                _format_semantic_footprint_area(ctx, label, language=language)
+                if label
+                else _format_scene_footprint_area(ctx, language=language)
+            ),
+        ))
     if "maggior numero di punti" in text or "piu punti" in text:
-        sections.append(("Elemento con più punti", _format_top_object(ctx, metric="point_count")))
+        sections.append((
+            _phrase(language, it="Elemento con più punti", en="Object with most points"),
+            _format_top_object(ctx, metric="point_count"),
+        ))
     if "volume maggiore" in text or "maggior volume" in text or "piu volume" in text:
-        sections.append(("Elemento con volume maggiore", _format_top_object(ctx, metric="volume")))
+        sections.append((
+            _phrase(language, it="Elemento con volume maggiore", en="Object with largest volume"),
+            _format_top_object(ctx, metric="volume"),
+        ))
     if "piu compatto" in text or "geometricamente compatto" in text:
-        sections.append(("Elemento più compatto", _format_top_object(ctx, metric="compactness", reverse=False)))
+        sections.append((
+            _phrase(language, it="Elemento più compatto", en="Most compact object"),
+            _format_top_object(ctx, metric="compactness", reverse=False),
+        ))
     if "volume" in text and ("stanza" in text or "room" in text):
-        sections.append(("Volume stanza", _format_room_volume(ctx)))
+        sections.append((
+            _phrase(language, it="Volume stanza", en="Room volume"),
+            _format_room_volume(ctx),
+        ))
+    elif "volume" in text and not (
+        "volume maggiore" in text
+        or "maggior volume" in text
+        or "piu volume" in text
+    ):
+        sections.append((
+            _phrase(language, it="Volume scena", en="Scene volume"),
+            _format_scene_bounding_volume(ctx, language=language),
+        ))
     if "bounding box" in text or "boundingn box" in text:
         sections.append(("Point cloud", _format_point_cloud_info(ctx)))
 
@@ -1435,8 +1501,7 @@ def _try_answer_open_support_question(
             and ctx.objects.get(rel[1], {}).get("semantic_label") == label
         ]
         return _format_open_support_brief(ctx, label, supports, direction="in", language=language)
-    else:
-        return None
+    return None
 
 
 def _format_open_support_brief(
@@ -1733,7 +1798,7 @@ def _format_class_relationship_summary(
         return "\n".join(lines)
 
     lines.append(_phrase(language, it="Relazioni con altre classi:", en="Relationships with other classes:"))
-    for index, ((level, rel_level, rel_type, direction, other_label), count) in enumerate(
+    for index, ((current_level, rel_level, rel_type, direction, other_label), count) in enumerate(
         sorted(counts.items(), key=lambda item: (item[0][0], item[0][4], item[0][2], item[0][3])),
         start=1,
     ):
@@ -1747,9 +1812,9 @@ def _format_class_relationship_summary(
             )
             break
         arrow = f"{label} -> {other_label}" if direction == "out" else f"{other_label} -> {label}"
-        lines.append(f"  - {level}/{rel_level}: {arrow}, {rel_type} = {count}")
+        lines.append(f"  - {current_level}/{rel_level}: {arrow}, {rel_type} = {count}")
         for src, tgt, example_type, example_level in examples[
-            (level, rel_level, rel_type, direction, other_label)
+            (current_level, rel_level, rel_type, direction, other_label)
         ]:
             lines.append(f"      es. {src} --[{example_level}:{example_type}]--> {tgt}")
     return "\n".join(lines)
@@ -1930,10 +1995,7 @@ def _asks_for_area(text: str) -> bool:
         "footprint",
         "occupied area",
     )
-    volume_terms = ("volume", "volumetr")
-    return any(term in text for term in area_terms) and not any(
-        term in text for term in volume_terms
-    )
+    return any(term in text for term in area_terms)
 
 
 def _asks_for_material(text: str) -> bool:
@@ -2036,14 +2098,6 @@ def _asks_for_relationships(text: str) -> bool:
 
 
 def _asks_for_relationship_inconsistencies(text: str) -> bool:
-    relationship_terms = (
-        "relazione",
-        "relazioni",
-        "relationship",
-        "relationships",
-        "grafo",
-        "graph",
-    )
     anomaly_terms = (
         "incongruen",
         "contraddizion",
@@ -2061,9 +2115,7 @@ def _asks_for_relationship_inconsistencies(text: str) -> bool:
         "relazioni ambigue",
         "relazione ambigua",
     )
-    return any(term in text for term in anomaly_terms) and any(
-        term in text for term in relationship_terms
-    )
+    return any(term in text for term in anomaly_terms)
 
 
 def _try_answer_relationship_layer_conflict(text: str, language: str = "it") -> str | None:
@@ -2549,6 +2601,31 @@ def _format_point_cloud_info(ctx: SceneContext) -> str:
         "RGB: " + ("disponibile" if _has_rgb(ctx.df) else "non disponibile")
     )
     return "\n".join(lines)
+
+
+def _format_scene_bounding_volume(ctx: SceneContext, language: str = "it") -> str:
+    if ctx.df is None or ctx.df.empty:
+        return _phrase(
+            language,
+            it="Non posso calcolare il volume: la point cloud non è disponibile.",
+            en="I cannot compute the volume: the point cloud is not available.",
+        )
+
+    mins = ctx.df[["x", "y", "z"]].min()
+    maxs = ctx.df[["x", "y", "z"]].max()
+    dims = maxs - mins
+    volume = float(dims["x"] * dims["y"] * dims["z"])
+    return _phrase(
+        language,
+        it=(
+            f"Volume AABB della scena: {volume:.3f} m3 "
+            f"(dimensioni: {dims['x']:.3f} x {dims['y']:.3f} x {dims['z']:.3f} m)."
+        ),
+        en=(
+            f"Scene AABB volume: {volume:.3f} m3 "
+            f"(dimensions: {dims['x']:.3f} x {dims['y']:.3f} x {dims['z']:.3f} m)."
+        ),
+    )
 
 
 def _format_scene_footprint_area(ctx: SceneContext, language: str = "it") -> str:
