@@ -214,6 +214,10 @@ def _try_answer_deterministic(
     if dominant_answer is not None:
         return dominant_answer
 
+    annotated_description = _try_answer_annotated_object_description(ctx, text, language=language)
+    if annotated_description is not None:
+        return annotated_description
+
     opening_answer = _try_answer_opening_in_wall_question(ctx, text, language=language)
     if opening_answer is not None:
         return opening_answer
@@ -866,6 +870,229 @@ def _asks_for_dominant_element(text: str) -> bool:
         "most dominant",
     )
     return any(term in text for term in terms)
+
+
+def _try_answer_annotated_object_description(
+    ctx: SceneContext,
+    text: str,
+    language: str = "it",
+) -> str | None:
+    labels = _extract_semantic_labels(text)
+    object_names = _extract_object_names(text, ctx.objects)
+    if not labels and not object_names:
+        return None
+    if not _asks_for_user_supplied_description(text):
+        return None
+
+    if object_names:
+        object_name = object_names[0]
+        return _format_annotated_object_description(ctx, object_name, language=language)
+
+    label = labels[0]
+    object_name, error = _resolve_object_by_spatial_query(ctx, label, text, language=language)
+    if object_name is None:
+        return error
+    return _format_annotated_object_description(ctx, object_name, language=language)
+
+
+def _asks_for_user_supplied_description(text: str) -> bool:
+    terms = (
+        "descrivi",
+        "descrizione",
+        "scheda",
+        "storico",
+        "storica",
+        "storiche",
+        "historical",
+        "history",
+        "descrittiva",
+        "testuale",
+        "textual",
+        "materica",
+        "materico",
+        "metadata",
+        "metadati",
+        "annotazione",
+        "annotation",
+        "csv",
+    )
+    return any(term in text for term in terms)
+
+
+def _resolve_object_by_spatial_query(
+    ctx: SceneContext,
+    label: str,
+    text: str,
+    language: str = "it",
+) -> tuple[str | None, str | None]:
+    object_names = _objects_with_semantic_label(ctx, label)
+    if not object_names:
+        return None, _phrase(
+            language,
+            it=f"Nessun oggetto di classe `{label}` presente nella scena.",
+            en=f"No object of class `{label}` is present in the scene.",
+        )
+    if len(object_names) == 1:
+        return object_names[0], None
+
+    selected = _select_object_by_spatial_terms(ctx, object_names, text)
+    if selected:
+        return selected, None
+
+    annotated = [
+        name for name in object_names
+        if getattr(ctx, "object_annotations", {}).get(name)
+    ]
+    if len(annotated) == 1:
+        return annotated[0], None
+
+    summary = _format_position_candidates(ctx, object_names)
+    return None, _phrase(
+        language,
+        it=(
+            f"Ci sono {len(object_names)} oggetti di classe `{label}`. "
+            "Specificane la posizione, ad esempio `colonna centrale`, `colonna a sinistra`, "
+            "`colonna a nord/sud`, oppure aggiungi nel CSV una riga con coordinate x,y,z.\n"
+            + summary
+        ),
+        en=(
+            f"There are {len(object_names)} objects of class `{label}`. "
+            "Specify the spatial position, for example `central column`, `left column`, "
+            "`north/south column`, or add a CSV row with x,y,z coordinates.\n"
+            + summary
+        ),
+    )
+
+
+def _select_object_by_spatial_terms(ctx: SceneContext, object_names: list[str], text: str) -> str | None:
+    centroids = {
+        name: ctx.objects[name]["centroid"]
+        for name in object_names
+    }
+    if any(term in text for term in ("centrale", "centro", "central", "middle")):
+        mean = sum((centroids[name] for name in object_names)) / len(object_names)
+        return min(object_names, key=lambda name: _norm(centroids[name] - mean))
+    if any(term in text for term in ("sinistra", "left", "ovest", "west")):
+        return min(object_names, key=lambda name: float(centroids[name][0]))
+    if any(term in text for term in ("destra", "right", "est", "east")):
+        return max(object_names, key=lambda name: float(centroids[name][0]))
+    if any(term in text for term in ("sud", "south", "davanti", "front")):
+        return min(object_names, key=lambda name: float(centroids[name][1]))
+    if any(term in text for term in ("nord", "north", "dietro", "back")):
+        return max(object_names, key=lambda name: float(centroids[name][1]))
+    if any(term in text for term in ("bassa", "basso", "inferiore", "lower", "bottom")):
+        return min(object_names, key=lambda name: float(centroids[name][2]))
+    if any(term in text for term in ("alta", "alto", "superiore", "upper", "top")):
+        return max(object_names, key=lambda name: float(centroids[name][2]))
+    return None
+
+
+def _format_position_candidates(ctx: SceneContext, object_names: list[str], limit: int = 12) -> str:
+    rows = []
+    for name in object_names[:limit]:
+        c = ctx.objects[name]["centroid"]
+        rows.append(f"  - {name}: centroide=({c[0]:.3f}, {c[1]:.3f}, {c[2]:.3f})")
+    if len(object_names) > limit:
+        rows.append(f"  ... {len(object_names) - limit} oggetti non mostrati.")
+    return "\n".join(rows)
+
+
+def _format_annotated_object_description(
+    ctx: SceneContext,
+    object_name: str,
+    language: str = "it",
+) -> str:
+    obj = ctx.objects[object_name]
+    label = obj["semantic_label"]
+    centroid = obj["centroid"]
+    dims = obj["bounds"]["max"] - obj["bounds"]["min"]
+    annotations = getattr(ctx, "object_annotations", {}).get(object_name, [])
+
+    if language == "en":
+        lines = [
+            f"Descriptive card for `{object_name}` ({label}).",
+            (
+                "Observed geometry: "
+                f"centroid=({centroid[0]:.3f}, {centroid[1]:.3f}, {centroid[2]:.3f}) m; "
+                f"dimensions=({dims[0]:.3f}, {dims[1]:.3f}, {dims[2]:.3f}) m; "
+                f"points={obj['point_count']:,}."
+            ),
+            f"Architectural role: {architectural_role(label)}.",
+        ]
+        if not annotations:
+            lines.append(
+                "No user-provided CSV description is associated with this object. "
+                "Add a CSV row with semantic_label plus x,y,z or position."
+            )
+            return "\n".join(lines)
+        lines.extend(_format_annotation_entries(annotations, language=language))
+        return "\n".join(lines)
+
+    lines = [
+        f"Scheda descrittiva per `{object_name}` ({label}).",
+        (
+            "Geometria osservata: "
+            f"centroide=({centroid[0]:.3f}, {centroid[1]:.3f}, {centroid[2]:.3f}) m; "
+            f"dimensioni=({dims[0]:.3f}, {dims[1]:.3f}, {dims[2]:.3f}) m; "
+            f"punti={obj['point_count']:,}."
+        ),
+        f"Ruolo architettonico: {architectural_role(label)}.",
+    ]
+    if not annotations:
+        lines.append(
+            "Nessuna descrizione CSV fornita è associata a questo oggetto. "
+            "Aggiungi una riga CSV con semantic_label più x,y,z oppure posizione."
+        )
+        return "\n".join(lines)
+    lines.extend(_format_annotation_entries(annotations, language=language))
+    return "\n".join(lines)
+
+
+def _format_annotation_entries(annotations: list[dict], language: str = "it") -> list[str]:
+    lines = []
+    for index, annotation in enumerate(annotations, start=1):
+        prefix = f"CSV {index}" if len(annotations) > 1 else "CSV"
+        lines.append(f"{prefix}:")
+        for title, keys in _annotation_display_fields(language):
+            value = _annotation_first_value(annotation, keys)
+            if value:
+                lines.append(f"  {title}: {value}")
+        match = annotation.get("match", {})
+        method = match.get("method", "unknown")
+        distance = match.get("distance_m")
+        if distance is None:
+            lines.append(f"  match: {method}, row {annotation.get('source_row')}")
+        else:
+            lines.append(
+                f"  match: {method}, distance={distance:.3f} m, row {annotation.get('source_row')}"
+            )
+    return lines
+
+
+def _annotation_display_fields(language: str = "it") -> list[tuple[str, tuple[str, ...]]]:
+    if language == "en":
+        return [
+            ("Description", ("description", "descrizione", "text", "testo", "textual_description", "descrizione_testuale")),
+            ("Historical description", ("historical_description", "descrizione_storica", "storico_descrittiva", "historical", "storia")),
+            ("Material description", ("material_description", "descrizione_materica", "material", "materiale", "materica")),
+            ("Notes", ("notes", "note")),
+            ("Position", ("position", "posizione", "spatial_position", "location", "localizzazione")),
+        ]
+    return [
+        ("Descrizione", ("description", "descrizione", "text", "testo", "textual_description", "descrizione_testuale")),
+        ("Descrizione storico-descrittiva", ("historical_description", "descrizione_storica", "storico_descrittiva", "historical", "storia")),
+        ("Descrizione materica", ("material_description", "descrizione_materica", "material", "materiale", "materica")),
+        ("Note", ("notes", "note")),
+        ("Posizione", ("position", "posizione", "spatial_position", "location", "localizzazione")),
+    ]
+
+
+def _annotation_first_value(annotation: dict, keys: tuple[str, ...]) -> object | None:
+    for key in keys:
+        value = annotation.get(key)
+        if value:
+            return value
+    return None
 
 
 def _try_answer_opening_in_wall_question(

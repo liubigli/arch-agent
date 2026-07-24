@@ -58,6 +58,21 @@ def parse_args() -> argparse.Namespace:
         "--use-normals", action="store_true",
         help="Use Poisson reconstruction for surface area (slower, more accurate)",
     )
+    group.add_argument(
+        "--annotation-csv",
+        default=None,
+        help=(
+            "Optional CSV with user-provided descriptions. If omitted, the "
+            "pipeline looks for a CSV next to the LAZ with the same basename "
+            "or suffixes _annotations/_metadata/_descriptions."
+        ),
+    )
+    group.add_argument(
+        "--annotation-match-threshold",
+        type=float,
+        default=2.0,
+        help="Max distance in meters for matching CSV coordinates to object centroids",
+    )
 
     # Agent params
     group2 = parser.add_argument_group("agent parameters")
@@ -115,6 +130,11 @@ def select_point_cloud(path_value: str) -> str:
 def main() -> None:
     args = parse_args()
     point_cloud_path = select_point_cloud(args.point_cloud_path)
+    annotation_csv_path = (
+        str(resolve_local_path(args.annotation_csv))
+        if args.annotation_csv
+        else None
+    )
 
     params = PipelineParams(
         point_cloud_path=point_cloud_path,
@@ -123,6 +143,8 @@ def main() -> None:
         min_samples=args.min_samples,
         distance_threshold=args.distance_threshold,
         use_normals=args.use_normals,
+        annotation_csv_path=annotation_csv_path,
+        annotation_match_threshold=args.annotation_match_threshold,
     )
 
     ctx = run_pipeline(params)

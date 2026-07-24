@@ -92,6 +92,9 @@ def create_scene_tools(ctx: SceneContext) -> list:
             f"  Height          : {feat.get('height', 0):.2f} m",
             f"  Compactness     : {feat.get('compactness', 0):.4f}",
         ]
+        annotations = getattr(ctx, "object_annotations", {}).get(object_name, [])
+        if annotations:
+            lines.append(f"  CSV annotations : {len(annotations)}")
         color = rgb_statistics(obj["points"])
         if color is not None:
             raw = color["mean_raw"]
@@ -136,6 +139,37 @@ def create_scene_tools(ctx: SceneContext) -> list:
             lines.append("  No relationships found.")
 
         return "\n".join(lines)
+
+    @tool
+    def get_object_annotation(
+        object_name: Optional[str] = None,
+        semantic_label: Optional[str] = None,
+        position: Optional[str] = None,
+    ) -> str:
+        """Get user-provided CSV annotation/description for a matched object.
+
+        Prefer semantic_label plus position when the user does not know object
+        ids, e.g. semantic_label='column', position='central'.
+
+        Args:
+            object_name: Optional matched object name, e.g. 'column_0'.
+            semantic_label: Optional semantic class, e.g. 'column'.
+            position: Optional spatial selector, e.g. 'central', 'left', 'north'.
+        """
+        if object_name is None:
+            object_name = _resolve_annotation_object(
+                ctx,
+                semantic_label=semantic_label,
+                position=position,
+            )
+            if object_name is None:
+                return _annotation_resolution_error(ctx, semantic_label=semantic_label)
+        if object_name not in ctx.objects:
+            return _object_not_found_message(object_name, ctx.objects)
+        annotations = getattr(ctx, "object_annotations", {}).get(object_name, [])
+        if not annotations:
+            return f"No CSV annotation is associated with {object_name}."
+        return _format_annotations_for_object(ctx, object_name, annotations)
 
     @tool
     def list_relationships(
@@ -709,6 +743,8 @@ def create_scene_tools(ctx: SceneContext) -> list:
         ctx.relationship_layers = new_ctx.relationship_layers
         ctx.scene_graph = new_ctx.scene_graph
         ctx.scene_graphs = new_ctx.scene_graphs
+        ctx.object_annotations = new_ctx.object_annotations
+        ctx.unmatched_annotations = new_ctx.unmatched_annotations
 
         return (
             "Scene reloaded. "
@@ -718,6 +754,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
     return [
         list_objects,
         get_object_info,
+        get_object_annotation,
         find_relationships,
         list_relationships,
         find_relationship_anomalies,
@@ -735,6 +772,116 @@ def create_scene_tools(ctx: SceneContext) -> list:
         discover_functional_areas,
         reload_scene,
     ]
+
+
+def _format_annotations_for_object(ctx: SceneContext, object_name: str, annotations: list[dict]) -> str:
+    obj = ctx.objects[object_name]
+    c = obj["centroid"]
+    lines = [
+        f"CSV annotations for {object_name} ({obj['semantic_label']}):",
+        f"  Centroid: ({c[0]:.3f}, {c[1]:.3f}, {c[2]:.3f})",
+    ]
+    for index, annotation in enumerate(annotations, start=1):
+        lines.append(f"  Entry {index}:")
+        for key in (
+            "description",
+            "descrizione",
+            "historical_description",
+            "descrizione_storica",
+            "material_description",
+            "descrizione_materica",
+            "material",
+            "materiale",
+            "notes",
+            "note",
+            "position",
+            "posizione",
+        ):
+            value = annotation.get(key)
+            if value:
+                lines.append(f"    {key}: {value}")
+        match = annotation.get("match", {})
+        method = match.get("method", "unknown")
+        distance = match.get("distance_m")
+        if distance is None:
+            lines.append(f"    match: {method}")
+        else:
+            lines.append(f"    match: {method}, distance={distance:.3f} m")
+        lines.append(f"    source row: {annotation.get('source_row')}")
+    return "\n".join(lines)
+
+
+def _resolve_annotation_object(
+    ctx: SceneContext,
+    semantic_label: Optional[str] = None,
+    position: Optional[str] = None,
+) -> str | None:
+    candidates = [
+        name for name, obj in ctx.objects.items()
+        if semantic_label is None or obj.get("semantic_label") == semantic_label
+    ]
+    if not candidates:
+        return None
+    if position:
+        selected = _select_annotation_candidate_by_position(ctx, candidates, position)
+        if selected:
+            return selected
+    if len(candidates) == 1:
+        return candidates[0]
+    annotated = [
+        name for name in candidates
+        if getattr(ctx, "object_annotations", {}).get(name)
+    ]
+    if len(annotated) == 1:
+        return annotated[0]
+    return None
+
+
+def _annotation_resolution_error(ctx: SceneContext, semantic_label: Optional[str] = None) -> str:
+    candidates = [
+        name for name, obj in ctx.objects.items()
+        if semantic_label is None or obj.get("semantic_label") == semantic_label
+    ]
+    if not candidates:
+        return f"No objects found for semantic_label={semantic_label!r}."
+    lines = [
+        "Could not resolve one object. Provide a position such as central, left, right, north, south, top, or bottom.",
+        "Candidates:",
+    ]
+    for name in candidates[:12]:
+        c = ctx.objects[name]["centroid"]
+        lines.append(f"  - {name}: centroid=({c[0]:.3f}, {c[1]:.3f}, {c[2]:.3f})")
+    if len(candidates) > 12:
+        lines.append(f"  ... {len(candidates) - 12} more candidates not shown.")
+    return "\n".join(lines)
+
+
+def _select_annotation_candidate_by_position(ctx: SceneContext, candidates: list[str], position: str) -> str | None:
+    normalized = _normalize_position_text(position)
+    centroids = {name: ctx.objects[name]["centroid"] for name in candidates}
+    if any(term in normalized for term in ("central", "center", "centro", "centrale", "middle")):
+        mean = sum((centroids[name] for name in candidates)) / len(candidates)
+        return min(candidates, key=lambda name: np_linalg_norm(centroids[name] - mean))
+    if any(term in normalized for term in ("left", "sinistra", "west", "ovest")):
+        return min(candidates, key=lambda name: float(centroids[name][0]))
+    if any(term in normalized for term in ("right", "destra", "east", "est")):
+        return max(candidates, key=lambda name: float(centroids[name][0]))
+    if any(term in normalized for term in ("south", "sud", "front", "davanti")):
+        return min(candidates, key=lambda name: float(centroids[name][1]))
+    if any(term in normalized for term in ("north", "nord", "back", "dietro")):
+        return max(candidates, key=lambda name: float(centroids[name][1]))
+    if any(term in normalized for term in ("bottom", "lower", "basso", "bassa", "inferiore")):
+        return min(candidates, key=lambda name: float(centroids[name][2]))
+    if any(term in normalized for term in ("top", "upper", "alto", "alta", "superiore")):
+        return max(candidates, key=lambda name: float(centroids[name][2]))
+    return None
+
+
+def _normalize_position_text(text: str) -> str:
+    import unicodedata
+
+    normalized = unicodedata.normalize("NFKD", str(text).strip().lower())
+    return "".join(char for char in normalized if not unicodedata.combining(char))
 
 
 def _combined_graph(ctx: SceneContext) -> nx.DiGraph:

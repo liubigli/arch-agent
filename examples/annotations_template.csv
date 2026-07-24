@@ -1,0 +1,2 @@
+semantic_label,x,y,z,position,description,historical_description,material_description,notes
+column,,,,central,"Short user description of the column","Historical/descriptive note supplied by the researcher","Material description supplied by the researcher","Optional notes"
