@@ -49,6 +49,23 @@ def _classify_area(label_set: set) -> str:
 def create_scene_tools(ctx: SceneContext) -> list:
 
     @tool
+    def count_objects(semantic_label: Optional[str] = None) -> str:
+        """Count detected objects, optionally filtered by semantic class.
+
+        Args:
+            semantic_label: Optional semantic class to count, e.g. 'wall',
+                'column', or 'floor'. If omitted, returns the total object count.
+        """
+        if semantic_label:
+            count = sum(
+                1 for obj in ctx.objects.values()
+                if obj["semantic_label"] == semantic_label
+            )
+            return f"Objects with semantic label '{semantic_label}': {count}"
+
+        return f"Total detected objects: {len(ctx.objects)}"
+
+    @tool
     def list_objects() -> str:
         """List all objects detected in the scene, grouped by semantic class."""
         if not ctx.objects:
@@ -752,6 +769,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
         )
 
     return [
+        count_objects,
         list_objects,
         get_object_info,
         get_object_annotation,
