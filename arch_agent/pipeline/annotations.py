@@ -59,6 +59,7 @@ POSITION_COLUMNS = ("position", "posizione", "spatial_position", "location", "lo
 X_COLUMNS = ("x", "centroid_x", "center_x", "cx")
 Y_COLUMNS = ("y", "centroid_y", "center_y", "cy")
 Z_COLUMNS = ("z", "centroid_z", "center_z", "cz")
+CSV_ENCODINGS = ("utf-8-sig", "utf-8", "cp1252", "latin1")
 
 
 def resolve_annotation_csv(point_cloud_path: str, explicit_path: str | None = None) -> str | None:
@@ -86,7 +87,7 @@ def load_object_annotations(
     objects: dict,
     max_distance: float = 2.0,
 ) -> tuple[dict[str, list[dict]], list[dict]]:
-    df = pd.read_csv(csv_path, sep=None, engine="python")
+    df = _read_annotation_csv(csv_path)
     df = df.rename(columns={column: _normalize_column(column) for column in df.columns})
 
     annotations: dict[str, list[dict]] = {}
@@ -110,6 +111,23 @@ def load_object_annotations(
         annotations.setdefault(object_name, []).append(annotation)
 
     return annotations, unmatched
+
+
+def _read_annotation_csv(csv_path: str) -> pd.DataFrame:
+    last_error: UnicodeDecodeError | None = None
+    for encoding in CSV_ENCODINGS:
+        try:
+            return pd.read_csv(
+                csv_path,
+                sep=None,
+                engine="python",
+                encoding=encoding,
+            )
+        except UnicodeDecodeError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    return pd.read_csv(csv_path, sep=None, engine="python")
 
 
 def _annotation_from_row(row: pd.Series, row_index: int, csv_path: str) -> dict:
