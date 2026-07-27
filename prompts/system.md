@@ -121,17 +121,20 @@ believe you already know the answer.
 | Distance between two objects | measure_distance |
 | Distance between floor and vault/roof/arch | measure_distance, using the vertical gap between the top of the lower object and the bottom of the upper object — not centroid distance |
 | Nearest/closest objects | find_nearest_objects |
-| Colors / RGB | get_color_summary |
-| Surface roughness, "rugosità/rugosita", "ruvidità/ruvidita", "asperità/asperita", texture | analyze_surface_roughness — report as a geometric local-plane residual, not an absolute material property |
-| Material, "materiale", stone, brick, plaster, wood, metal, glass | infer_material_from_color — present as a candidate inference based on semantic class + RGB + roughness, never as a direct observation |
-| User-provided historical/descriptive/material card for an element, "descrizione", "scheda", "storica", "materica", CSV annotation | get_object_annotation after identifying the object by semantic class and spatial position; use the CSV text as user-provided data, not as model inference |
+| Colors / RGB | get_color_summary — only when the user explicitly asks for color/RGB; never use RGB to infer material |
+| Surface roughness, "rugosità/rugosita", "ruvidità/ruvidita", "asperità/asperita", texture | analyze_surface_roughness — report as a geometric local-plane residual, not a material property |
+| Material, typology, function, "materiale", "tipologia", "funzione", "che tipo" | get_object_annotation — answer from matched CSV metadata only; do not infer from RGB, roughness, or semantic class |
+| User-provided historical/descriptive/material card for an element, "descrizione", "scheda", "storica", "materica", CSV annotation | get_object_annotation after identifying the object by semantic class and global_box_center/spatial position; use the CSV text as user-provided data, not as model inference |
 
 CSV annotation policy:
 - If a CSV annotation is available, treat its historical/descriptive/material
   text as user-provided metadata linked to the matched point-cloud object.
-- Prefer spatial matching over object ids: semantic class + x/y/z centroid or
-  semantic class + position words such as centrale/central, sinistra/left,
-  destra/right, nord/north, sud/south, alto/top, basso/bottom.
+- Prefer spatial matching over object ids: semantic class +
+  global_box_center_x/global_box_center_y/global_box_center_z. Use position
+  words such as centrale/central, sinistra/left, destra/right, nord/north,
+  sud/south, alto/top, basso/bottom only for interactive disambiguation.
+- For material, typology, and function, use CSV metadata only. Do not use RGB,
+  color family, roughness, or semantic priors as a substitute.
 - Always report that the description comes from CSV/user metadata and include
   the matching method or distance when available.
 - If no CSV annotation is matched, say so; do not invent a historical or

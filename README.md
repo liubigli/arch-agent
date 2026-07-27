@@ -33,7 +33,9 @@ LAZ point cloud
 │  Tools:                                     │
 │  • count_objects                            │
 │  • list_objects                             │
+│  • list_object_geometry                     │
 │  • get_object_info                          │
+│  • get_object_annotation                    │
 │  • list_relationships                       │
 │  • find_relationships                       │
 │  • find_relationship_anomalies              │
@@ -42,7 +44,6 @@ LAZ point cloud
 │  • measure_occupied_area                    │
 │  • get_color_summary                        │
 │  • analyze_surface_roughness                │
-│  • infer_material_from_color                │
 │  • estimate_room_volume                     │
 │  • measure_distance                         │
 │  • find_nearest_objects                     │
@@ -64,6 +65,17 @@ The input can be a LAZ file or a directory containing `.laz` files. When a direc
 semantic_label or classification
 optional: red;green;blue;nx;ny;nz
 ```
+
+Optional CSV annotations can be linked with `--annotation-csv`. Use comma
+separation and match objects by global AABB box center:
+
+```csv
+semantic_label,global_box_center_x,global_box_center_y,global_box_center_z,material,typology,function,description
+column,631.367,813.088,231.604,"Stone supplied by researcher","Column type","Structural role","User description"
+```
+
+Material, typology, function, and historical/descriptive notes come from this
+CSV metadata only; they are not inferred from RGB or roughness.
 
 Supported semantic labels (integer-encoded):
 

@@ -1,2 +1,2 @@
-semantic_label,x,y,z,position,description,historical_description,material_description,notes
-column,,,,central,"Short user description of the column","Historical/descriptive note supplied by the researcher","Material description supplied by the researcher","Optional notes"
+semantic_label,global_box_center_x,global_box_center_y,global_box_center_z,description,historical_description,material_description,typology,function,notes
+column,0.000,0.000,0.000,"Short user description of the column","Historical/descriptive note supplied by the researcher","Material description supplied by the researcher","Column typology supplied by the researcher","Structural/decorative function supplied by the researcher","Optional notes"

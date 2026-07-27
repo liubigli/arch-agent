@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
         "--annotation-match-threshold",
         type=float,
         default=2.0,
-        help="Max distance in meters for matching CSV coordinates to object centroids",
+        help="Max distance in meters for matching CSV global_box_center to object AABB box_center",
     )
 
     # Agent params

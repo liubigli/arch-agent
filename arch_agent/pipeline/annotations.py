@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 import math
 import unicodedata
@@ -53,12 +54,21 @@ LABEL_ALIASES = {
     "altro": "other",
 }
 
-LABEL_COLUMNS = ("semantic_label", "label", "class", "classe", "object_class", "element_class", "type", "tipo")
-OBJECT_COLUMNS = ("object_name", "object_id", "id", "name", "nome")
-POSITION_COLUMNS = ("position", "posizione", "spatial_position", "location", "localizzazione")
-X_COLUMNS = ("x", "centroid_x", "center_x", "cx")
-Y_COLUMNS = ("y", "centroid_y", "center_y", "cy")
-Z_COLUMNS = ("z", "centroid_z", "center_z", "cz")
+LABEL_COLUMNS = (
+    "semantic_label",
+    "class_semantic_label",
+    "semantic_class_label",
+    "label",
+    "class",
+    "classe",
+    "object_class",
+    "element_class",
+    "type",
+    "tipo",
+)
+BOX_CENTER_X_COLUMNS = ("global_box_center_x", "box_center_x", "bbox_center_x", "x", "center_x", "cx")
+BOX_CENTER_Y_COLUMNS = ("global_box_center_y", "box_center_y", "bbox_center_y", "y", "center_y", "cy")
+BOX_CENTER_Z_COLUMNS = ("global_box_center_z", "box_center_z", "bbox_center_z", "z", "center_z", "cz")
 CSV_ENCODINGS = ("utf-8-sig", "utf-8", "cp1252", "latin1")
 
 
@@ -88,6 +98,7 @@ def load_object_annotations(
     max_distance: float = 2.0,
 ) -> tuple[dict[str, list[dict]], list[dict]]:
     df = _read_annotation_csv(csv_path)
+    df = _repair_single_field_rows(df)
     df = df.rename(columns={column: _normalize_column(column) for column in df.columns})
 
     annotations: dict[str, list[dict]] = {}
@@ -130,6 +141,35 @@ def _read_annotation_csv(csv_path: str) -> pd.DataFrame:
     return pd.read_csv(csv_path, sep=None, engine="python")
 
 
+def _repair_single_field_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Recover CSV rows accidentally quoted as one comma-separated field."""
+    columns = list(df.columns)
+    if len(columns) < 2:
+        return df
+
+    first_column = columns[0]
+    other_columns = columns[1:]
+    repaired_rows: list[dict] = []
+    changed = False
+
+    for _, row in df.iterrows():
+        raw_value = _clean_value(row[first_column])
+        other_values_are_empty = all(
+            _clean_value(row[column]) is None for column in other_columns
+        )
+        if isinstance(raw_value, str) and "," in raw_value and other_values_are_empty:
+            parsed = next(csv.reader([raw_value]))
+            if len(parsed) == len(columns):
+                repaired_rows.append(dict(zip(columns, parsed)))
+                changed = True
+                continue
+        repaired_rows.append(row.to_dict())
+
+    if not changed:
+        return df
+    return pd.DataFrame(repaired_rows, columns=columns)
+
+
 def _annotation_from_row(row: pd.Series, row_index: int, csv_path: str) -> dict:
     values = {
         column: _clean_value(value)
@@ -147,10 +187,6 @@ def _match_row_to_object(
     semantic_label: str | None,
     max_distance: float,
 ) -> tuple[str | None, dict]:
-    explicit_name = _first_value(row, OBJECT_COLUMNS)
-    if explicit_name and explicit_name in objects:
-        return explicit_name, {"method": "object_name"}
-
     candidates = [
         name for name, obj in objects.items()
         if semantic_label is None or obj.get("semantic_label") == semantic_label
@@ -158,35 +194,26 @@ def _match_row_to_object(
     if not candidates:
         return None, {"method": "none", "reason": "no candidates for semantic label"}
 
-    position = _first_value(row, POSITION_COLUMNS)
-    if position:
-        selected = _select_by_position(candidates, objects, str(position))
-        if selected:
-            return selected, {"method": "position", "position": str(position)}
-
-    coordinates = _coordinates_from_row(row)
-    if coordinates is not None:
-        selected, distance = _nearest_object(candidates, objects, coordinates)
+    box_center = _global_box_center_from_row(row)
+    if box_center is not None:
+        selected, distance = _nearest_object_by_box_center(candidates, objects, box_center)
         if selected and distance <= max_distance:
             return selected, {
-                "method": "nearest_centroid",
+                "method": "global_box_center",
                 "distance_m": float(distance),
                 "max_distance_m": float(max_distance),
             }
         return None, {
-            "method": "nearest_centroid",
-            "reason": "nearest object is beyond max_distance",
+            "method": "global_box_center",
+            "reason": "nearest object box_center is beyond max_distance",
             "nearest_object": selected,
             "distance_m": None if selected is None else float(distance),
             "max_distance_m": float(max_distance),
         }
 
-    if len(candidates) == 1:
-        return candidates[0], {"method": "single_candidate"}
-
     return None, {
-        "method": "none",
-        "reason": "ambiguous row: provide x/y/z, position, or a single matching class",
+        "method": "global_box_center",
+        "reason": "missing global_box_center_x/y/z",
         "candidate_count": len(candidates),
     }
 
@@ -198,10 +225,10 @@ def _semantic_label_from_row(row: pd.Series) -> str | None:
     return LABEL_ALIASES.get(_normalize_text(str(raw_label)), _normalize_text(str(raw_label)))
 
 
-def _coordinates_from_row(row: pd.Series) -> np.ndarray | None:
-    x = _float_value(_first_value(row, X_COLUMNS))
-    y = _float_value(_first_value(row, Y_COLUMNS))
-    z = _float_value(_first_value(row, Z_COLUMNS))
+def _global_box_center_from_row(row: pd.Series) -> np.ndarray | None:
+    x = _float_value(_first_value(row, BOX_CENTER_X_COLUMNS))
+    y = _float_value(_first_value(row, BOX_CENTER_Y_COLUMNS))
+    z = _float_value(_first_value(row, BOX_CENTER_Z_COLUMNS))
     if x is None or y is None:
         return None
     if z is None:
@@ -209,46 +236,25 @@ def _coordinates_from_row(row: pd.Series) -> np.ndarray | None:
     return np.array([x, y, z], dtype=float)
 
 
-def _nearest_object(candidates: list[str], objects: dict, coordinates: np.ndarray) -> tuple[str | None, float]:
+def _nearest_object_by_box_center(
+    candidates: list[str],
+    objects: dict,
+    coordinates: np.ndarray,
+) -> tuple[str | None, float]:
     best_name = None
     best_distance = math.inf
     for name in candidates:
-        centroid = np.asarray(objects[name]["centroid"], dtype=float)
-        compare = centroid[: len(coordinates)]
-        distance = float(np.linalg.norm(compare - coordinates))
+        bounds = objects[name].get("bounds")
+        if not bounds:
+            continue
+        bounds_min = np.asarray(bounds["min"], dtype=float)[: len(coordinates)]
+        bounds_max = np.asarray(bounds["max"], dtype=float)[: len(coordinates)]
+        box_center = ((bounds_min + bounds_max) / 2.0)[: len(coordinates)]
+        distance = float(np.linalg.norm(box_center - coordinates))
         if distance < best_distance:
             best_name = name
             best_distance = distance
     return best_name, best_distance
-
-
-def _select_by_position(candidates: list[str], objects: dict, position: str) -> str | None:
-    normalized = _normalize_text(position)
-    centroids = {
-        name: np.asarray(objects[name]["centroid"], dtype=float)
-        for name in candidates
-    }
-    if not centroids:
-        return None
-
-    if any(term in normalized for term in ("central", "centrale", "centro", "middle")):
-        mean = np.mean(np.array(list(centroids.values())), axis=0)
-        return min(candidates, key=lambda name: float(np.linalg.norm(centroids[name] - mean)))
-    if any(term in normalized for term in ("sinistra", "left", "ovest", "west")):
-        return min(candidates, key=lambda name: float(centroids[name][0]))
-    if any(term in normalized for term in ("destra", "right", "est", "east")):
-        return max(candidates, key=lambda name: float(centroids[name][0]))
-    if any(term in normalized for term in ("sud", "south", "front", "davanti")):
-        return min(candidates, key=lambda name: float(centroids[name][1]))
-    if any(term in normalized for term in ("nord", "north", "back", "dietro")):
-        return max(candidates, key=lambda name: float(centroids[name][1]))
-    if any(term in normalized for term in ("bassa", "basso", "inferiore", "lower", "bottom")):
-        return min(candidates, key=lambda name: float(centroids[name][2]))
-    if any(term in normalized for term in ("alta", "alto", "superiore", "upper", "top")):
-        return max(candidates, key=lambda name: float(centroids[name][2]))
-    if any(term in normalized for term in ("unica", "singola", "only", "single")) and len(candidates) == 1:
-        return candidates[0]
-    return None
 
 
 def _first_value(row: pd.Series, columns: tuple[str, ...]) -> object | None:

@@ -15,7 +15,6 @@ from pathlib import Path
 
 from .evaluation_answers import answer_evaluation_prompt
 from .pipeline.point_metrics import (
-    format_material_summary as format_point_material_summary,
     format_rgb_summary as format_point_rgb_summary,
     format_roughness_summary,
     has_rgb,
@@ -414,47 +413,7 @@ def _try_answer_deterministic(
         )
 
     if _asks_for_material(text):
-        object_names = _extract_object_names(text, ctx.objects)
-        object_name = object_names[0] if object_names else None
-        label = _extract_semantic_label(text)
-        if object_name:
-            label = ctx.objects[object_name]["semantic_label"]
-        return _format_grounded_answer(
-            observed=_format_material_summary(
-                ctx,
-                semantic_label=label,
-                object_name=object_name,
-                language=language,
-            ),
-            relations=_phrase(
-                language,
-                it="Nessuna relazione L1/L2/L3 usata: risposta basata su classe semantica, RGB e rugosità locale.",
-                en="No L1/L2/L3 relationship used: answer based on semantic class, RGB, and local roughness.",
-            ),
-            inference=_phrase(
-                language,
-                it=(
-                    "Il materiale è proposto come candidato probabilistico: colore e rugosità "
-                    "possono dipendere da illuminazione, acquisizione, rumore o degrado."
-                ),
-                en=(
-                    "Material is proposed as a probabilistic candidate: color and roughness "
-                    "can depend on lighting, acquisition, noise, or decay."
-                ),
-            ),
-            confidence=_phrase(
-                language,
-                it=(
-                    "vedi la confidenza materiale riportata nei dati osservati; "
-                    "resta comunque un'inferenza euristica, non un'analisi materica calibrata."
-                ),
-                en=(
-                    "see the material confidence reported in the observed data; "
-                    "it remains a heuristic inference, not calibrated material analysis."
-                ),
-            ),
-            language=language,
-        )
+        return _format_csv_annotation_inventory(ctx, text, language=language)
 
     if _asks_for_surface_roughness(text):
         object_names = _extract_object_names(text, ctx.objects)
@@ -834,6 +793,12 @@ def _asks_for_count(text: str) -> bool:
         "conteggio",
         "count",
         "how many",
+        "ci sono",
+        "sono presenti",
+        "presente",
+        "esistono",
+        "are there",
+        "is there",
     )
     return any(term in text for term in count_terms)
 
@@ -1000,6 +965,8 @@ def _try_answer_annotated_object_description(
     labels = _extract_semantic_labels(text)
     object_names = _extract_object_names(text, ctx.objects)
     if not labels and not object_names:
+        if _asks_for_csv_attribute_query(text):
+            return _format_csv_annotation_inventory(ctx, text, language=language)
         return None
     if not _asks_for_user_supplied_description(text):
         return None
@@ -1009,6 +976,9 @@ def _try_answer_annotated_object_description(
         return _format_annotated_object_description(ctx, object_name, language=language)
 
     label = labels[0]
+    if _asks_for_csv_attribute_query(text) and not _has_spatial_selector(text):
+        return _format_annotation_class_summary(ctx, label, text, language=language)
+
     object_name, error = _resolve_object_by_spatial_query(ctx, label, text, language=language)
     if object_name is None:
         return error
@@ -1016,6 +986,8 @@ def _try_answer_annotated_object_description(
 
 
 def _asks_for_user_supplied_description(text: str) -> bool:
+    if _asks_for_csv_attribute_query(text):
+        return True
     terms = (
         "descrivi",
         "descrizione",
@@ -1028,8 +1000,18 @@ def _asks_for_user_supplied_description(text: str) -> bool:
         "descrittiva",
         "testuale",
         "textual",
+        "materiale",
+        "materiali",
+        "material",
+        "materials",
         "materica",
         "materico",
+        "tipologia",
+        "tipo",
+        "typology",
+        "type",
+        "funzione",
+        "function",
         "metadata",
         "metadati",
         "annotazione",
@@ -1037,6 +1019,60 @@ def _asks_for_user_supplied_description(text: str) -> bool:
         "csv",
     )
     return any(term in text for term in terms)
+
+
+def _asks_for_csv_attribute_query(text: str) -> bool:
+    attribute_terms = (
+        "materiale",
+        "materiali",
+        "material",
+        "materials",
+        "materica",
+        "materico",
+        "tipologia",
+        "tipo",
+        "typology",
+        "type",
+        "funzione",
+        "function",
+    )
+    return any(term in text for term in attribute_terms) or _extract_material_aliases(text) is not None
+
+
+def _has_spatial_selector(text: str) -> bool:
+    spatial_terms = (
+        "centrale",
+        "centro",
+        "central",
+        "middle",
+        "sinistra",
+        "left",
+        "ovest",
+        "west",
+        "destra",
+        "right",
+        "est",
+        "east",
+        "sud",
+        "south",
+        "davanti",
+        "front",
+        "nord",
+        "north",
+        "dietro",
+        "back",
+        "bassa",
+        "basso",
+        "inferiore",
+        "lower",
+        "bottom",
+        "alta",
+        "alto",
+        "superiore",
+        "upper",
+        "top",
+    )
+    return any(term in text for term in spatial_terms)
 
 
 def _resolve_object_by_spatial_query(
@@ -1072,13 +1108,13 @@ def _resolve_object_by_spatial_query(
         it=(
             f"Ci sono {len(object_names)} oggetti di classe `{label}`. "
             "Specificane la posizione, ad esempio `colonna centrale`, `colonna a sinistra`, "
-            "`colonna a nord/sud`, oppure aggiungi nel CSV una riga con coordinate x,y,z.\n"
+            "`colonna a nord/sud`, oppure aggiungi nel CSV `global_box_center_x/y/z`.\n"
             + summary
         ),
         en=(
             f"There are {len(object_names)} objects of class `{label}`. "
             "Specify the spatial position, for example `central column`, `left column`, "
-            "`north/south column`, or add a CSV row with x,y,z coordinates.\n"
+            "`north/south column`, or add CSV `global_box_center_x/y/z` coordinates.\n"
             + summary
         ),
     )
@@ -1111,10 +1147,19 @@ def _format_position_candidates(ctx: SceneContext, object_names: list[str], limi
     rows = []
     for name in object_names[:limit]:
         c = ctx.objects[name]["centroid"]
-        rows.append(f"  - {name}: centroide=({c[0]:.3f}, {c[1]:.3f}, {c[2]:.3f})")
+        box_center = _object_box_center(ctx.objects[name])
+        rows.append(
+            f"  - {name}: "
+            f"centroide=({c[0]:.3f}, {c[1]:.3f}, {c[2]:.3f}); "
+            f"box_center=({box_center[0]:.3f}, {box_center[1]:.3f}, {box_center[2]:.3f})"
+        )
     if len(object_names) > limit:
         rows.append(f"  ... {len(object_names) - limit} oggetti non mostrati.")
     return "\n".join(rows)
+
+
+def _object_box_center(obj: dict):
+    return (obj["bounds"]["min"] + obj["bounds"]["max"]) / 2.0
 
 
 def _format_annotated_object_description(
@@ -1126,6 +1171,7 @@ def _format_annotated_object_description(
     label = obj["semantic_label"]
     centroid = obj["centroid"]
     dims = obj["bounds"]["max"] - obj["bounds"]["min"]
+    box_center = _object_box_center(obj)
     annotations = getattr(ctx, "object_annotations", {}).get(object_name, [])
 
     if language == "en":
@@ -1134,6 +1180,7 @@ def _format_annotated_object_description(
             (
                 "Observed geometry: "
                 f"centroid=({centroid[0]:.3f}, {centroid[1]:.3f}, {centroid[2]:.3f}) m; "
+                f"box_center=({box_center[0]:.3f}, {box_center[1]:.3f}, {box_center[2]:.3f}) m; "
                 f"dimensions=({dims[0]:.3f}, {dims[1]:.3f}, {dims[2]:.3f}) m; "
                 f"points={obj['point_count']:,}."
             ),
@@ -1142,7 +1189,7 @@ def _format_annotated_object_description(
         if not annotations:
             lines.append(
                 "No user-provided CSV description is associated with this object. "
-                "Add a CSV row with semantic_label plus x,y,z or position."
+                "Add a CSV row with semantic_label plus global_box_center_x/y/z."
             )
             return "\n".join(lines)
         lines.extend(_format_annotation_entries(annotations, language=language))
@@ -1153,6 +1200,7 @@ def _format_annotated_object_description(
         (
             "Geometria osservata: "
             f"centroide=({centroid[0]:.3f}, {centroid[1]:.3f}, {centroid[2]:.3f}) m; "
+            f"box_center=({box_center[0]:.3f}, {box_center[1]:.3f}, {box_center[2]:.3f}) m; "
             f"dimensioni=({dims[0]:.3f}, {dims[1]:.3f}, {dims[2]:.3f}) m; "
             f"punti={obj['point_count']:,}."
         ),
@@ -1161,7 +1209,7 @@ def _format_annotated_object_description(
     if not annotations:
         lines.append(
             "Nessuna descrizione CSV fornita è associata a questo oggetto. "
-            "Aggiungi una riga CSV con semantic_label più x,y,z oppure posizione."
+            "Aggiungi una riga CSV con semantic_label più global_box_center_x/y/z."
         )
         return "\n".join(lines)
     lines.extend(_format_annotation_entries(annotations, language=language))
@@ -1189,12 +1237,259 @@ def _format_annotation_entries(annotations: list[dict], language: str = "it") ->
     return lines
 
 
+def _format_annotation_class_summary(
+    ctx: SceneContext,
+    label: str,
+    text: str,
+    language: str = "it",
+) -> str:
+    object_names = _objects_with_semantic_label(ctx, label)
+    if not object_names:
+        return _phrase(
+            language,
+            it=f"Nessun oggetto di classe `{label}` presente nella scena.",
+            en=f"No object of class `{label}` is present in the scene.",
+        )
+
+    entries = _annotation_entries_for_objects(ctx, object_names)
+    if not entries:
+        return _format_no_csv_annotations(label, ctx, language=language)
+
+    material_aliases = _extract_material_aliases(text)
+    if material_aliases is not None:
+        return _format_material_yes_no_from_csv(
+            label,
+            entries,
+            material_aliases,
+            language=language,
+        )
+
+    fields = _requested_annotation_fields(text, language=language)
+    lines = [
+        _phrase(
+            language,
+            it=(
+                f"Dal CSV, per `{label}`: {len(entries)} annotazioni associate "
+                "tramite `global_box_center`."
+            ),
+            en=(
+                f"From the CSV, for `{label}`: {len(entries)} annotations matched "
+                "through `global_box_center`."
+            ),
+        )
+    ]
+    for object_name, annotation in entries[:24]:
+        values = _format_selected_annotation_values(annotation, fields)
+        if values:
+            lines.append(f"  - {object_name}: " + "; ".join(values))
+    if len(entries) > 24:
+        lines.append(f"  ... {len(entries) - 24} annotazioni non mostrate.")
+
+    missing = [
+        name for name in object_names
+        if not getattr(ctx, "object_annotations", {}).get(name)
+    ]
+    if missing:
+        lines.append(
+            _phrase(
+                language,
+                it=f"Senza annotazione CSV associata: {', '.join(missing)}.",
+                en=f"Without matched CSV annotation: {', '.join(missing)}.",
+            )
+        )
+    return "\n".join(lines)
+
+
+def _format_csv_annotation_inventory(
+    ctx: SceneContext,
+    text: str,
+    language: str = "it",
+) -> str:
+    entries = _annotation_entries_for_objects(ctx, sorted(ctx.objects))
+    if not entries:
+        return _format_no_csv_annotations(None, ctx, language=language)
+
+    fields = _requested_annotation_fields(text, language=language)
+    by_label: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+    for object_name, annotation in entries:
+        label = ctx.objects[object_name]["semantic_label"]
+        by_label[label].append((object_name, annotation))
+
+    lines = [
+        _phrase(
+            language,
+            it=(
+                f"Dal CSV: {len(entries)} annotazioni associate tramite "
+                "`global_box_center`."
+            ),
+            en=(
+                f"From the CSV: {len(entries)} annotations matched through "
+                "`global_box_center`."
+            ),
+        )
+    ]
+    for label in sorted(by_label):
+        lines.append(f"{label}:")
+        for object_name, annotation in by_label[label][:12]:
+            values = _format_selected_annotation_values(annotation, fields)
+            if values:
+                lines.append(f"  - {object_name}: " + "; ".join(values))
+        if len(by_label[label]) > 12:
+            lines.append(f"  ... {len(by_label[label]) - 12} annotazioni non mostrate.")
+    return "\n".join(lines)
+
+
+def _annotation_entries_for_objects(
+    ctx: SceneContext,
+    object_names: list[str],
+) -> list[tuple[str, dict]]:
+    annotations = getattr(ctx, "object_annotations", {})
+    entries: list[tuple[str, dict]] = []
+    for object_name in object_names:
+        for annotation in annotations.get(object_name, []):
+            entries.append((object_name, annotation))
+    return entries
+
+
+def _requested_annotation_fields(
+    text: str,
+    language: str = "it",
+) -> list[tuple[str, tuple[str, ...]]]:
+    fields: list[tuple[str, tuple[str, ...]]] = []
+    if _asks_for_material(text):
+        title = "Material" if language == "en" else "Materiale"
+        fields.append((title, ("material_description", "descrizione_materica", "material", "materiale", "materica")))
+    if any(term in text for term in ("tipologia", "tipo", "typology", "type")):
+        title = "Typology" if language == "en" else "Tipologia"
+        fields.append((title, ("typology", "tipologia", "type", "tipo")))
+    if any(term in text for term in ("funzione", "function", "uso", "use")):
+        title = "Function" if language == "en" else "Funzione"
+        fields.append((title, ("function", "funzione", "use", "uso")))
+    if fields:
+        return fields
+    return _annotation_display_fields(language)
+
+
+def _format_selected_annotation_values(
+    annotation: dict,
+    fields: list[tuple[str, tuple[str, ...]]],
+) -> list[str]:
+    values = []
+    for title, keys in fields:
+        value = _annotation_first_value(annotation, keys)
+        if value:
+            values.append(f"{title}: {value}")
+    return values
+
+
+def _format_material_yes_no_from_csv(
+    label: str,
+    entries: list[tuple[str, dict]],
+    aliases: tuple[str, ...],
+    language: str = "it",
+) -> str:
+    material_fields = (
+        "material_description",
+        "descrizione_materica",
+        "material",
+        "materiale",
+        "materica",
+    )
+    hits = []
+    for object_name, annotation in entries:
+        value = _annotation_first_value(annotation, material_fields)
+        if value and _annotation_value_contains_alias(value, aliases):
+            hits.append((object_name, value))
+
+    requested = "/".join(aliases[:2])
+    if hits:
+        prefix = "Yes" if language == "en" else "Sì"
+        lines = [
+            _phrase(
+                language,
+                it=f"{prefix}. Nel CSV `{label}` contiene materiale compatibile con `{requested}`.",
+                en=f"{prefix}. In the CSV, `{label}` contains material compatible with `{requested}`.",
+            )
+        ]
+        for object_name, value in hits[:12]:
+            lines.append(f"  - {object_name}: {value}")
+        return "\n".join(lines)
+
+    prefix = "No" if language == "en" else "No"
+    return _phrase(
+        language,
+        it=(
+            f"{prefix}. Nel CSV non trovo `{requested}` tra i materiali "
+            f"associati a `{label}` tramite `global_box_center`."
+        ),
+        en=(
+            f"{prefix}. In the CSV I do not find `{requested}` among materials "
+            f"matched to `{label}` through `global_box_center`."
+        ),
+    )
+
+
+def _annotation_value_contains_alias(value: object, aliases: tuple[str, ...]) -> bool:
+    normalized_value = _normalize_text(str(value))
+    return any(_normalize_text(alias) in normalized_value for alias in aliases)
+
+
+def _extract_material_aliases(text: str) -> tuple[str, ...] | None:
+    material_alias_groups = (
+        ("marmo", "marble"),
+        ("calcare", "limestone"),
+        ("pietra", "stone"),
+        ("laterizio", "brick", "mattoni", "brick masonry"),
+        ("intonaco", "plaster"),
+        ("stucco",),
+        ("legno", "wood"),
+        ("metallo", "metal"),
+        ("vetro", "glass"),
+        ("terracotta", "cotto", "tile"),
+    )
+    for aliases in material_alias_groups:
+        if any(_normalize_text(alias) in text for alias in aliases):
+            return aliases
+    return None
+
+
+def _format_no_csv_annotations(
+    label: str | None,
+    ctx: SceneContext,
+    language: str = "it",
+) -> str:
+    unmatched = len(getattr(ctx, "unmatched_annotations", []))
+    target = f"`{label}`" if label else "la scena"
+    suffix = (
+        f" Righe CSV non associate: {unmatched}."
+        if unmatched
+        else ""
+    )
+    return _phrase(
+        language,
+        it=(
+            f"Non ho annotazioni CSV associate per {target}. "
+            "Per materiale, tipologia e funzione non uso RGB o rugosità: "
+            "serve una riga CSV con `semantic_label` e `global_box_center_x/y/z`."
+            + suffix
+        ),
+        en=(
+            f"No CSV annotations are matched for {target}. "
+            "For material, typology, and function I do not use RGB or roughness: "
+            "a CSV row with `semantic_label` and `global_box_center_x/y/z` is required."
+            + (f" Unmatched CSV rows: {unmatched}." if unmatched else "")
+        ),
+    )
+
+
 def _annotation_display_fields(language: str = "it") -> list[tuple[str, tuple[str, ...]]]:
     if language == "en":
         return [
             ("Description", ("description", "descrizione", "text", "testo", "textual_description", "descrizione_testuale")),
             ("Historical description", ("historical_description", "descrizione_storica", "storico_descrittiva", "historical", "storia")),
             ("Material description", ("material_description", "descrizione_materica", "material", "materiale", "materica")),
+            ("Typology", ("typology", "tipologia", "type", "tipo")),
+            ("Function", ("function", "funzione", "use", "uso")),
             ("Notes", ("notes", "note")),
             ("Position", ("position", "posizione", "spatial_position", "location", "localizzazione")),
         ]
@@ -1202,6 +1497,8 @@ def _annotation_display_fields(language: str = "it") -> list[tuple[str, tuple[st
         ("Descrizione", ("description", "descrizione", "text", "testo", "textual_description", "descrizione_testuale")),
         ("Descrizione storico-descrittiva", ("historical_description", "descrizione_storica", "storico_descrittiva", "historical", "storia")),
         ("Descrizione materica", ("material_description", "descrizione_materica", "material", "materiale", "materica")),
+        ("Tipologia", ("typology", "tipologia", "type", "tipo")),
+        ("Funzione", ("function", "funzione", "use", "uso")),
         ("Note", ("notes", "note")),
         ("Posizione", ("position", "posizione", "spatial_position", "location", "localizzazione")),
     ]
@@ -3346,27 +3643,6 @@ def _format_room_volume(ctx: SceneContext) -> str:
         "  Feature: scene_features['room_volume']",
         "  Formula: area base del floor x altezza del box.",
     ])
-
-
-def _format_material_summary(
-    ctx: SceneContext,
-    semantic_label: str | None = None,
-    object_name: str | None = None,
-    language: str = "it",
-) -> str:
-    query = _point_frame_for_query(ctx, semantic_label=semantic_label, object_name=object_name)
-    if isinstance(query, str):
-        return query
-    name, df = query
-    label = semantic_label
-    if object_name and object_name in ctx.objects:
-        label = ctx.objects[object_name]["semantic_label"]
-    return format_point_material_summary(
-        name,
-        df,
-        semantic_label=label,
-        language=language,
-    )
 
 
 def _format_surface_roughness_summary(

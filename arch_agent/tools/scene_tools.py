@@ -5,7 +5,6 @@ import networkx as nx
 from langchain_core.tools import tool
 
 from ..pipeline.point_metrics import (
-    format_material_summary,
     format_rgb_summary,
     format_roughness_summary,
     has_rgb,
@@ -225,6 +224,19 @@ def create_scene_tools(ctx: SceneContext) -> list:
             semantic_label: Optional semantic class, e.g. 'column'.
             position: Optional spatial selector, e.g. 'central', 'left', 'north'.
         """
+        if object_name is None and semantic_label and position is None:
+            candidates = [
+                name for name, obj in ctx.objects.items()
+                if obj.get("semantic_label") == semantic_label
+            ]
+            annotated = [
+                (name, annotation)
+                for name in sorted(candidates)
+                for annotation in getattr(ctx, "object_annotations", {}).get(name, [])
+            ]
+            if annotated:
+                return _format_annotations_for_class(ctx, semantic_label, annotated)
+
         if object_name is None:
             object_name = _resolve_annotation_object(
                 ctx,
@@ -517,8 +529,8 @@ def create_scene_tools(ctx: SceneContext) -> list:
         """Estimate surface roughness from point-cloud geometry.
 
         Roughness is estimated as the local residual from a best-fit plane
-        computed with PCA over k-nearest neighbors. It can reflect material
-        roughness, scan noise, curvature, or segmentation artifacts.
+        computed with PCA over k-nearest neighbors. It can reflect surface
+        irregularity, scan noise, curvature, or segmentation artifacts.
 
         Args:
             semantic_label: Optional semantic class to analyze, e.g. 'wall'.
@@ -553,61 +565,6 @@ def create_scene_tools(ctx: SceneContext) -> list:
         if ctx.df is None or ctx.df.empty:
             return "No point-cloud dataframe is available."
         return format_roughness_summary(
-            "scene",
-            ctx.df,
-            sample_size=sample_size,
-            k_neighbors=k_neighbors,
-        )
-
-    @tool
-    def infer_material_from_color(
-        semantic_label: Optional[str] = None,
-        object_name: Optional[str] = None,
-        sample_size: int = 3000,
-        k_neighbors: int = 24,
-    ) -> str:
-        """Infer candidate materials from semantic class, RGB color, and surface roughness.
-
-        This is an architectural/material hypothesis, not a direct material
-        measurement. RGB can be affected by lighting, scanner calibration,
-        texture, shadows, and post-processing.
-
-        Args:
-            semantic_label: Optional semantic class to analyze, e.g. 'wall'.
-            object_name: Optional object name to analyze, e.g. 'wall_0'.
-            sample_size: Maximum number of points sampled for roughness.
-            k_neighbors: Number of neighbors used for local roughness.
-        """
-        if object_name:
-            if object_name not in ctx.objects:
-                return f"Object '{object_name}' not found."
-            obj = ctx.objects[object_name]
-            return format_material_summary(
-                object_name,
-                obj["points"],
-                semantic_label=obj["semantic_label"],
-                sample_size=sample_size,
-                k_neighbors=k_neighbors,
-            )
-
-        if semantic_label:
-            parts = [
-                obj["points"] for obj in ctx.objects.values()
-                if obj["semantic_label"] == semantic_label
-            ]
-            if not parts:
-                return f"No objects with semantic label '{semantic_label}' found."
-            return format_material_summary(
-                semantic_label,
-                _concat_frames(parts),
-                semantic_label=semantic_label,
-                sample_size=sample_size,
-                k_neighbors=k_neighbors,
-            )
-
-        if ctx.df is None or ctx.df.empty:
-            return "No point-cloud dataframe is available."
-        return format_material_summary(
             "scene",
             ctx.df,
             sample_size=sample_size,
@@ -834,7 +791,6 @@ def create_scene_tools(ctx: SceneContext) -> list:
         measure_occupied_area,
         get_color_summary,
         analyze_surface_roughness,
-        infer_material_from_color,
         estimate_room_volume,
         measure_distance,
         find_nearest_objects,
@@ -848,9 +804,11 @@ def create_scene_tools(ctx: SceneContext) -> list:
 def _format_annotations_for_object(ctx: SceneContext, object_name: str, annotations: list[dict]) -> str:
     obj = ctx.objects[object_name]
     c = obj["centroid"]
+    box_center = (obj["bounds"]["min"] + obj["bounds"]["max"]) / 2.0
     lines = [
         f"CSV annotations for {object_name} ({obj['semantic_label']}):",
         f"  Centroid: ({c[0]:.3f}, {c[1]:.3f}, {c[2]:.3f})",
+        f"  Box center: ({box_center[0]:.3f}, {box_center[1]:.3f}, {box_center[2]:.3f})",
     ]
     for index, annotation in enumerate(annotations, start=1):
         lines.append(f"  Entry {index}:")
@@ -863,6 +821,10 @@ def _format_annotations_for_object(ctx: SceneContext, object_name: str, annotati
             "descrizione_materica",
             "material",
             "materiale",
+            "typology",
+            "tipologia",
+            "function",
+            "funzione",
             "notes",
             "note",
             "position",
@@ -879,6 +841,43 @@ def _format_annotations_for_object(ctx: SceneContext, object_name: str, annotati
         else:
             lines.append(f"    match: {method}, distance={distance:.3f} m")
         lines.append(f"    source row: {annotation.get('source_row')}")
+    return "\n".join(lines)
+
+
+def _format_annotations_for_class(
+    ctx: SceneContext,
+    semantic_label: str,
+    annotated: list[tuple[str, dict]],
+) -> str:
+    lines = [
+        f"CSV annotations for class {semantic_label}: {len(annotated)} matched entries.",
+        "Matching method should be global_box_center when the CSV provides global_box_center_x/y/z.",
+    ]
+    for object_name, annotation in annotated[:30]:
+        values = []
+        for key in (
+            "material_description",
+            "descrizione_materica",
+            "material",
+            "materiale",
+            "typology",
+            "tipologia",
+            "function",
+            "funzione",
+            "description",
+            "descrizione",
+        ):
+            value = annotation.get(key)
+            if value:
+                values.append(f"{key}: {value}")
+        match = annotation.get("match", {})
+        distance = match.get("distance_m")
+        match_text = match.get("method", "unknown")
+        if distance is not None:
+            match_text += f", distance={distance:.3f} m"
+        lines.append(f"  - {object_name}: " + "; ".join(values + [f"match: {match_text}"]))
+    if len(annotated) > 30:
+        lines.append(f"  ... {len(annotated) - 30} annotations not shown.")
     return "\n".join(lines)
 
 
