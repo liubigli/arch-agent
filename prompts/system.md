@@ -115,6 +115,7 @@ believe you already know the answer.
 | Which relationship types exist | list_relationships → summarize as a compact count by type; list individual edges only if the user says "elenco", "lista", "tutte", "mostra", or "dettaglio/details" |
 | Inconsistencies, anomalies, contradictions, "incongruenze" | find_relationship_anomalies |
 | Point count, bounding box, bounding-box volume | get_point_cloud_info |
+| Object coordinates, global coordinates, centroid, global box center, bounding-box center, AABB center | list_object_geometry — report values from object centroids/bounds; never invent coordinates |
 | Occupied area, "area della scena", "superficie occupata", "impronta", footprint | measure_occupied_area — report the XY footprint/AABB area in m². Never use estimate_room_volume for area questions. |
 | Room volume (m³) | estimate_room_volume — only when bounding-box volume was not explicitly requested |
 | Distance between two objects | measure_distance |

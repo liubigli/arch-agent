@@ -240,6 +240,10 @@ def _try_answer_deterministic(
     if area_answer is not None:
         return area_answer
 
+    coordinate_answer = _try_answer_object_coordinates(ctx, text, language=language)
+    if coordinate_answer is not None:
+        return coordinate_answer
+
     above_support_answer = _try_answer_above_support_question(text, language=language)
     if above_support_answer is not None:
         return above_support_answer
@@ -276,6 +280,10 @@ def _try_answer_deterministic(
     )
     if class_role_answer is not None:
         return class_role_answer
+
+    semantic_object_list = _try_answer_semantic_object_list(ctx, text, language=language)
+    if semantic_object_list is not None:
+        return semantic_object_list
 
     class_relationships = _try_answer_class_relationships(
         ctx,
@@ -756,6 +764,66 @@ def _try_answer_semantic_count(
             + ", ".join(names)
         )
     return "\n".join(lines)
+
+
+def _try_answer_semantic_object_list(
+    ctx: SceneContext,
+    text: str,
+    language: str = "it",
+) -> str | None:
+    if not _asks_for_semantic_object_list(text):
+        return None
+    label = _extract_semantic_label(text)
+    if label is None:
+        return None
+
+    names = _objects_with_semantic_label(ctx, label)
+    if not names:
+        return _phrase(
+            language,
+            it=f"Nessun oggetto di classe `{label}` presente nella scena.",
+            en=f"No object of class `{label}` is present in the scene.",
+        )
+
+    lines = [
+        _phrase(
+            language,
+            it=f"Oggetti di classe `{label}`: {len(names)}.",
+            en=f"Objects of class `{label}`: {len(names)}.",
+        )
+    ]
+    for name in names:
+        obj = ctx.objects[name]
+        c = obj["centroid"]
+        lines.append(
+            f"  - {name}: points={obj['point_count']:,}, "
+            f"centroid=({_fmt3(c[0])}, {_fmt3(c[1])}, {_fmt3(c[2])})"
+        )
+    return "\n".join(lines)
+
+
+def _asks_for_semantic_object_list(text: str) -> bool:
+    if _asks_for_relationships(text) or _asks_for_object_coordinates(text):
+        return False
+    list_terms = (
+        "elencami",
+        "elenca",
+        "lista",
+        "mostra",
+        "list",
+        "show",
+    )
+    object_terms = (
+        "elementi",
+        "elemento",
+        "oggetti",
+        "oggetto",
+        "objects",
+        "object",
+    )
+    return any(term in text for term in list_terms) and any(
+        term in text for term in object_terms
+    )
 
 
 def _asks_for_count(text: str) -> bool:
@@ -2209,6 +2277,184 @@ def _asks_for_area(text: str) -> bool:
         "occupied area",
     )
     return any(term in text for term in area_terms)
+
+
+def _try_answer_object_coordinates(
+    ctx: SceneContext,
+    text: str,
+    language: str = "it",
+) -> str | None:
+    if not _asks_for_object_coordinates(text):
+        return None
+
+    object_names = _extract_object_names(text, ctx.objects)
+    label = _extract_semantic_label(text)
+    if object_names:
+        names = object_names
+        target = ", ".join(object_names)
+    elif label:
+        names = _objects_with_semantic_label(ctx, label)
+        target = label
+    elif any(term in text for term in ("scena", "scene")):
+        return _format_scene_coordinate_summary(ctx, language=language)
+    else:
+        return None
+
+    if not names:
+        return _phrase(
+            language,
+            it=f"Nessun oggetto trovato per `{target}`.",
+            en=f"No object found for `{target}`.",
+        )
+
+    mode = _coordinate_report_mode(text)
+    return _format_object_coordinate_report(
+        ctx,
+        names,
+        target=target,
+        mode=mode,
+        language=language,
+    )
+
+
+def _asks_for_object_coordinates(text: str) -> bool:
+    coordinate_terms = (
+        "coordinate",
+        "coordinates",
+        "globali",
+        "global coordinates",
+        "centroide",
+        "centroid",
+        "global box center",
+        "box center",
+        "bbox center",
+        "bounding box center",
+        "centro box",
+        "centro bounding",
+        "centro aabb",
+        "aabb center",
+    )
+    return any(term in text for term in coordinate_terms)
+
+
+def _coordinate_report_mode(text: str) -> str:
+    if any(
+        term in text
+        for term in (
+            "global box center",
+            "box center",
+            "bbox center",
+            "bounding box center",
+            "centro box",
+            "centro bounding",
+            "centro aabb",
+            "aabb center",
+        )
+    ):
+        return "box_center"
+    if any(term in text for term in ("centroide", "centroid")):
+        return "centroid"
+    return "coordinates"
+
+
+def _format_object_coordinate_report(
+    ctx: SceneContext,
+    object_names: list[str],
+    target: str,
+    mode: str,
+    language: str = "it",
+) -> str:
+    if language == "en":
+        header = (
+            f"Global coordinates for `{target}`: {len(object_names)} object(s). "
+            "Values are computed from point-cloud geometry; no relationship is used."
+        )
+    else:
+        header = (
+            f"Coordinate globali per `{target}`: {len(object_names)} oggetti. "
+            "Valori calcolati dalla geometria della point cloud; nessuna relazione usata."
+        )
+
+    lines = [header]
+    if mode == "box_center":
+        lines.append(
+            _phrase(
+                language,
+                it="Valore riportato: `box_center`, cioè centro del bounding box AABB globale.",
+                en="Reported value: `box_center`, the center of the global AABB bounding box.",
+            )
+        )
+    elif mode == "centroid":
+        lines.append(
+            _phrase(
+                language,
+                it="Valore riportato: `centroid`, cioè media XYZ dei punti dell'oggetto.",
+                en="Reported value: `centroid`, the XYZ mean of the object's points.",
+            )
+        )
+    else:
+        lines.append(
+            _phrase(
+                language,
+                it="Riporto sia `centroid` sia `box_center` per evitare ambiguità.",
+                en="I report both `centroid` and `box_center` to avoid ambiguity.",
+            )
+        )
+
+    for name in sorted(object_names):
+        obj = ctx.objects[name]
+        bounds = obj["bounds"]
+        centroid = obj["centroid"]
+        box_center = (bounds["min"] + bounds["max"]) / 2.0
+        dims = bounds["max"] - bounds["min"]
+        if mode == "box_center":
+            lines.append(
+                f"  - {name}: box_center=({_fmt3(box_center[0])}, {_fmt3(box_center[1])}, {_fmt3(box_center[2])}); "
+                f"dims=({_fmt3(dims[0])}, {_fmt3(dims[1])}, {_fmt3(dims[2])}) m"
+            )
+        elif mode == "centroid":
+            lines.append(
+                f"  - {name}: centroid=({_fmt3(centroid[0])}, {_fmt3(centroid[1])}, {_fmt3(centroid[2])}); "
+                f"points={obj['point_count']:,}"
+            )
+        else:
+            lines.append(
+                f"  - {name}: centroid=({_fmt3(centroid[0])}, {_fmt3(centroid[1])}, {_fmt3(centroid[2])}); "
+                f"box_center=({_fmt3(box_center[0])}, {_fmt3(box_center[1])}, {_fmt3(box_center[2])}); "
+                f"dims=({_fmt3(dims[0])}, {_fmt3(dims[1])}, {_fmt3(dims[2])}) m"
+            )
+    return "\n".join(lines)
+
+
+def _format_scene_coordinate_summary(ctx: SceneContext, language: str = "it") -> str:
+    if ctx.df is None or ctx.df.empty:
+        return _phrase(
+            language,
+            it="Non posso calcolare le coordinate globali della scena: point cloud non disponibile.",
+            en="I cannot compute scene global coordinates: point cloud is not available.",
+        )
+    mins = ctx.df[["x", "y", "z"]].min()
+    maxs = ctx.df[["x", "y", "z"]].max()
+    center = (mins + maxs) / 2.0
+    return _phrase(
+        language,
+        it=(
+            "Bounding box globale della scena: "
+            f"min=({_fmt3(mins['x'])}, {_fmt3(mins['y'])}, {_fmt3(mins['z'])}); "
+            f"max=({_fmt3(maxs['x'])}, {_fmt3(maxs['y'])}, {_fmt3(maxs['z'])}); "
+            f"box_center=({_fmt3(center['x'])}, {_fmt3(center['y'])}, {_fmt3(center['z'])})."
+        ),
+        en=(
+            "Scene global bounding box: "
+            f"min=({_fmt3(mins['x'])}, {_fmt3(mins['y'])}, {_fmt3(mins['z'])}); "
+            f"max=({_fmt3(maxs['x'])}, {_fmt3(maxs['y'])}, {_fmt3(maxs['z'])}); "
+            f"box_center=({_fmt3(center['x'])}, {_fmt3(center['y'])}, {_fmt3(center['z'])})."
+        ),
+    )
+
+
+def _fmt3(value: float) -> str:
+    return f"{float(value):.3f}"
 
 
 def _asks_for_material(text: str) -> bool:

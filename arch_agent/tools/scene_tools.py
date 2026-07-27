@@ -83,6 +83,58 @@ def create_scene_tools(ctx: SceneContext) -> list:
         return "\n".join(lines)
 
     @tool
+    def list_object_geometry(
+        semantic_label: Optional[str] = None,
+        object_name: Optional[str] = None,
+    ) -> str:
+        """List global centroid, AABB box center, bounds, and dimensions.
+
+        Use this for coordinates, global coordinates, centroid, global box
+        center, bounding-box center, or AABB center questions.
+
+        Args:
+            semantic_label: Optional semantic class, e.g. 'moldings'.
+            object_name: Optional object name, e.g. 'moldings_0'.
+        """
+        if object_name:
+            if object_name not in ctx.objects:
+                return _object_not_found_message(object_name, ctx.objects)
+            names = [object_name]
+            target = object_name
+        elif semantic_label:
+            names = sorted(
+                name for name, obj in ctx.objects.items()
+                if obj["semantic_label"] == semantic_label
+            )
+            target = semantic_label
+        else:
+            names = sorted(ctx.objects)
+            target = "all objects"
+
+        if not names:
+            return f"No object found for {target!r}."
+
+        lines = [
+            f"Geometry for {target}: {len(names)} object(s).",
+            "Values are global scene coordinates. box_center is the AABB center; centroid is the point mean.",
+        ]
+        for name in names:
+            obj = ctx.objects[name]
+            bounds = obj["bounds"]
+            centroid = obj["centroid"]
+            box_center = (bounds["min"] + bounds["max"]) / 2.0
+            dims = bounds["max"] - bounds["min"]
+            lines.append(
+                f"  - {name}: "
+                f"centroid=({centroid[0]:.3f}, {centroid[1]:.3f}, {centroid[2]:.3f}); "
+                f"box_center=({box_center[0]:.3f}, {box_center[1]:.3f}, {box_center[2]:.3f}); "
+                f"dims=({dims[0]:.3f}, {dims[1]:.3f}, {dims[2]:.3f}) m; "
+                f"bounds_min=({bounds['min'][0]:.3f}, {bounds['min'][1]:.3f}, {bounds['min'][2]:.3f}); "
+                f"bounds_max=({bounds['max'][0]:.3f}, {bounds['max'][1]:.3f}, {bounds['max'][2]:.3f})"
+            )
+        return "\n".join(lines)
+
+    @tool
     def get_object_info(object_name: str) -> str:
         """Get detailed geometric and semantic information about a specific object.
 
@@ -771,6 +823,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
     return [
         count_objects,
         list_objects,
+        list_object_geometry,
         get_object_info,
         get_object_annotation,
         find_relationships,
