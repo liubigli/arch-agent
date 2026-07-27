@@ -754,9 +754,11 @@ def _try_answer_semantic_object_list(
     for name in names:
         obj = ctx.objects[name]
         c = obj["centroid"]
+        box_center = _object_box_center(obj)
         lines.append(
             f"  - {name}: points={obj['point_count']:,}, "
-            f"centroid=({_fmt3(c[0])}, {_fmt3(c[1])}, {_fmt3(c[2])})"
+            f"centroid=({_fmt3(c[0])}, {_fmt3(c[1])}, {_fmt3(c[2])}), "
+            f"box_center=({_fmt3(box_center[0])}, {_fmt3(box_center[1])}, {_fmt3(box_center[2])})"
         )
     return "\n".join(lines)
 
@@ -780,8 +782,9 @@ def _asks_for_semantic_object_list(text: str) -> bool:
         "objects",
         "object",
     )
-    return any(term in text for term in list_terms) and any(
-        term in text for term in object_terms
+    return any(term in text for term in list_terms) and (
+        _extract_semantic_label(text) is not None
+        or any(term in text for term in object_terms)
     )
 
 
@@ -973,6 +976,8 @@ def _try_answer_annotated_object_description(
 
     if object_names:
         object_name = object_names[0]
+        if _asks_for_csv_attribute_query(text):
+            return _format_annotation_object_attribute(ctx, object_name, text, language=language)
         return _format_annotated_object_description(ctx, object_name, language=language)
 
     label = labels[0]
@@ -982,6 +987,8 @@ def _try_answer_annotated_object_description(
     object_name, error = _resolve_object_by_spatial_query(ctx, label, text, language=language)
     if object_name is None:
         return error
+    if _asks_for_csv_attribute_query(text):
+        return _format_annotation_object_attribute(ctx, object_name, text, language=language)
     return _format_annotated_object_description(ctx, object_name, language=language)
 
 
@@ -1297,6 +1304,67 @@ def _format_annotation_class_summary(
                 en=f"Without matched CSV annotation: {', '.join(missing)}.",
             )
         )
+    return "\n".join(lines)
+
+
+def _format_annotation_object_attribute(
+    ctx: SceneContext,
+    object_name: str,
+    text: str,
+    language: str = "it",
+) -> str:
+    if object_name not in ctx.objects:
+        return _phrase(
+            language,
+            it=f"Oggetto `{object_name}` non trovato nella scena.",
+            en=f"Object `{object_name}` not found in the scene.",
+        )
+
+    annotations = getattr(ctx, "object_annotations", {}).get(object_name, [])
+    if not annotations:
+        return _phrase(
+            language,
+            it=(
+                f"Nessuna annotazione CSV associata a `{object_name}`. "
+                "Per materiale, tipologia e funzione non uso RGB o rugosità."
+            ),
+            en=(
+                f"No CSV annotation is matched to `{object_name}`. "
+                "For material, typology, and function I do not use RGB or roughness."
+            ),
+        )
+
+    material_aliases = _extract_material_aliases(text)
+    entries = [(object_name, annotation) for annotation in annotations]
+    if material_aliases is not None:
+        return _format_material_yes_no_from_csv(
+            object_name,
+            entries,
+            material_aliases,
+            language=language,
+        )
+
+    fields = _requested_annotation_fields(text, language=language)
+    lines = [
+        _phrase(
+            language,
+            it=f"Dal CSV, per `{object_name}`:",
+            en=f"From the CSV, for `{object_name}`:",
+        )
+    ]
+    for index, annotation in enumerate(annotations, start=1):
+        values = _format_selected_annotation_values(annotation, fields)
+        match = annotation.get("match", {})
+        distance = match.get("distance_m")
+        if len(annotations) > 1:
+            lines.append(f"CSV {index}:")
+            prefix = "  "
+        else:
+            prefix = ""
+        if values:
+            lines.extend(f"{prefix}{value}" for value in values)
+        if distance is not None:
+            lines.append(f"{prefix}match: global_box_center, distance={distance:.3f} m")
     return "\n".join(lines)
 
 
@@ -2233,7 +2301,61 @@ def _try_answer_class_relationships(
     if not _asks_for_class_relationships(text):
         return None
 
-    labels = _extract_semantic_labels(text)
+    labels = list(dict.fromkeys(_extract_semantic_labels(text)))
+    if len(labels) >= 2:
+        label_a, label_b = labels[0], labels[1]
+        level = _extract_relationship_level(text)
+        relationship_type = _extract_relationship_type(text)
+        if _asks_for_relationship_list(text):
+            observed = _format_class_pair_relationship_details(
+                ctx,
+                label_a,
+                label_b,
+                level=level,
+                relationship_type=relationship_type,
+                language=language,
+            )
+        else:
+            observed = _format_class_pair_relationship_summary(
+                ctx,
+                label_a,
+                label_b,
+                level=level,
+                relationship_type=relationship_type,
+                language=language,
+            )
+        return _format_grounded_answer(
+            observed=observed,
+            relations=_phrase(
+                language,
+                it=(
+                    "Cascata L1->L2->L3: filtro sulle relazioni che collegano "
+                    f"solo `{label_a}` e `{label_b}`."
+                ),
+                en=(
+                    "L1->L2->L3 cascade: filter on relationships connecting "
+                    f"only `{label_a}` and `{label_b}`."
+                ),
+            ),
+            inference=_phrase(
+                language,
+                it=(
+                    "L1 descrive relazioni geometriche; solo L2 supports/rests_on "
+                    "viene trattato come evidenza strutturale."
+                ),
+                en=(
+                    "L1 describes geometric relationships; only L2 supports/rests_on "
+                    "is treated as structural evidence."
+                ),
+            ),
+            confidence=_phrase(
+                language,
+                it="alta per i conteggi del grafo; media per l'interpretazione architettonica.",
+                en="high for graph counts; medium for architectural interpretation.",
+            ),
+            language=language,
+        )
+
     label = labels[0] if labels else default_label
     if label is None:
         return None
@@ -2466,6 +2588,151 @@ def _format_class_relationship_details(
             )
         )
     return "\n".join(lines)
+
+
+def _format_class_pair_relationship_summary(
+    ctx: SceneContext,
+    label_a: str,
+    label_b: str,
+    level: str = "all",
+    relationship_type: str | None = None,
+    limit: int = 40,
+    language: str = "it",
+) -> str:
+    rows = _class_pair_relationship_rows(
+        ctx,
+        label_a,
+        label_b,
+        level=level,
+        relationship_type=relationship_type,
+    )
+    names_a = _objects_with_semantic_label(ctx, label_a)
+    names_b = _objects_with_semantic_label(ctx, label_b)
+    header = _phrase(
+        language,
+        it=(
+            f"Oggetti `{label_a}`: {len(names_a)}; "
+            f"oggetti `{label_b}`: {len(names_b)}."
+        ),
+        en=(
+            f"`{label_a}` objects: {len(names_a)}; "
+            f"`{label_b}` objects: {len(names_b)}."
+        ),
+    )
+    if not rows:
+        return header + "\n" + _phrase(
+            language,
+            it=f"Nessuna relazione trovata tra `{label_a}` e `{label_b}`.",
+            en=f"No relationship found between `{label_a}` and `{label_b}`.",
+        )
+
+    counts: Counter[tuple[str, str, str, str, str]] = Counter()
+    examples: dict[tuple[str, str, str, str, str], list[Relationship]] = defaultdict(list)
+    for relationship in rows:
+        src, tgt, rel_type, rel_level = relationship
+        src_label = ctx.objects.get(src, {}).get("semantic_label", "unknown")
+        tgt_label = ctx.objects.get(tgt, {}).get("semantic_label", "unknown")
+        rel_layer = _relationship_layer_from_level(rel_level)
+        key = (rel_layer, rel_level, rel_type, src_label, tgt_label)
+        counts[key] += 1
+        if len(examples[key]) < 3:
+            examples[key].append(relationship)
+
+    lines = [header, f"Relazioni tra `{label_a}` e `{label_b}`: {len(rows)}."]
+    for index, ((rel_layer, rel_level, rel_type, src_label, tgt_label), count) in enumerate(
+        sorted(counts.items(), key=lambda item: (item[0][0], item[0][3], item[0][4], item[0][2])),
+        start=1,
+    ):
+        if index > limit:
+            lines.append(
+                _phrase(
+                    language,
+                    it=f"  ... {len(counts) - limit} gruppi non mostrati.",
+                    en=f"  ... {len(counts) - limit} groups not shown.",
+                )
+            )
+            break
+        lines.append(f"  - {rel_layer}/{rel_level}: {src_label} -> {tgt_label}, {rel_type} = {count}")
+        for src, tgt, example_type, example_level in examples[
+            (rel_layer, rel_level, rel_type, src_label, tgt_label)
+        ]:
+            lines.append(f"      es. {src} --[{example_level}:{example_type}]--> {tgt}")
+    return "\n".join(lines)
+
+
+def _format_class_pair_relationship_details(
+    ctx: SceneContext,
+    label_a: str,
+    label_b: str,
+    level: str = "all",
+    relationship_type: str | None = None,
+    limit: int = 120,
+    language: str = "it",
+) -> str:
+    rows = _class_pair_relationship_rows(
+        ctx,
+        label_a,
+        label_b,
+        level=level,
+        relationship_type=relationship_type,
+    )
+    header = _phrase(
+        language,
+        it=f"Relazioni tra `{label_a}` e `{label_b}`: {len(rows)}.",
+        en=f"Relationships between `{label_a}` and `{label_b}`: {len(rows)}.",
+    )
+    if not rows:
+        return header + "\n" + _phrase(
+            language,
+            it="Nessuna relazione trovata con i filtri richiesti.",
+            en="No relationship found with the requested filters.",
+        )
+
+    lines = [header]
+    for src, tgt, rel_type, rel_level in rows[:limit]:
+        src_label = ctx.objects.get(src, {}).get("semantic_label", "unknown")
+        tgt_label = ctx.objects.get(tgt, {}).get("semantic_label", "unknown")
+        lines.append(
+            f"  - {src} ({src_label}) --[{rel_level}:{rel_type}]--> "
+            f"{tgt} ({tgt_label})"
+        )
+    if len(rows) > limit:
+        lines.append(
+            _phrase(
+                language,
+                it=f"  ... {len(rows) - limit} relazioni non mostrate.",
+                en=f"  ... {len(rows) - limit} relationships not shown.",
+            )
+        )
+    return "\n".join(lines)
+
+
+def _class_pair_relationship_rows(
+    ctx: SceneContext,
+    label_a: str,
+    label_b: str,
+    level: str = "all",
+    relationship_type: str | None = None,
+) -> list[Relationship]:
+    levels = RELATIONSHIP_LAYER_ORDER if level == "all" else (level,)
+    rows: list[Relationship] = []
+    for current_level in levels:
+        for relationship in ctx.relationship_layers.get(current_level, []):
+            src, tgt, rel_type, _ = relationship
+            if relationship_type is not None and rel_type != relationship_type:
+                continue
+            src_label = ctx.objects.get(src, {}).get("semantic_label")
+            tgt_label = ctx.objects.get(tgt, {}).get("semantic_label")
+            if {src_label, tgt_label} == {label_a, label_b}:
+                rows.append(relationship)
+    return rows
+
+
+def _relationship_layer_from_level(rel_level: str) -> str:
+    for layer, name in RELATIONSHIP_LAYER_NAMES.items():
+        if name == rel_level:
+            return layer
+    return rel_level
 
 
 def _asks_for_support(text: str) -> bool:
@@ -2807,6 +3074,13 @@ def _extract_object_names(text: str, objects: dict) -> list[str]:
         name = match.group(0)
         if name in objects and name not in found:
             found.append(name)
+
+    for alias, label in sorted(_SEMANTIC_ALIASES, key=lambda item: len(item[0]), reverse=True):
+        pattern = rf"\b{re.escape(alias)}\s*[_-]?\s*(\d+)\b"
+        for match in re.finditer(pattern, text):
+            name = f"{label}_{int(match.group(1))}"
+            if name in objects and name not in found:
+                found.append(name)
     return found
 
 
