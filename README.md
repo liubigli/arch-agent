@@ -297,7 +297,6 @@ Additional L3 rules currently documented/implemented:
 Full documentation:
 
 - `docs/cidoc_l3_scene_graph_builder.md`
-- `docs/cidoc_second_labelling.md`
 
 Python implementation:
 

@@ -96,6 +96,39 @@ description
 | architrave | Architrave_N | Architrave | crm:E22_Human-Made_Object |
 | pillar | Pilastro_N | Pillar | crm:E22_Human-Made_Object |
 
+## Seconda Labellizzazione CIDOC
+
+La seconda labellizzazione affianca la classe semantica originale della point cloud con una lettura CIDOC-CRM.
+Non sostituisce L1 e non rende L2 un grafo: L2 resta lo step intermedio che raccoglie annotazioni di elemento e aggregati di scena.
+
+Per ogni elemento riconosciuto:
+
+```text
+semantic_label originale -> classe locale -> classe CIDOC
+```
+
+Esempi:
+
+```text
+column      -> Column      -> crm:E22_Human-Made_Object
+wall        -> Wall        -> crm:E22_Human-Made_Object
+vault       -> Vault       -> crm:E22_Human-Made_Object
+door_window -> DoorWindow  -> crm:E22_Human-Made_Object
+molding     -> Molding     -> crm:E26_Physical_Feature
+```
+
+Il nodo centrale dell'elemento viene poi collegato ai satelliti CIDOC:
+
+| Campo annotazione | Nodo satellite | Classe CIDOC | Relazione dal nodo centrale |
+| --- | --- | --- | --- |
+| typology | Tipo_* | crm:E55_Type | crm:P2_has_type |
+| material | Materiale_* | crm:E57_Material | crm:P45_consists_of |
+| function | Funzione_* | crm:E55_Type | crm:P103_was_intended_for |
+
+Il materiale viene letto solo dal CSV allegato alla scena. Se il CSV non contiene un valore `material`/`materiale` per l'elemento, L3 non crea il nodo `Materiale_*` e non deduce materiali dalla point cloud.
+
+Gli aggregati come `colonnade`, `portico`, `loggia`, `nave` o `pavilion` sono annotazioni/interpretazioni di scena: derivano da tool geometrici o validazione e si sommano alle informazioni del CSV per produrre la descrizione complessiva.
+
 ## Pattern L3 Principale
 
 Ogni elemento architettonico viene collegato a tre nodi satellite:
@@ -403,10 +436,9 @@ I nodi satellite `Tipo_*`, `Materiale_*` e `Funzione_*` restano concetti riusabi
 
 ## File Principali
 
-- `work/l3_cidoc_graph_builder.py`: logica Python per costruire il grafo CIDOC L3 in memoria.
-- `work/cidoc_second_labelling.md`: specifica della seconda labellizzazione CIDOC.
-- `outputs/scena4_VAL_annotations.csv`: input di annotazione scena usato in questa sessione.
-- `outputs/scena4_VAL_annotations_no_source.csv`: variante input senza colonna `source_file`.
+- `arch_agent/pipeline/l3_cidoc_graph_builder.py`: logica Python per costruire il grafo CIDOC L3 in memoria.
+- `docs/cidoc_l3_scene_graph_builder.md`: specifica unificata della logica L1/L2/L3 e della seconda labellizzazione CIDOC.
+- `examples/annotations_template.csv`: template di input per annotazioni di scena.
 
 Il builder non esporta CSV automaticamente e non produce output di scena se non richiesto esplicitamente.
 I CSV di scena attualmente presenti sono da considerare input/prototipi di input, non output finali.
