@@ -244,3 +244,35 @@ arch_agent/
 └── __init__.py
 main.py                    # CLI entry point
 ```
+
+## CIDOC L3 ontology layer
+
+The previous L3 layer is being replaced by a CIDOC-CRM based knowledge graph for cultural heritage interpretation.
+
+- L1 remains the fixed geometric/spatial scenegraph derived from the point cloud.
+- L2 contains semantic annotations for structural, decorative and other scene classes.
+- L3 builds a CIDOC-oriented ontology layer from L1 + L2 without inventing missing values.
+- Element-to-element CIDOC relations are created only when supported by local spatial evidence from L1 or explicit scene evidence.
+
+Implemented CIDOC patterns include element nodes connected to type, material and function satellites:
+
+```text
+Elemento_N crm:P2_has_type Tipo_*
+Elemento_N crm:P45_consists_of Materiale_*
+Elemento_N crm:P103_was_intended_for Funzione_*
+```
+
+Additional L3 rules currently documented/implemented:
+
+- `colonnade`: inferred from at least 4 aligned, approximately equispaced structural-support columns.
+- `portico`: inferred only with aligned arches or columns+architraves, continuous cover, covered walkable ground-floor space, open external side and opposite side attached to/closed by the building.
+- `loggia`: inferred only with a covered room/gallery integrated in the building volume, one open side made of arches on columns or pillars, and intermediate/representative function.
+
+Full documentation:
+
+- `docs/cidoc_l3_scene_graph_builder.md`
+- `docs/cidoc_second_labelling.md`
+
+Python implementation:
+
+- `arch_agent/pipeline/l3_cidoc_graph_builder.py`
