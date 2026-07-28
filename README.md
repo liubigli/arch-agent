@@ -2,58 +2,48 @@
 
 An LLM-powered agent for interactive analysis of 3D architectural point clouds.
 
-Given a semantically labelled point cloud (LAZ), the system builds **three separate stratified scene graphs** of the architectural space and launches a conversational agent that lets you explore it in natural language.
+Given a semantically labelled point cloud (LAZ), the system builds a spatial scene graph, enriches it with scene annotations, and derives a CIDOC-CRM ontology graph for cultural-heritage interpretation. A conversational agent lets you explore the resulting scene in natural language.
 
 ## How it works
 
-```
+```text
 LAZ point cloud
-      │
-      ▼
-┌───────────────────────────────────────────────────────┐
-│               Pipeline                                │
-│  1. Load & sample points                              │
-│  2. DBSCAN segmentation -> individual objects         |
-|   - DBSCAN for all semantic classes                   |
-│  3. Geometric features (volume, area, …)              │
-│  4. Spatial relationships between objects             │
-|      - L1 geometric                                   |
-|      - L2 structural                                  |
-|     - L3 mereological                                 │
-│  5. Three scene graphs (NetworkX DiGraph)             │
-│      - L1 geometric graph                             │
-|      - L2 structural graph                            │
-|      - L3 mereological graph                          │
-└───────────────────────────────────────────────────────┘
-
-      │
-      ▼
-┌─────────────────────────────────────────────┐
-│         LangGraph Agent (Llama 3)           │
-│  Tools:                                     │
-│  • count_objects                            │
-│  • list_objects                             │
-│  • list_object_geometry                     │
-│  • get_object_info                          │
-│  • get_object_annotation                    │
-│  • list_relationships                       │
-│  • find_relationships                       │
-│  • find_relationship_anomalies              │
-│  • get_scene_statistics                     │
-│  • get_point_cloud_info                     │
-│  • measure_occupied_area                    │
-│  • estimate_room_volume                     │
-│  • measure_distance                         │
-│  • find_nearest_objects                     │
-│  • find_focal_points                        │
-│  • find_pattern                             │
-│  • discover_functional_areas                │
-│  • reload_scene                             │
-└─────────────────────────────────────────────┘
-      │
-      ▼
-  Interactive chat (terminal)
+      |
+      v
+Load and sample points
+      |
+      v
+DBSCAN segmentation -> individual objects
+      |
+      v
+L1 spatial graph
+      - object geometry
+      - centroids and bounding boxes
+      - near / adjacent_to / above / below
+      - distances and local spatial support
+      |
+      v
+L2 annotation and enrichment step
+      - CSV element metadata
+      - material, typology, function, descriptions
+      - aggregate evidence from geometric tools or validation
+      - colonnade, portico, loggia, nave, pavilion, etc.
+      |
+      v
+L3 CIDOC ontology graph
+      - CIDOC element nodes
+      - type/material/function satellites
+      - measurements and dimensions
+      - aggregate architectural entities
+      |
+      v
+LangGraph Agent
+      |
+      v
+Interactive chat
 ```
+
+The key distinction is that L1 and L3 are graphs, while L2 is an intermediate information layer. L2 collects the metadata and validated aggregate evidence required to build the final CIDOC interpretation.
 
 ## Input format
 
@@ -113,34 +103,70 @@ Each detected object stores the segmentation method used:
 
 ```python
 "segmentation_method": "dbscan"
+```
 
+## Scene Understanding Layers
 
-```md
-## Stratified relationship model
+The scene is no longer described as three equivalent graphs. The current model separates geometry, annotation, and ontology:
 
-The scene is represented as three stratified relationship levels. Each level is stored as a separate `networkx.DiGraph`: `ctx.scene_graphs["L1"]`, `ctx.scene_graphs["L2"]`, and `ctx.scene_graphs["L3"]`. The system does not store a single graph with multi-level edge labels; it keeps one graph per layer to avoid duplicated edges inside a graph while preserving multiple interpretations of the same object pair across levels.
-
-| Level | Graph | Relations | Meaning |
+| Level | Role | Output | Meaning |
 |---|---|---|---|
-| L1 | geometric | `near`, `adjacent_to`, `above`, `below` | spatial position and proximity |
-| L2 | structural | `supports`, `rests_on` | vertical support and load-bearing interpretation |
-| L3 | mereological | `has_part`, `part_of`, `is_opening_in`, `is_rib_of`, `is_ornament_of`, `is_attached_to`, `is_placed_on`, `is_connected_to` | architectural composition and functional membership |
+| L1 | Spatial graph | `networkx.DiGraph` / scenegraph | Geometric and spatial relations between segmented objects: `near`, `adjacent_to`, `above`, `below`, distances, bounding boxes, centroids. |
+| L2 | Information/enrichment step | CSV/JSON annotations linked to objects and aggregate evidence | User/researcher metadata: material, typology, function, descriptions, historical notes, plus validated aggregate labels such as colonnade, portico, loggia, nave, pavilion. |
+| L3 | CIDOC ontology graph | CIDOC-oriented knowledge graph | Cultural-heritage interpretation built from L1 + L2: elements, types, materials, functions, measurements, and aggregate architectural entities. |
 
-L2 and L3 can be interpreted as lightweight scene-level knowledge graphs, not as full ontology-backed knowledge graphs. L2 encodes rule-constrained structural knowledge derived from geometry and semantic classes; L3 encodes semantic and mereological knowledge about architectural composition.
+### L1: Spatial Graph
 
-The L3 relation names are directional and not interchangeable. `has_part` is emitted from parent to child. `part_of`, `is_opening_in`, `is_rib_of`, `is_ornament_of`, `is_attached_to`, `is_placed_on`, and `is_connected_to` are emitted from child to parent according to the semantic class rules in `relationships.py`. The README and prompt use this same definitive taxonomy.
+L1 is the fixed geometric/spatial scenegraph derived from the point cloud and spatial tools. It contains object geometry and local spatial relations. It does not assign material, historical interpretation, or architectural aggregate identity by itself.
 
-For relationship queries, `list_relationships` is the primary tool for listing or counting relationships by layer, type, or object. `find_relationships` has one narrower purpose: inspect all relationships involving one named object.
+Examples:
 
-The three graphs are available in the scene context:
+```text
+column_1 near column_2
+vault_1 above floor_1
+door_window_1 adjacent_to wall_1
+```
 
-```python
-ctx.scene_graphs["L1"]  # geometric graph
-ctx.scene_graphs["L2"]  # structural graph
-ctx.scene_graphs["L3"]  # mereological graph
+### L2: Annotation And Enrichment Step
 
+L2 is not a graph. It is the intermediate information layer that collects and links external knowledge to the scene.
 
+L2 includes two kinds of information:
 
+1. Element-level annotations from the scene CSV:
+   - material
+   - typology
+   - function
+   - description
+   - historical/material notes
+
+2. Scene/aggregate annotations from geometric tools or researcher validation:
+   - colonnade / colonnato
+   - portico / porticato
+   - loggia / loggiato
+   - nave / navata
+   - pavilion / padiglione
+
+Material type is determined only from the CSV attached to the scene. It is not inferred from the point cloud, geometry, semantic class, or L1 relations.
+
+Aggregate annotations can be derived from geometric tools or validation and then added to the scene annotation data. They are used to support the final scene-level description.
+
+### L3: CIDOC Ontology Graph
+
+L3 is the ontological layer. It uses CIDOC-CRM patterns to formalize the information from L1 and L2.
+
+The L3 graph contains:
+
+```text
+Element_N crm:P2_has_type Tipo_*
+Element_N crm:P45_consists_of Materiale_*
+Element_N crm:P103_was_intended_for Funzione_*
+Aggregate_N crm:P46_is_composed_of Element_N
+```
+
+CIDOC element-to-element or aggregate-to-element relations are created only when they are supported by local spatial evidence from L1 or explicit aggregate evidence from L2. The system must not connect distant elements only because they are semantically compatible.
+
+For relationship queries, `list_relationships` is the primary tool for inspecting L1 spatial relations and existing graph relations. CIDOC aggregate interpretation is handled by the L3 builder and documented in `docs/cidoc_l3_scene_graph_builder.md`.
 
 ## Requirements
 
@@ -246,12 +272,12 @@ main.py                    # CLI entry point
 
 ## CIDOC L3 ontology layer
 
-The previous L3 layer is being replaced by a CIDOC-CRM based knowledge graph for cultural heritage interpretation.
+The L3 layer is a CIDOC-CRM based knowledge graph for cultural heritage interpretation.
 
 - L1 remains the fixed geometric/spatial scenegraph derived from the point cloud.
-- L2 contains semantic annotations for structural, decorative and other scene classes.
+- L2 is an information/enrichment step, not a graph: it links CSV element metadata and validated aggregate evidence to the scene.
 - Material, typology and function values in L2/L3 come only from the scene annotation CSV.
-- L3 builds a CIDOC-oriented ontology layer from L1 + L2 without inventing missing values.
+- L3 builds a CIDOC-oriented ontology graph from L1 + L2 without inventing missing values.
 - Element-to-element CIDOC relations are created only when supported by local spatial evidence from L1 or explicit scene evidence.
 
 Implemented CIDOC patterns include element nodes connected to type, material and function satellites:
