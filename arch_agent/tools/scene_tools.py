@@ -4,12 +4,6 @@ from typing import Optional
 import networkx as nx
 from langchain_core.tools import tool
 
-from ..pipeline.point_metrics import (
-    format_rgb_summary,
-    format_roughness_summary,
-    has_rgb,
-    rgb_statistics,
-)
 from ..pipeline.pipeline import SceneContext, run_pipeline
 from ..pipeline.graph import analyze_scene_graph
 from ..pipeline.relationships import (
@@ -163,16 +157,6 @@ def create_scene_tools(ctx: SceneContext) -> list:
         annotations = getattr(ctx, "object_annotations", {}).get(object_name, [])
         if annotations:
             lines.append(f"  CSV annotations : {len(annotations)}")
-        color = rgb_statistics(obj["points"])
-        if color is not None:
-            raw = color["mean_raw"]
-            rgb8 = color["mean_rgb8"]
-            lines.append(
-                "  Mean RGB        : "
-                f"raw ({raw[0]:.1f}, {raw[1]:.1f}, {raw[2]:.1f}); "
-                f"8-bit ({rgb8[0]}, {rgb8[1]}, {rgb8[2]})"
-            )
-
         return "\n".join(lines)
 
     @tool
@@ -405,7 +389,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
 
     @tool
     def get_point_cloud_info() -> str:
-        """Get point-cloud level metrics: point count, classes, bounding box, footprint, and RGB availability."""
+        """Get point-cloud level metrics: point count, classes, bounding box, and footprint."""
         if ctx.df is None or ctx.df.empty:
             return "No point-cloud dataframe is available."
 
@@ -427,10 +411,6 @@ def create_scene_tools(ctx: SceneContext) -> list:
             "Point classes:",
         ]
         lines.extend(f"  - {label}: {count:,}" for label, count in class_counts.items())
-        lines.append(
-            "RGB channels: "
-            + ("available" if has_rgb(ctx.df) else "not available")
-        )
         return "\n".join(lines)
 
     @tool
@@ -488,87 +468,6 @@ def create_scene_tools(ctx: SceneContext) -> list:
         return (
             f"Scene occupied area: {area:.3f} m2 "
             f"(XY AABB footprint: {dx:.3f} x {dy:.3f} m; not volume)."
-        )
-
-    @tool
-    def get_color_summary(
-        semantic_label: Optional[str] = None,
-        object_name: Optional[str] = None,
-    ) -> str:
-        """Summarize mean RGB values for the whole scene, a semantic class, or one object.
-
-        Args:
-            semantic_label: Optional semantic class to summarize, e.g. 'column'.
-            object_name: Optional object name to summarize, e.g. 'column_0'.
-        """
-        if object_name:
-            if object_name not in ctx.objects:
-                return f"Object '{object_name}' not found."
-            return format_rgb_summary(object_name, ctx.objects[object_name]["points"])
-
-        if semantic_label:
-            parts = [
-                obj["points"] for obj in ctx.objects.values()
-                if obj["semantic_label"] == semantic_label
-            ]
-            if not parts:
-                return f"No objects with semantic label '{semantic_label}' found."
-            return format_rgb_summary(semantic_label, _concat_frames(parts))
-
-        if ctx.df is None or ctx.df.empty:
-            return "No point-cloud dataframe is available."
-        return format_rgb_summary("scene", ctx.df)
-
-    @tool
-    def analyze_surface_roughness(
-        semantic_label: Optional[str] = None,
-        object_name: Optional[str] = None,
-        sample_size: int = 5000,
-        k_neighbors: int = 24,
-    ) -> str:
-        """Estimate surface roughness from point-cloud geometry.
-
-        Roughness is estimated as the local residual from a best-fit plane
-        computed with PCA over k-nearest neighbors. It can reflect surface
-        irregularity, scan noise, curvature, or segmentation artifacts.
-
-        Args:
-            semantic_label: Optional semantic class to analyze, e.g. 'wall'.
-            object_name: Optional object name to analyze, e.g. 'wall_0'.
-            sample_size: Maximum number of points sampled for the estimate.
-            k_neighbors: Number of neighbors used for local plane fitting.
-        """
-        if object_name:
-            if object_name not in ctx.objects:
-                return f"Object '{object_name}' not found."
-            return format_roughness_summary(
-                object_name,
-                ctx.objects[object_name]["points"],
-                sample_size=sample_size,
-                k_neighbors=k_neighbors,
-            )
-
-        if semantic_label:
-            parts = [
-                obj["points"] for obj in ctx.objects.values()
-                if obj["semantic_label"] == semantic_label
-            ]
-            if not parts:
-                return f"No objects with semantic label '{semantic_label}' found."
-            return format_roughness_summary(
-                semantic_label,
-                _concat_frames(parts),
-                sample_size=sample_size,
-                k_neighbors=k_neighbors,
-            )
-
-        if ctx.df is None or ctx.df.empty:
-            return "No point-cloud dataframe is available."
-        return format_roughness_summary(
-            "scene",
-            ctx.df,
-            sample_size=sample_size,
-            k_neighbors=k_neighbors,
         )
 
     @tool
@@ -789,8 +688,6 @@ def create_scene_tools(ctx: SceneContext) -> list:
         get_scene_statistics,
         get_point_cloud_info,
         measure_occupied_area,
-        get_color_summary,
-        analyze_surface_roughness,
         estimate_room_volume,
         measure_distance,
         find_nearest_objects,

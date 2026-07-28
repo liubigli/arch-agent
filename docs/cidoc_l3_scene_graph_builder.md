@@ -55,6 +55,8 @@ Il tool non deve inventare informazioni. Formalizza solo dati espliciti provenie
 - CSV o JSON di annotazione: classe semantica, materiale, tipologia, funzione e descrizione;
 - regole CIDOC configurate nel builder: mapping classi e predicati ontologici.
 
+Il tipo di materiale viene determinato esclusivamente dal CSV allegato alla scena. La point cloud, L1, HBIM e i tool spaziali non sono fonti valide per dedurre automaticamente il materiale.
+
 Se un materiale, una tipologia, una funzione o una misura non sono presenti negli input, il tool non crea automaticamente valori dedotti.
 
 ## Input Annotazioni

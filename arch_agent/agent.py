@@ -14,11 +14,6 @@ from typing_extensions import TypedDict
 from pathlib import Path
 
 from .evaluation_answers import answer_evaluation_prompt
-from .pipeline.point_metrics import (
-    format_rgb_summary as format_point_rgb_summary,
-    format_roughness_summary,
-    has_rgb,
-)
 from .pipeline.pipeline import SceneContext
 from .pipeline.relationships import (
     Relationship,
@@ -415,70 +410,6 @@ def _try_answer_deterministic(
     if _asks_for_material(text):
         return _format_csv_annotation_inventory(ctx, text, language=language)
 
-    if _asks_for_surface_roughness(text):
-        object_names = _extract_object_names(text, ctx.objects)
-        object_name = object_names[0] if object_names else None
-        label = None if object_name else _extract_semantic_label(text)
-        return _format_grounded_answer(
-            observed=_format_surface_roughness_summary(
-                ctx,
-                semantic_label=label,
-                object_name=object_name,
-                language=language,
-            ),
-            relations=_phrase(
-                language,
-                it="Nessuna relazione L1/L2/L3 usata: risposta basata sui punti XYZ della point cloud.",
-                en="No L1/L2/L3 relationship used: answer based on XYZ point-cloud coordinates.",
-            ),
-            inference=_phrase(
-                language,
-                it=(
-                    "La rugosità stimata descrive lo scarto locale dei punti da un piano; "
-                    "può includere rumore, curvatura e artefatti di segmentazione."
-                ),
-                en=(
-                    "Estimated roughness describes local point residuals from a plane; "
-                    "it can include noise, curvature, and segmentation artifacts."
-                ),
-            ),
-            confidence=_phrase(
-                language,
-                it="media: metrica geometrica automatica, non misura materica assoluta.",
-                en="medium: automatic geometric metric, not an absolute material measurement.",
-            ),
-            language=language,
-        )
-
-    if "rgb" in text or "colore" in text or "color" in text:
-        object_names = _extract_object_names(text, ctx.objects)
-        object_name = object_names[0] if object_names else None
-        label = _extract_semantic_label(text)
-        return _format_grounded_answer(
-            observed=_format_color_summary(
-                ctx,
-                semantic_label=None if object_name else label,
-                object_name=object_name,
-                language=language,
-            ),
-            relations=_phrase(
-                language,
-                it="Nessuna relazione usata: risposta basata sui canali RGB dei punti.",
-                en="No relationship used: answer based on point RGB channels.",
-            ),
-            inference=_phrase(
-                language,
-                it="Il colore è una feature visiva, non una prova funzionale o strutturale.",
-                en="Color is a visual feature, not functional or structural evidence.",
-            ),
-            confidence=_phrase(
-                language,
-                it="alta se RGB è disponibile; altrimenti non disponibile.",
-                en="high if RGB is available; otherwise unavailable.",
-            ),
-            language=language,
-        )
-
     return None
 
 
@@ -551,10 +482,6 @@ def _response_language(text: str) -> str:
         "typology",
         "material",
         "materials",
-        "roughness",
-        "surface",
-        "rgb",
-        "color",
     )
     italian_markers = (
         "quante",
@@ -574,10 +501,6 @@ def _response_language(text: str) -> str:
         "tipologia",
         "material",
         "materic",
-        "rugos",
-        "ruvid",
-        "asperit",
-        "colore",
     )
     english_score = sum(marker in normalized for marker in english_markers)
     italian_score = sum(marker in normalized for marker in italian_markers)
@@ -1326,11 +1249,11 @@ def _format_annotation_object_attribute(
             language,
             it=(
                 f"Nessuna annotazione CSV associata a `{object_name}`. "
-                "Per materiale, tipologia e funzione non uso RGB o rugosità."
+                "Per materiale, tipologia e funzione uso solo metadati CSV."
             ),
             en=(
                 f"No CSV annotation is matched to `{object_name}`. "
-                "For material, typology, and function I do not use RGB or roughness."
+                "For material, typology, and function I use CSV metadata only."
             ),
         )
 
@@ -1537,13 +1460,13 @@ def _format_no_csv_annotations(
         language,
         it=(
             f"Non ho annotazioni CSV associate per {target}. "
-            "Per materiale, tipologia e funzione non uso RGB o rugosità: "
+            "Per materiale, tipologia e funzione uso solo metadati CSV: "
             "serve una riga CSV con `semantic_label` e `global_box_center_x/y/z`."
             + suffix
         ),
         en=(
             f"No CSV annotations are matched for {target}. "
-            "For material, typology, and function I do not use RGB or roughness: "
+            "For material, typology, and function I use CSV metadata only: "
             "a CSV row with `semantic_label` and `global_box_center_x/y/z` is required."
             + (f" Unmatched CSV rows: {unmatched}." if unmatched else "")
         ),
@@ -3052,22 +2975,6 @@ def _asks_for_material(text: str) -> bool:
     return any(term in text for term in material_terms)
 
 
-def _asks_for_surface_roughness(text: str) -> bool:
-    roughness_terms = (
-        "roughness",
-        "surface roughness",
-        "rugosita",
-        "rugos",
-        "ruvid",
-        "asperita",
-        "asperit",
-        "irregolarita superficiale",
-        "superficie irregolare",
-        "surface texture",
-    )
-    return any(term in text for term in roughness_terms)
-
-
 def _extract_object_names(text: str, objects: dict) -> list[str]:
     found = []
     for match in re.finditer(r"\b[a-z]+(?:_[a-z]+)*_\d+\b", text):
@@ -3627,9 +3534,6 @@ def _format_point_cloud_info(ctx: SceneContext) -> str:
         "Classi nei punti:",
     ]
     lines.extend(f"  - {label}: {count:,}" for label, count in class_counts.items())
-    lines.append(
-        "RGB: " + ("disponibile" if _has_rgb(ctx.df) else "non disponibile")
-    )
     return "\n".join(lines)
 
 
@@ -3919,56 +3823,6 @@ def _format_room_volume(ctx: SceneContext) -> str:
     ])
 
 
-def _format_surface_roughness_summary(
-    ctx: SceneContext,
-    semantic_label: str | None = None,
-    object_name: str | None = None,
-    language: str = "it",
-) -> str:
-    query = _point_frame_for_query(ctx, semantic_label=semantic_label, object_name=object_name)
-    if isinstance(query, str):
-        return query
-    name, df = query
-    return format_roughness_summary(name, df, language=language)
-
-
-def _format_color_summary(
-    ctx: SceneContext,
-    semantic_label: str | None = None,
-    object_name: str | None = None,
-    language: str = "it",
-) -> str:
-    query = _point_frame_for_query(ctx, semantic_label=semantic_label, object_name=object_name)
-    if isinstance(query, str):
-        return query
-    name, df = query
-    return format_point_rgb_summary(name, df, language=language)
-
-
-def _point_frame_for_query(
-    ctx: SceneContext,
-    semantic_label: str | None = None,
-    object_name: str | None = None,
-) -> tuple[str, object] | str:
-    if object_name:
-        if object_name not in ctx.objects:
-            return f"Oggetto '{object_name}' non trovato."
-        return object_name, ctx.objects[object_name]["points"]
-
-    if semantic_label:
-        frames = [
-            obj["points"] for obj in ctx.objects.values()
-            if obj["semantic_label"] == semantic_label
-        ]
-        if not frames:
-            return f"Non sono stati trovati oggetti di classe '{semantic_label}'."
-        import pandas as pd
-
-        return semantic_label, pd.concat(frames, ignore_index=True)
-
-    return "scena", ctx.df
-
-
 def _format_top_object(ctx: SceneContext, metric: str, reverse: bool = True) -> str:
     if metric == "point_count":
         if not ctx.objects:
@@ -4054,10 +3908,6 @@ def _extract_semantic_labels(text: str) -> list[str]:
         occupied.update(span)
         labels.append(label)
     return labels
-
-
-def _has_rgb(df) -> bool:
-    return has_rgb(df)
 
 
 def _xy_area(bounds: dict) -> float:

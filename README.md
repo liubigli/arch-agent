@@ -42,8 +42,6 @@ LAZ point cloud
 │  • get_scene_statistics                     │
 │  • get_point_cloud_info                     │
 │  • measure_occupied_area                    │
-│  • get_color_summary                        │
-│  • analyze_surface_roughness                │
 │  • estimate_room_volume                     │
 │  • measure_distance                         │
 │  • find_nearest_objects                     │
@@ -75,7 +73,8 @@ column,631.367,813.088,231.604,"Stone supplied by researcher","Column type","Str
 ```
 
 Material, typology, function, and historical/descriptive notes come from this
-CSV metadata only; they are not inferred from RGB or roughness.
+CSV metadata only; they are not inferred from point-cloud visual features.
+Material type is determined exclusively from the CSV attached to the scene.
 
 Supported semantic labels (integer-encoded):
 
@@ -251,6 +250,7 @@ The previous L3 layer is being replaced by a CIDOC-CRM based knowledge graph for
 
 - L1 remains the fixed geometric/spatial scenegraph derived from the point cloud.
 - L2 contains semantic annotations for structural, decorative and other scene classes.
+- Material, typology and function values in L2/L3 come only from the scene annotation CSV.
 - L3 builds a CIDOC-oriented ontology layer from L1 + L2 without inventing missing values.
 - Element-to-element CIDOC relations are created only when supported by local spatial evidence from L1 or explicit scene evidence.
 

@@ -46,6 +46,8 @@ La seconda labellizzazione CIDOC usa tipo, materiale e funzione come struttura p
 Le relazioni parte/tutto possono comunque essere mantenute come relazioni fisiche secondarie quando servono a descrivere il contesto architettonico.
 Queste relazioni non sono globali: devono riguardare elementi vicini, adiacenti, in contatto o comunque collegati nello scenegraph L1.
 
+Il materiale viene letto solo dal CSV allegato alla scena. Se il CSV non contiene un valore `material`/`materiale` per l'elemento, L3 non crea il nodo `Materiale_*` e non deduce materiali dalla point cloud.
+
 Pattern per classe a livello di soli elementi:
 
 | Classe | Pattern CIDOC ammessi |

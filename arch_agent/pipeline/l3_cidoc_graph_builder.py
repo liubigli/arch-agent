@@ -301,6 +301,10 @@ def build_l3_cidoc_graph(annotation_rows: Iterable[dict[str, str]]) -> tuple[lis
     - function
     - description
 
+    Material values are accepted only from the annotation rows attached to the
+    scene. The builder does not infer materials from point-cloud geometry,
+    visual features, semantic class, L1, or HBIM data.
+
     L3 is intentionally not mereological here. Each architectural element is
     connected to CIDOC satellite nodes:
     - typology: crm:E55_Type via crm:P2_has_type
