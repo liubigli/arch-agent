@@ -46,6 +46,34 @@ class BenchmarkResult:
     def num_tool_calls(self) -> int:
         return len(self.tool_calls)
 
+    @property
+    def reliability(self) -> str:
+        """Coarse reliability verdict for `final_answer`, mutually exclusive:
+
+        - "error": the LLM/tool pipeline itself failed (exception, unreachable Ollama).
+        - "unanswered": no final answer text was produced at all.
+        - "ungrounded": an answer was produced but contradicts data verifiable
+          from the scene graph (see `grounding_checks.py`).
+        - "unverified_no_tool": an answer was produced without calling any
+          tool, so groundedness could not even be checked against fresh data.
+        - "grounded": an answer was produced, at least one tool was called,
+          and no contradiction was found.
+
+        This is NOT a correctness score against `reference_answer` — see the
+        module docstring: reference answers for interpretive questions
+        (typology, hierarchy, dominant element, ...) are one heuristic
+        reading among several plausible ones, not ground truth.
+        """
+        if self.error:
+            return "error"
+        if not self.final_answer:
+            return "unanswered"
+        if self.grounding_issues:
+            return "ungrounded"
+        if self.num_tool_calls == 0:
+            return "unverified_no_tool"
+        return "grounded"
+
 
 def load_questions(path: str | Path) -> list[str]:
     """Extract one question per line from a plain-text question list.
@@ -96,14 +124,9 @@ def run_question(agent, ctx: SceneContext, model: str, question: str) -> Benchma
         result.latency_s = time.monotonic() - start
         return result
     result.latency_s = time.monotonic() - start
+    result.chain_of_thought = outcome.get("reasoning")
 
     messages = outcome["messages"]
-    ai_messages = [message for message in messages if isinstance(message, AIMessage)]
-    if len(ai_messages) > 1 and not ai_messages[0].tool_calls:
-        leading_content = ai_messages[0].content
-        if isinstance(leading_content, str) and leading_content.strip():
-            result.chain_of_thought = leading_content.strip()
-
     tool_outputs = {
         message.tool_call_id: message.content
         for message in messages
@@ -131,6 +154,38 @@ def run_question(agent, ctx: SceneContext, model: str, question: str) -> Benchma
     return result
 
 
+def build_trace(result: BenchmarkResult) -> list[str]:
+    """Reconstruct a step-by-step trace from real execution data only.
+
+    Unlike `chain_of_thought` (a prediction made before any tool ran, which
+    can only guess at tool names and invent results), this is built purely
+    from what actually happened — the real tool calls, their real
+    arguments, their real output, and the real final answer — so it carries
+    no additional hallucination risk and scales to any number of cascaded
+    tool calls.
+
+    Returns one string per step (not pre-joined), so JSON output keeps each
+    step as a separate list item and stays easy to follow; CSV output joins
+    them into a single cell.
+    """
+    steps = [f"1. Domanda: {result.question}"]
+    step = 2
+    if result.error:
+        steps.append(f"{step}. Errore: {result.error}")
+        return steps
+    if not result.tool_calls:
+        steps.append(f"{step}. Nessun tool chiamato.")
+        step += 1
+    for call in result.tool_calls:
+        args_text = ", ".join(f"{key}={value!r}" for key, value in call.args.items())
+        steps.append(f"{step}. Tool chiamato: {call.name}({args_text})")
+        step += 1
+        steps.append(f"{step}. Risultato del tool: {call.output or '(nessun output)'}")
+        step += 1
+    steps.append(f"{step}. Risposta finale: {result.final_answer or '(nessuna risposta)'}")
+    return steps
+
+
 def run_benchmark(
     ctx: SceneContext,
     model: str,
@@ -153,12 +208,14 @@ def write_csv_report(results: list[BenchmarkResult], path: str | Path) -> None:
         "question",
         "model",
         "chain_of_thought",
+        "trace",
         "num_tool_calls",
         "tool_names",
         "tool_call_reasoning",
         "final_answer",
         "reference_answer",
         "grounding_issues",
+        "reliability",
         "latency_s",
         "error",
     ]
@@ -171,6 +228,7 @@ def write_csv_report(results: list[BenchmarkResult], path: str | Path) -> None:
                     "question": result.question,
                     "model": result.model,
                     "chain_of_thought": result.chain_of_thought or "",
+                    "trace": "\n".join(build_trace(result)),
                     "num_tool_calls": result.num_tool_calls,
                     "tool_names": ", ".join(call.name for call in result.tool_calls),
                     "tool_call_reasoning": " | ".join(
@@ -183,6 +241,7 @@ def write_csv_report(results: list[BenchmarkResult], path: str | Path) -> None:
                     "grounding_issues": " | ".join(
                         f"{issue.kind}: {issue.detail}" for issue in result.grounding_issues
                     ),
+                    "reliability": result.reliability,
                     "latency_s": f"{result.latency_s:.3f}",
                     "error": result.error or "",
                 }
@@ -190,7 +249,12 @@ def write_csv_report(results: list[BenchmarkResult], path: str | Path) -> None:
 
 
 def write_json_report(results: list[BenchmarkResult], path: str | Path) -> None:
-    payload = [asdict(result) for result in results]
+    payload = []
+    for result in results:
+        item = asdict(result)
+        item["trace"] = build_trace(result)
+        item["reliability"] = result.reliability
+        payload.append(item)
     Path(path).write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
@@ -198,6 +262,11 @@ def summarize(results: list[BenchmarkResult]) -> str:
     total = len(results)
     errors = sum(1 for r in results if r.error)
     zero_tool_calls = sum(1 for r in results if not r.error and r.num_tool_calls == 0)
+    reliability_counts: dict[str, int] = {}
+    for result in results:
+        reliability_counts[result.reliability] = reliability_counts.get(result.reliability, 0) + 1
+    scoreable = total - errors
+    grounded_rate = reliability_counts.get("grounded", 0) / scoreable if scoreable else 0.0
     with_chain_of_thought = sum(1 for r in results if r.chain_of_thought)
     flagged = sum(1 for r in results if r.grounding_issues)
     issue_kinds: dict[str, int] = {}
@@ -225,8 +294,12 @@ def summarize(results: list[BenchmarkResult]) -> str:
         f"Tool calls with stated reasoning: {reasoned_calls}/{total_calls} ({reasoning_rate:.0%})",
         f"Average latency per question: {avg_latency:.2f}s",
         f"Answers flagged by groundedness checks: {flagged}/{total}",
-        "Tool usage:",
+        f"Grounded rate (grounded / (total - errors)): {grounded_rate:.0%}",
+        "Reliability breakdown:",
     ]
+    for label, count in sorted(reliability_counts.items(), key=lambda item: item[1], reverse=True):
+        lines.append(f"  - {label}: {count}")
+    lines.append("Tool usage:")
     for name, count in sorted(tool_usage.items(), key=lambda item: item[1], reverse=True):
         lines.append(f"  - {name}: {count}")
     if issue_kinds:

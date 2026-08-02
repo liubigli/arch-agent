@@ -94,6 +94,7 @@ def _load_system_prompt() -> str:
 
 class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
+    reasoning: str | None
 
 
 _THINK_SUFFIX = (
@@ -117,8 +118,17 @@ def create_agent(ctx: SceneContext, model: str = "llama3", capture_reasoning: bo
         return {"messages": [llm_with_tools.invoke(messages)]}
 
     def think_node(state: AgentState) -> AgentState:
+        # Deliberately does NOT return "messages": this call is unbound from
+        # tools and, when told to reason without answering, models often
+        # ignore that and write a full (sometimes hallucinated) answer
+        # anyway. Injecting that into the real message history would make
+        # the next, tool-bound call see a conversation that already looks
+        # answered and stop calling tools. So the reasoning is kept in a
+        # side-channel state field instead, never replayed back to the model.
         messages = [SystemMessage(content=_load_system_prompt() + _THINK_SUFFIX)] + state["messages"]
-        return {"messages": [llm.invoke(messages)]}
+        response = llm.invoke(messages)
+        content = response.content.strip() if isinstance(response.content, str) else ""
+        return {"reasoning": content or None}
 
     graph = StateGraph(AgentState)
     graph.add_node("chat", chat_node)
@@ -210,20 +220,18 @@ def run_agent(ctx: SceneContext, model: str = "llama3", capture_reasoning: bool 
             print(f"\nAgent: {_format_llm_error(exc, model)}\n")
             continue
         messages = result["messages"]
+        reasoning = result.get("reasoning")
+        if reasoning:
+            print(f"\n[thinking] {reasoning}")
         _print_tool_reasoning(messages[previous_len:])
         print(f"\nAgent: {messages[-1].content}\n")
 
 
 def _print_tool_reasoning(new_messages: list[BaseMessage]) -> None:
-    last_index = len(new_messages) - 1
-    for index, message in enumerate(new_messages):
-        if not isinstance(message, AIMessage):
+    for message in new_messages:
+        if not isinstance(message, AIMessage) or not message.tool_calls:
             continue
         content = message.content.strip() if isinstance(message.content, str) else ""
-        if not message.tool_calls:
-            if content and index != last_index:
-                print(f"\n[thinking] {content}")
-            continue
         if content:
             print(f"\n[reasoning] {content}")
         for tool_call in message.tool_calls:
