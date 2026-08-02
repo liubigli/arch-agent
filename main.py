@@ -80,6 +80,14 @@ def parse_args() -> argparse.Namespace:
         "--model", default="llama3",
         help="Ollama model name (must be pulled via 'ollama pull <model>')",
     )
+    group2.add_argument(
+        "--capture-reasoning", action="store_true",
+        help=(
+            "Add a preliminary, tool-unbound reasoning step before each tool "
+            "call and print it as '[thinking] ...'. Roughly doubles LLM "
+            "calls per turn."
+        ),
+    )
 
     return parser.parse_args()
 
@@ -148,7 +156,7 @@ def main() -> None:
     )
 
     ctx = run_pipeline(params)
-    run_agent(ctx, model=args.model)
+    run_agent(ctx, model=args.model, capture_reasoning=args.capture_reasoning)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ import re
 from typing import Annotated
 import unicodedata
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
@@ -13,7 +13,7 @@ from typing_extensions import TypedDict
 
 from pathlib import Path
 
-from .evaluation_answers import answer_evaluation_prompt
+from .benchmark.reference_answers import answer_evaluation_prompt
 from .pipeline.pipeline import SceneContext
 from .pipeline.relationships import (
     Relationship,
@@ -96,7 +96,17 @@ class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
 
-def create_agent(ctx: SceneContext, model: str = "llama3"):
+_THINK_SUFFIX = (
+    "\n\n## Preliminary reasoning step\n"
+    "This message is a preliminary reasoning step, not the final answer and "
+    "not a tool call. In 2-4 short sentences, explain what information this "
+    "question needs and which tool(s) from the tool-calling map (§6) "
+    "you plan to call and why. Do not call a tool in this message and do "
+    "not answer the question yet."
+)
+
+
+def create_agent(ctx: SceneContext, model: str = "llama3", capture_reasoning: bool = False):
     tools = create_scene_tools(ctx)
     llm = ChatOllama(model=model, base_url=_OLLAMA_BASE_URL, temperature=0.0)
     llm_with_tools = llm.bind_tools(tools)
@@ -106,18 +116,27 @@ def create_agent(ctx: SceneContext, model: str = "llama3"):
         messages = [SystemMessage(content=_load_system_prompt())] + state["messages"]
         return {"messages": [llm_with_tools.invoke(messages)]}
 
+    def think_node(state: AgentState) -> AgentState:
+        messages = [SystemMessage(content=_load_system_prompt() + _THINK_SUFFIX)] + state["messages"]
+        return {"messages": [llm.invoke(messages)]}
+
     graph = StateGraph(AgentState)
     graph.add_node("chat", chat_node)
     graph.add_node("tools", tool_node)
-    graph.add_edge(START, "chat")
+    if capture_reasoning:
+        graph.add_node("think", think_node)
+        graph.add_edge(START, "think")
+        graph.add_edge("think", "chat")
+    else:
+        graph.add_edge(START, "chat")
     graph.add_conditional_edges("chat", tools_condition)
     graph.add_edge("tools", "chat")
 
     return graph.compile()
 
 
-def run_agent(ctx: SceneContext, model: str = "llama3") -> None:
-    agent = create_agent(ctx, model=model)
+def run_agent(ctx: SceneContext, model: str = "llama3", capture_reasoning: bool = False) -> None:
+    agent = create_agent(ctx, model=model, capture_reasoning=capture_reasoning)
 
     print("=" * 60)
     print("  Architectural Scene Agent  |  model: " + model)
@@ -183,6 +202,7 @@ def run_agent(ctx: SceneContext, model: str = "llama3") -> None:
             continue
 
         messages.append(HumanMessage(content=user_input))
+        previous_len = len(messages)
         try:
             result = agent.invoke({"messages": messages})
         except Exception as exc:
@@ -190,7 +210,25 @@ def run_agent(ctx: SceneContext, model: str = "llama3") -> None:
             print(f"\nAgent: {_format_llm_error(exc, model)}\n")
             continue
         messages = result["messages"]
+        _print_tool_reasoning(messages[previous_len:])
         print(f"\nAgent: {messages[-1].content}\n")
+
+
+def _print_tool_reasoning(new_messages: list[BaseMessage]) -> None:
+    last_index = len(new_messages) - 1
+    for index, message in enumerate(new_messages):
+        if not isinstance(message, AIMessage):
+            continue
+        content = message.content.strip() if isinstance(message.content, str) else ""
+        if not message.tool_calls:
+            if content and index != last_index:
+                print(f"\n[thinking] {content}")
+            continue
+        if content:
+            print(f"\n[reasoning] {content}")
+        for tool_call in message.tool_calls:
+            args = ", ".join(f"{key}={value!r}" for key, value in tool_call.get("args", {}).items())
+            print(f"[tool call] {tool_call['name']}({args})")
 
 
 def _try_answer_deterministic(

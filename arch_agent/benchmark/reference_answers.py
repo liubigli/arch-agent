@@ -4,15 +4,15 @@ from collections import Counter
 from typing import TYPE_CHECKING, Callable
 import unicodedata
 
-from .evaluation_prompts import PROMPT_EXAMPLES
-from .pipeline.relationships import (
+from ..pipeline.relationships import (
     RELATIONSHIP_LAYER_NAMES,
     RELATIONSHIP_LAYER_ORDER,
     architectural_role,
 )
+from .reference_prompts import PROMPT_EXAMPLES
 
 if TYPE_CHECKING:
-    from .pipeline.pipeline import SceneContext
+    from ..pipeline.pipeline import SceneContext
 
 
 AnswerBuilder = Callable[["SceneContext"], str]
