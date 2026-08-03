@@ -154,6 +154,14 @@ object names — never pass them to find_relationships as if they were
 object identifiers. Use list_relationships or find_relationship_anomalies
 as shown above.
 
+Important disambiguation: get_object_info, find_relationships, and
+list_relationships take object_name (exact instance id, e.g. "column_2")
+and semantic_label (a class, e.g. "column") as separate, mutually
+exclusive parameters. If the user names a class/type in general (e.g.
+"le colonne", "the columns") rather than one specific instance, pass it
+via semantic_label — never guess or truncate an instance id like
+"column" when you mean the whole class.
+
 ## 7. Domain notes for cultural heritage / historical buildings
 - Typology hypotheses (e.g., Romanesque, Gothic, Renaissance, Baroque,
   vernacular) are inferences, never observations. State them only in the

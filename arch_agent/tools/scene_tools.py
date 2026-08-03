@@ -1,5 +1,5 @@
 from collections import Counter
-from typing import Optional
+from typing import Literal, Optional
 
 import networkx as nx
 from langchain_core.tools import tool
@@ -40,6 +40,13 @@ def _classify_area(label_set: set) -> str:
 
 
 def create_scene_tools(ctx: SceneContext) -> list:
+    # Scene-specific enum: only classes actually present in this scene are
+    # valid values, so the model cannot pass a semantic class where an exact
+    # object id is expected (or vice versa) without the schema rejecting it.
+    _class_names = tuple(
+        sorted({obj["semantic_label"] for obj in ctx.objects.values()})
+    ) or tuple(_all_semantic_classes())
+    SemanticLabel = Literal[_class_names]
 
     @tool
     def count_objects(semantic_label: Optional[str] = None) -> str:
@@ -128,59 +135,83 @@ def create_scene_tools(ctx: SceneContext) -> list:
         return "\n".join(lines)
 
     @tool
-    def get_object_info(object_name: str) -> str:
-        """Get detailed geometric and semantic information about a specific object.
+    def get_object_info(
+        object_name: Optional[str] = None,
+        semantic_label: Optional[SemanticLabel] = None,
+    ) -> str:
+        """Get detailed geometric and semantic information about object(s).
+
+        Provide exactly one of the two:
+        - object_name: one exact object id (e.g. 'column_2') for a single instance.
+        - semantic_label: a semantic class (e.g. 'column') to get info for
+          every instance of that class.
 
         Args:
-            object_name: Name of the object, e.g. 'wall_0' or 'column_2'.
+            object_name: Exact object id for a single instance.
+            semantic_label: Semantic class to report across all its instances.
         """
-        if object_name not in ctx.objects:
-            sample = ", ".join(list(ctx.objects.keys())[:8])
-            return f"Object '{object_name}' not found. Examples: {sample}"
+        target_names = _resolve_target_names(ctx, object_name, semantic_label)
+        if isinstance(target_names, str):
+            return target_names
 
-        obj = ctx.objects[object_name]
-        feat = ctx.features.get(object_name, {})
-        c = obj["centroid"]
-        dims = obj["bounds"]["max"] - obj["bounds"]["min"]
-        lines = [
-            f"Object: {object_name}",
-            f"  Semantic class  : {obj['semantic_label']}",
-            f"  Element type    : {feat.get('element_type', 'unknown')}",
-            f"  Point count     : {obj['point_count']:,}",
-            f"  Centroid (x,y,z): ({c[0]:.2f}, {c[1]:.2f}, {c[2]:.2f})",
-            f"  Dimensions (m)  : {dims[0]:.2f} x {dims[1]:.2f} x {dims[2]:.2f}",
-            f"  Volume (AABB)   : {feat.get('volume', 0):.3f} m3",
-            f"  Surface area    : {feat.get('surface_area', 0):.3f} m2",
-            f"  Height          : {feat.get('height', 0):.2f} m",
-            f"  Compactness     : {feat.get('compactness', 0):.4f}",
-        ]
-        annotations = getattr(ctx, "object_annotations", {}).get(object_name, [])
-        if annotations:
-            lines.append(f"  CSV annotations : {len(annotations)}")
-        return "\n".join(lines)
+        blocks = []
+        for name in target_names:
+            obj = ctx.objects[name]
+            feat = ctx.features.get(name, {})
+            c = obj["centroid"]
+            dims = obj["bounds"]["max"] - obj["bounds"]["min"]
+            lines = [
+                f"Object: {name}",
+                f"  Semantic class  : {obj['semantic_label']}",
+                f"  Element type    : {feat.get('element_type', 'unknown')}",
+                f"  Point count     : {obj['point_count']:,}",
+                f"  Centroid (x,y,z): ({c[0]:.2f}, {c[1]:.2f}, {c[2]:.2f})",
+                f"  Dimensions (m)  : {dims[0]:.2f} x {dims[1]:.2f} x {dims[2]:.2f}",
+                f"  Volume (AABB)   : {feat.get('volume', 0):.3f} m3",
+                f"  Surface area    : {feat.get('surface_area', 0):.3f} m2",
+                f"  Height          : {feat.get('height', 0):.2f} m",
+                f"  Compactness     : {feat.get('compactness', 0):.4f}",
+            ]
+            annotations = getattr(ctx, "object_annotations", {}).get(name, [])
+            if annotations:
+                lines.append(f"  CSV annotations : {len(annotations)}")
+            blocks.append("\n".join(lines))
+        return "\n\n".join(blocks)
 
     @tool
-    def find_relationships(object_name: str) -> str:
-        """Find all relationships involving a given object, using the L1->L2->L3 cascade.
+    def find_relationships(
+        object_name: Optional[str] = None,
+        semantic_label: Optional[SemanticLabel] = None,
+    ) -> str:
+        """Find all relationships involving object(s), using the L1->L2->L3 cascade.
+
+        Provide exactly one of the two:
+        - object_name: one exact object id (e.g. 'column_2') for a single instance.
+        - semantic_label: a semantic class (e.g. 'column') to aggregate the
+          relationships of every instance of that class.
 
         Args:
-            object_name: Name of the object to query.
+            object_name: Exact object id for a single instance.
+            semantic_label: Semantic class to query across all its instances.
         """
-        if object_name not in ctx.objects:
-            sample = ", ".join(list(ctx.objects.keys())[:8])
-            return f"Object '{object_name}' not found. Examples: {sample}"
+        target_names = _resolve_target_names(ctx, object_name, semantic_label)
+        if isinstance(target_names, str):
+            return target_names
+        target_set = set(target_names)
 
         lines = [
-            f"Relationships for '{object_name}':",
+            f"Relationships for {len(target_names)} object(s): {', '.join(target_names)}",
             "Cascade: L1/geometric -> L2/structural -> L3/mereological",
         ]
         total = 0
 
         for level, relationships in _relationship_layers_in_order(ctx):
-            filtered = [
-                rel for rel in relationships
-                if rel[0] == object_name or rel[1] == object_name
-            ]
+            seen = set()
+            filtered = []
+            for rel in relationships:
+                if (rel[0] in target_set or rel[1] in target_set) and rel not in seen:
+                    seen.add(rel)
+                    filtered.append(rel)
             total += len(filtered)
             layer_name = RELATIONSHIP_LAYER_NAMES.get(level, level)
             lines.append(f"  {level}/{layer_name}: {len(filtered)}")
@@ -241,17 +272,26 @@ def create_scene_tools(ctx: SceneContext) -> list:
         level: str = "all",
         relationship_type: Optional[str] = None,
         object_name: Optional[str] = None,
+        semantic_label: Optional[SemanticLabel] = None,
         limit: int = 30,
     ) -> str:
         """List relationships from the scene graph.
+
+        object_name and semantic_label are both optional and mutually
+        exclusive: use object_name for one exact instance (e.g. 'column_2'),
+        or semantic_label to match relationships for every instance of a
+        class (e.g. 'column'). Omit both to list all relationships.
 
         Args:
             level: Relationship level to list: 'L1', 'L2', 'L3', 'geometric',
                 'structural', 'mereological', or 'all'.
             relationship_type: Optional relationship type, e.g. 'above',
                 'supports', 'is_opening_in'.
-            object_name: Optional object name. If provided, only relationships
-                where this object is source or target are listed.
+            object_name: Optional exact object id. If provided, only
+                relationships where this object is source or target are listed.
+            semantic_label: Optional semantic class. If provided, only
+                relationships where an instance of this class is source or
+                target are listed.
             limit: Maximum number of relationship rows to return. Default is
                 intentionally small to avoid flooding the chat.
         """
@@ -259,9 +299,17 @@ def create_scene_tools(ctx: SceneContext) -> list:
         if layer_key is None:
             valid = "all, L1/geometric, L2/structural, L3/mereological"
             return f"Unknown relationship level '{level}'. Valid values: {valid}."
+        if object_name and semantic_label:
+            return "Provide only one of object_name or semantic_label, not both."
         if object_name and object_name not in ctx.objects:
-            sample = ", ".join(list(ctx.objects.keys())[:8])
-            return f"Object '{object_name}' not found. Examples: {sample}"
+            return _object_not_found_message(object_name, ctx.objects)
+
+        target_set = None
+        if semantic_label:
+            target_set = {
+                name for name, obj in ctx.objects.items()
+                if obj["semantic_label"] == semantic_label
+            }
 
         layers = (
             _relationship_layers_in_order(ctx)
@@ -275,6 +323,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
                     rel for rel in relationships
                     if (not relationship_type or rel[2] == relationship_type)
                     and (not object_name or rel[0] == object_name or rel[1] == object_name)
+                    and (target_set is None or rel[0] in target_set or rel[1] in target_set)
                 ],
             )
             for layer, relationships in layers
@@ -292,6 +341,8 @@ def create_scene_tools(ctx: SceneContext) -> list:
             title += f" | type={relationship_type}"
         if object_name:
             title += f" | object={object_name}"
+        if semantic_label:
+            title += f" | class={semantic_label}"
 
         type_counts = Counter(rel[2] for rel in filtered)
         if type_counts:
@@ -895,9 +946,53 @@ def _xy_area(bounds: dict) -> float:
     return float(max(dims[0], 0.0) * max(dims[1], 0.0))
 
 
+def _resolve_target_names(ctx, object_name: Optional[str], semantic_label: Optional[str]):
+    """Resolve object_name/semantic_label into a list of exact object names.
+
+    Returns a list[str] on success, or an error message string on failure —
+    callers should check `isinstance(result, str)` and return it as-is.
+    """
+    if not object_name and not semantic_label:
+        return "Provide either object_name or semantic_label."
+    if object_name and semantic_label:
+        return "Provide only one of object_name or semantic_label, not both."
+    if object_name:
+        if object_name not in ctx.objects:
+            return _object_not_found_message(object_name, ctx.objects)
+        return [object_name]
+    names = sorted(
+        name for name, obj in ctx.objects.items()
+        if obj["semantic_label"] == semantic_label
+    )
+    if not names:
+        return f"No objects found for semantic_label {semantic_label!r}."
+    return names
+
+
 def _object_not_found_message(object_name: str, objects: dict) -> str:
-    sample = ", ".join(list(objects.keys())[:8])
-    return f"Object '{object_name}' not found. Examples: {sample}"
+    matches = sorted(
+        name for name, obj in objects.items()
+        if obj["semantic_label"] == object_name or name.startswith(f"{object_name}_")
+    )
+    if matches:
+        shown = ", ".join(matches[:8])
+        more = f" (+{len(matches) - 8} more)" if len(matches) > 8 else ""
+        return (
+            f"'{object_name}' is a semantic class, not an object id. "
+            f"Matching instances: {shown}{more}. Use one of these exact names."
+        )
+
+    sample: list[str] = []
+    seen_labels: set[str] = set()
+    for name, obj in objects.items():
+        label = obj["semantic_label"]
+        if label in seen_labels:
+            continue
+        seen_labels.add(label)
+        sample.append(name)
+        if len(sample) >= 8:
+            break
+    return f"Object '{object_name}' not found. Examples (one per class): {', '.join(sample)}"
 
 
 def _distance_metrics(obj_a: dict, obj_b: dict) -> dict:
