@@ -1,11 +1,7 @@
 ﻿from collections import Counter
-<<<<<<< Updated upstream
-from typing import Literal, Optional
-=======
 import re
-from typing import Optional
+from typing import Literal, Optional
 import unicodedata
->>>>>>> Stashed changes
 
 import networkx as nx
 from langchain_core.tools import tool
@@ -571,9 +567,10 @@ def create_scene_tools(ctx: SceneContext) -> list:
         class (e.g. 'column'). Omit both to list all relationships.
 
         Args:
-            level: Relationship level to list: 'L1', 'L3', 'geometric',
-                'structural_evidence', 'structural', 'csv', 'L3', 'cidoc', 'kg', or 'all'.
-                'L2' returns CSV detail metadata because L2 is not a graph.
+            level: Relationship/evidence level to list: 'L1', 'geometric',
+                'structural_evidence', 'structural', 'csv', 'L2', 'L3',
+                'cidoc', 'kg', or 'all'. 'L2' returns CSV detail metadata.
+                'L3' returns CIDOC/KG metadata summary, not old mereological edges.
             relationship_type: Optional relationship type, e.g. 'above',
                 'supports', 'is_opening_in'.
             object_name: Optional exact object id. If provided, only
@@ -588,15 +585,14 @@ def create_scene_tools(ctx: SceneContext) -> list:
         if layer_key is None:
             valid = "all, L1/geometric, structural_evidence from CSV, L2/CSV detail, L3/CIDOC-KG"
             return f"Unknown relationship level '{level}'. Valid values: {valid}."
-<<<<<<< Updated upstream
         object_name = _clean_optional(object_name)
         semantic_label = _clean_optional(semantic_label)
         if object_name and semantic_label:
             return "Provide only one of object_name or semantic_label, not both."
-=======
         if layer_key == "L2_DETAIL":
             return _l2_detail_tool_summary(ctx)
->>>>>>> Stashed changes
+        if layer_key == "L3_KG_DETAIL":
+            return _l3_kg_tool_summary(ctx)
         if object_name and object_name not in ctx.objects:
             return _object_not_found_message(object_name, ctx.objects)
 
@@ -608,9 +604,9 @@ def create_scene_tools(ctx: SceneContext) -> list:
             }
 
         layers = (
-            _relationship_layers_in_order(ctx)
+            _relationship_layers_with_csv_evidence(ctx)
             if layer_key == "all"
-            else [(layer_key, ctx.relationship_layers.get(layer_key, []))]
+            else [(layer_key, _relationships_for_layer(ctx, layer_key))]
         )
         filtered_by_layer = [
             (
@@ -950,7 +946,8 @@ def create_scene_tools(ctx: SceneContext) -> list:
 
         if relationship_type:
             matches = [
-                rel for rel in ctx.relationships
+                rel for _, relationships in _relationship_layers_with_csv_evidence(ctx)
+                for rel in relationships
                 if len(rel) >= 3 and rel[2] == relationship_type
             ]
             lines.append(f"Relationships of type '{relationship_type}': {len(matches)}")
@@ -1216,6 +1213,22 @@ def _relationship_layers_in_order(ctx: SceneContext) -> list[tuple[str, list]]:
     ]
 
 
+def _relationship_layers_with_csv_evidence(ctx: SceneContext) -> list[tuple[str, list]]:
+    layers = _relationship_layers_in_order(ctx)
+    structural = _structural_evidence_relationships(ctx)
+    if structural:
+        layers.append(("structural_evidence", structural))
+    return layers
+
+
+def _relationships_for_layer(ctx: SceneContext, layer_key: str) -> list:
+    if layer_key == "structural_evidence":
+        return _structural_evidence_relationships(ctx)
+    if layer_key == "L3_KG_DETAIL":
+        return []
+    return ctx.relationship_layers.get(layer_key, [])
+
+
 def _relationship_layer_key(level: str) -> str | None:
     normalized = (level or "all").strip().lower()
     aliases = {
@@ -1232,9 +1245,12 @@ def _relationship_layer_key(level: str) -> str | None:
         "structure": "structural_evidence",
         "structural_evidence": "structural_evidence",
         "support_evidence": "structural_evidence",
-        "l3": "L3",
-        "mereological": "L3",
-        "composition": "L3",
+        "l3": "L3_KG_DETAIL",
+        "cidoc": "L3_KG_DETAIL",
+        "kg": "L3_KG_DETAIL",
+        "knowledge_graph": "L3_KG_DETAIL",
+        "mereological": "L3_KG_DETAIL",
+        "composition": "L3_KG_DETAIL",
     }
     return aliases.get(normalized)
 
@@ -1252,6 +1268,19 @@ def _l2_detail_tool_summary(ctx: SceneContext) -> str:
         f"unmatched CSV rows: {unmatched}. "
         "Use get_object_annotation for scene/object descriptions, material, "
         "typology, function, and notes."
+    )
+
+
+def _l3_kg_tool_summary(ctx: SceneContext) -> str:
+    matched = sum(
+        len(entries)
+        for entries in getattr(ctx, "object_annotations", {}).values()
+    )
+    annotated_objects = len(getattr(ctx, "object_annotations", {}))
+    return (
+        "L3 is CIDOC/knowledge graph, not the old mereological relationship graph. "
+        f"It can be built from CSV/user metadata: {matched} matched annotations "
+        f"on {annotated_objects} objects. Use the L3 graph viewer/export tools for CIDOC/KG edges."
     )
 
 
@@ -1460,33 +1489,5 @@ def _relationship_anomalies(ctx: SceneContext) -> list[str]:
                 )
             if rel_type == "has_part" and src_label == "floor" and tgt_label == "door_window":
                 issues.append(f"{src} -> {tgt}: floor should not contain a door_window.")
-            if rel_type == "supports" and not supports_label_pair(src_label, tgt_label):
-                issues.append(
-                    f"{src} -> {tgt}: invalid supports for {src_label}->{tgt_label}."
-                )
-            if rel_type == "rests_on" and not supports_label_pair(tgt_label, src_label):
-                issues.append(
-                    f"{src} -> {tgt}: invalid rests_on for {src_label}->{tgt_label}."
-                )
-            if rel_level == "mereological":
-                if rel_type == "has_part":
-                    expected = mereological_relation_type(tgt_label, src_label)
-                    if expected is None:
-                        issues.append(
-                            f"{src} -> {tgt}: has_part has no inverse class rule "
-                            f"for {src_label}->{tgt_label}."
-                        )
-                else:
-                    expected = mereological_relation_type(src_label, tgt_label)
-                    if expected is None:
-                        issues.append(
-                            f"{src} -> {tgt}: invalid mereological relation '{rel_type}' "
-                            f"for {src_label}->{tgt_label}."
-                        )
-                    elif rel_type != expected:
-                        issues.append(
-                            f"{src} -> {tgt}: expected '{expected}', got '{rel_type}' "
-                            f"for {src_label}->{tgt_label}."
-                        )
 
     return issues
