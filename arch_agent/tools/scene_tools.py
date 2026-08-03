@@ -5,7 +5,7 @@ import networkx as nx
 from langchain_core.tools import tool
 
 from ..pipeline.pipeline import SceneContext, run_pipeline
-from ..pipeline.graph import analyze_scene_graph
+from ..pipeline.graph import ANNOTATION_NODE_FIELDS, analyze_scene_graph
 from ..pipeline.relationships import (
     RELATIONSHIP_LAYER_NAMES,
     RELATIONSHIP_LAYER_ORDER,
@@ -47,6 +47,23 @@ def create_scene_tools(ctx: SceneContext) -> list:
         sorted({obj["semantic_label"] for obj in ctx.objects.values()})
     ) or tuple(_all_semantic_classes())
     SemanticLabel = Literal[_class_names]
+
+    @tool
+    def list_semantic_labels() -> str:
+        """List the semantic labels (SemanticLabel values) present in this scene's graph.
+
+        Use this to discover the valid semantic_label values for this scene
+        before calling other tools that accept a semantic_label parameter.
+        """
+        if not _class_names:
+            return "No semantic labels found in the scene graph."
+        counts = Counter(obj["semantic_label"] for obj in ctx.objects.values())
+        lines = [f"Semantic labels present in the scene graph: {len(_class_names)}"]
+        lines.extend(
+            f"  - {label}: {counts.get(label, 0)} instance(s)"
+            for label in _class_names
+        )
+        return "\n".join(lines)
 
     @tool
     def count_objects(semantic_label: Optional[str] = None) -> str:
@@ -154,6 +171,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
         if isinstance(target_names, str):
             return target_names
 
+        graph = ctx.scene_graph if ctx.scene_graph is not None else _combined_graph(ctx)
         blocks = []
         for name in target_names:
             obj = ctx.objects[name]
@@ -175,6 +193,11 @@ def create_scene_tools(ctx: SceneContext) -> list:
             annotations = getattr(ctx, "object_annotations", {}).get(name, [])
             if annotations:
                 lines.append(f"  CSV annotations : {len(annotations)}")
+            node_data = graph.nodes.get(name, {}) if graph is not None else {}
+            for field in ANNOTATION_NODE_FIELDS:
+                value = node_data.get(field)
+                if value:
+                    lines.append(f"  {field.capitalize():<16}: {value}")
             blocks.append("\n".join(lines))
         return "\n\n".join(blocks)
 
@@ -266,6 +289,54 @@ def create_scene_tools(ctx: SceneContext) -> list:
         if not annotations:
             return f"No CSV annotation is associated with {object_name}."
         return _format_annotations_for_object(ctx, object_name, annotations)
+
+    @tool
+    def get_object_semantic_details(
+        semantic_label: SemanticLabel,
+        object_name: str,
+    ) -> str:
+        """Get CSV-derived material, typology, function, and description for one object.
+
+        Requires both the object's semantic_label and its exact object_name,
+        e.g. semantic_label='column', object_name='column_2'. The response
+        also includes the object's centroid and box-center position, so
+        material/typology/function/description can be correlated with where
+        the object sits in the scene.
+
+        Args:
+            semantic_label: Semantic class of the object, e.g. 'column'.
+            object_name: Exact object id, e.g. 'column_2'.
+        """
+        if object_name not in ctx.objects:
+            return _object_not_found_message(object_name, ctx.objects)
+        obj = ctx.objects[object_name]
+        if obj["semantic_label"] != semantic_label:
+            return (
+                f"'{object_name}' has semantic_label '{obj['semantic_label']}', "
+                f"not '{semantic_label}'."
+            )
+
+        graph = ctx.scene_graph if ctx.scene_graph is not None else _combined_graph(ctx)
+        node_data = graph.nodes.get(object_name, {}) if graph is not None else {}
+        c = obj["centroid"]
+        box_center = (obj["bounds"]["min"] + obj["bounds"]["max"]) / 2.0
+
+        lines = [
+            f"Semantic details for {object_name} ({semantic_label}):",
+            f"  Centroid: ({c[0]:.3f}, {c[1]:.3f}, {c[2]:.3f})",
+            f"  Box center: ({box_center[0]:.3f}, {box_center[1]:.3f}, {box_center[2]:.3f})",
+        ]
+        found = False
+        for field in ("material", "typology", "function", "description"):
+            value = node_data.get(field)
+            if value:
+                found = True
+                lines.append(f"  {field}: {value}")
+        if not found:
+            lines.append(
+                "  No material/typology/function/description annotation for this object."
+            )
+        return "\n".join(lines)
 
     @tool
     def list_relationships(
@@ -730,11 +801,13 @@ def create_scene_tools(ctx: SceneContext) -> list:
         )
 
     return [
+        list_semantic_labels,
         count_objects,
         list_objects,
         list_object_geometry,
         get_object_info,
         get_object_annotation,
+        get_object_semantic_details,
         find_relationships,
         list_relationships,
         find_relationship_anomalies,

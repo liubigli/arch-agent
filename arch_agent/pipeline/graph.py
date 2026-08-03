@@ -1,19 +1,30 @@
 import networkx as nx
 
 
-def build_scene_graph(objects: dict, relationships: list, features: dict) -> nx.DiGraph:
+ANNOTATION_NODE_FIELDS = ("material", "typology", "function", "description")
+
+
+def build_scene_graph(
+    objects: dict,
+    relationships: list,
+    features: dict,
+    object_annotations: dict | None = None,
+) -> nx.DiGraph:
     G = nx.DiGraph()
+    object_annotations = object_annotations or {}
 
     for obj_name, obj_data in objects.items():
         node_attrs = features.get(obj_name, {}).copy()
         node_attrs.pop("semantic_label", None)
         node_attrs.pop("centroid", None)
+        annotation_attrs = _annotation_node_attrs(object_annotations.get(obj_name, []))
         G.add_node(
             obj_name,
             semantic_label=obj_data["semantic_label"],
             centroid=obj_data["centroid"].tolist(),
             point_count=obj_data["point_count"],
             **node_attrs,
+            **annotation_attrs,
         )
 
     for relationship in relationships:
@@ -24,12 +35,31 @@ def build_scene_graph(objects: dict, relationships: list, features: dict) -> nx.
     return G
 
 
-def build_scene_graphs(objects: dict, relationship_layers: dict, features: dict) -> dict[str, nx.DiGraph]:
+def build_scene_graphs(
+    objects: dict,
+    relationship_layers: dict,
+    features: dict,
+    object_annotations: dict | None = None,
+) -> dict[str, nx.DiGraph]:
     return {
-        level: build_scene_graph(objects, relationships, features)
+        level: build_scene_graph(objects, relationships, features, object_annotations)
         for level, relationships in relationship_layers.items()
         if level != "all"
     }
+
+
+def _annotation_node_attrs(annotations: list[dict]) -> dict:
+    """Collapse matched CSV annotation rows into scene-graph node attributes."""
+    attrs = {}
+    for field in ANNOTATION_NODE_FIELDS:
+        values = []
+        for annotation in annotations:
+            value = annotation.get(field)
+            if value and value not in values:
+                values.append(str(value))
+        if values:
+            attrs[field] = "; ".join(values)
+    return attrs
 
 
 def _add_relation(G: nx.DiGraph, src: str, tgt: str, relationship: str, level: str) -> None:

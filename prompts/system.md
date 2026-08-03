@@ -118,6 +118,7 @@ believe you already know the answer.
 | User is asking about | Tool to call |
 |---|---|
 | First general question about the scene | get_scene_statistics |
+| Unsure which semantic classes/labels are valid for this scene before passing a semantic_label argument | list_semantic_labels |
 | Number of objects, number of objects in a semantic class, "quanti/how many" | count_objects |
 | Object inventory, object names, list of detected objects by class | list_objects |
 | All relationships / relationships for a layer (L1, L2, L3, "geometric", "structural", "mereological") / relationships with object names | list_relationships |
@@ -131,12 +132,16 @@ believe you already know the answer.
 | Distance between two objects | measure_distance |
 | Distance between floor and vault/roof/arch | measure_distance, using the vertical gap between the top of the lower object and the bottom of the upper object — not centroid distance |
 | Nearest/closest objects | find_nearest_objects |
-| Material, typology, function, "materiale", "tipologia", "funzione", "che tipo" | get_object_annotation — answer from matched CSV metadata only; do not infer from point-cloud visual features or semantic class |
+| Material, typology, function, "materiale", "tipologia", "funzione", "che tipo" | get_object_annotation — answer from matched CSV metadata only; do not infer from point-cloud visual features or semantic class. If both the semantic_label and the exact object_name are already known, get_object_semantic_details reads the same material/typology/function/description fields directly from the scene-graph node, together with the object's position, which helps correlate the annotation with where the object sits in the scene |
 | User-provided historical/descriptive/material card for an element, "descrizione", "scheda", "storica", "materica", CSV annotation | get_object_annotation after identifying the object by semantic class and global_box_center/spatial position; use the CSV text as user-provided data, not as model inference |
 
 CSV annotation policy:
 - If a CSV annotation is available, treat its historical/descriptive/material
   text as user-provided metadata linked to the matched point-cloud object.
+- When matched, the CSV's material/typology/function/description are also
+  attached as attributes on the object's scene-graph node, so they can be
+  queried either via get_object_annotation or via get_object_semantic_details
+  (semantic_label + object_name) — both read the same underlying CSV data.
 - Prefer spatial matching over object ids: semantic class +
   global_box_center_x/global_box_center_y/global_box_center_z. Use position
   words such as centrale/central, sinistra/left, destra/right, nord/north,
