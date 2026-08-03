@@ -90,13 +90,8 @@ def run_pipeline(params: PipelineParams) -> SceneContext:
     relationships = relationship_layers["all"]
     print(f"      -> {len(relationships)} relationships found")
 
-<<<<<<< Updated upstream
-    print("[5/5] Building stratified scene graphs")
-    scene_graphs = build_scene_graphs(objects, relationship_layers, features, object_annotations)
-=======
     print("[5/5] Building scene graphs (L1 now; L3 CIDOC/KG is built from CSV when requested)")
-    scene_graphs = build_scene_graphs(objects, relationship_layers, features)
->>>>>>> Stashed changes
+    scene_graphs = build_scene_graphs(objects, relationship_layers, features, object_annotations)
     scene_graph = scene_graphs.get("L1")
     graph_summary = " | ".join(
         f"{level}: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges"

@@ -405,39 +405,31 @@ def create_scene_tools(ctx: SceneContext) -> list:
         return "\n\n".join(blocks)
 
     @tool
-<<<<<<< Updated upstream
     def find_relationships(
         object_name: Optional[str] = None,
         semantic_label: Optional[SemanticLabel] = None,
     ) -> str:
-        """Find all relationships involving object(s), using the L1->L2->L3 cascade.
+        """Find all relationships/evidence involving object(s).
 
         Provide exactly one of the two:
         - object_name: one exact object id (e.g. 'column_2') for a single instance.
         - semantic_label: a semantic class (e.g. 'column') to aggregate the
           relationships of every instance of that class.
-=======
-    def find_relationships(object_name: str) -> str:
-        """Find all relationships involving a given object.
->>>>>>> Stashed changes
 
         Args:
             object_name: Exact object id for a single instance.
             semantic_label: Semantic class to query across all its instances.
         """
+        object_name = _clean_optional(object_name)
+        semantic_label = _clean_optional(semantic_label)
         target_names = _resolve_target_names(ctx, object_name, semantic_label)
         if isinstance(target_names, str):
             return target_names
         target_set = set(target_names)
 
         lines = [
-<<<<<<< Updated upstream
-            f"Relationships for {len(target_names)} object(s): {', '.join(target_names)}",
+            f"Relationships/evidence for {len(target_names)} object(s): {', '.join(target_names)}",
             "Cascade: L1/geometric -> L2 CSV/user metadata -> L3 CIDOC/KG. L2 is not a graph.",
-=======
-            f"Relationships for '{object_name}':",
-            "Cascade: L1/geometric -> structural_evidence -> L3/mereological. L2 is CSV detail, not a graph.",
->>>>>>> Stashed changes
         ]
         total = 0
 
