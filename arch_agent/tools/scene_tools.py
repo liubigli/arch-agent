@@ -299,6 +299,8 @@ def create_scene_tools(ctx: SceneContext) -> list:
         if layer_key is None:
             valid = "all, L1/geometric, L2/structural, L3/mereological"
             return f"Unknown relationship level '{level}'. Valid values: {valid}."
+        object_name = _clean_optional(object_name)
+        semantic_label = _clean_optional(semantic_label)
         if object_name and semantic_label:
             return "Provide only one of object_name or semantic_label, not both."
         if object_name and object_name not in ctx.objects:
@@ -946,12 +948,28 @@ def _xy_area(bounds: dict) -> float:
     return float(max(dims[0], 0.0) * max(dims[1], 0.0))
 
 
+def _clean_optional(value: Optional[str]) -> Optional[str]:
+    """Normalize an "unset" argument.
+
+    Some local models (via Ollama tool-calling) emit the literal string
+    "None"/"null" instead of omitting an optional argument or passing JSON
+    null; treat those the same as not provided.
+    """
+    if value is None:
+        return None
+    if value.strip().lower() in ("none", "null", ""):
+        return None
+    return value
+
+
 def _resolve_target_names(ctx, object_name: Optional[str], semantic_label: Optional[str]):
     """Resolve object_name/semantic_label into a list of exact object names.
 
     Returns a list[str] on success, or an error message string on failure —
     callers should check `isinstance(result, str)` and return it as-is.
     """
+    object_name = _clean_optional(object_name)
+    semantic_label = _clean_optional(semantic_label)
     if not object_name and not semantic_label:
         return "Provide either object_name or semantic_label."
     if object_name and semantic_label:
