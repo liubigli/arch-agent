@@ -8,3 +8,58 @@ git pull
 
 #per vedere le modifiche locali
 git status
+
+
+#entrare nella repo da WSL
+cd ~/LG_project/arch-agent
+
+
+#avviare l'agente sulla scena4_VAL con DBSCAN nella pipeline
+pixi run python main.py "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --model llama3.1 --eps 0.5 --min-samples 15
+
+
+#avviare l'agente sulla scena4_VAL con CSV associato
+pixi run python main.py "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --model llama3.1 --annotation-csv "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL_annotations.csv"
+
+
+#visualizzare la point cloud per classi semantiche con Open3D
+pixi run view-pointcloud "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --point-size 3
+
+
+#visualizzare l'output DBSCAN con un colore per ogni oggetto/cluster
+pixi run view-dbscan "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --eps 0.5 --min-samples 15 --point-size 3
+
+
+#visualizzare l'output DBSCAN con bounding box degli oggetti
+pixi run view-dbscan "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --eps 0.5 --min-samples 15 --with-boxes --point-size 3
+
+
+#visualizzare prima la point cloud semantica e poi DBSCAN
+#chiudere la prima finestra Open3D per aprire la seconda
+pixi run view-pointcloud-both "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --eps 0.5 --min-samples 15 --point-size 3
+
+
+#visualizzare una singola classe nella point cloud semantica
+pixi run view-pointcloud "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --classes wall --point-size 3
+
+
+#visualizzare una singola classe nell'output DBSCAN
+pixi run view-dbscan "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --classes wall --with-boxes --point-size 5
+
+
+#visualizzare piu classi specifiche
+pixi run view-dbscan "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --classes column wall moldings --with-boxes --point-size 4
+
+
+#modificare la grandezza dei punti
+#valori piccoli per scene dense: 1 o 2
+#valori grandi per oggetti piccoli: 5, 8, 10
+pixi run view-pointcloud "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --point-size 8
+
+
+#caricare meno punti per test veloci
+pixi run view-pointcloud "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --sample-n 5000 --point-size 3
+
+
+#caricare tutti i punti della scena
+pixi run view-pointcloud "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --sample-n 0 --point-size 1
