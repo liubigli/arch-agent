@@ -9,7 +9,7 @@ class RunReport:
     params: dict          # eps, min_samples, distance_threshold, sample_n
     objects_per_class: dict
     total_objects: int
-    total_relationships: dict  # {"L1": n, "L2": n, "L3": n}
+    total_relationships: dict  # {"L1": n, "structural_evidence": n, "L3": n}
     elapsed_pipeline_s: float
     llm_model: str
 

@@ -229,7 +229,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample-n", type=int, default=150_000, help="Max points to load; use 0 for all points.")
     parser.add_argument("--eps", type=float, default=0.5, help="DBSCAN epsilon.")
     parser.add_argument("--min-samples", type=int, default=15, help="DBSCAN min_samples.")
-    parser.add_argument("--point-size", type=float, default=3.0, help="Open3D point size.")
+    parser.add_argument("--point-size", type=float, default=1.5, help="Open3D point size.")
     parser.add_argument("--with-boxes", action="store_true", help="Show DBSCAN AABB boxes in cluster mode.")
     parser.add_argument("--axes", action="store_true", help="Show a coordinate frame.")
     return parser.parse_args()

@@ -1,4 +1,4 @@
-from collections import Counter, defaultdict
+﻿from collections import Counter, defaultdict
 import os
 import re
 from typing import Annotated
@@ -156,8 +156,6 @@ def run_agent(ctx: SceneContext, model: str = "llama3", capture_reasoning: bool 
     print("  Type 'quit' to exit.\n")
 
     messages: list[BaseMessage] = []
-    last_semantic_label: str | None = None
-
     while True:
         try:
             user_input = input("You: ").strip()
@@ -169,46 +167,6 @@ def run_agent(ctx: SceneContext, model: str = "llama3", capture_reasoning: bool 
             print("Goodbye!")
             break
         if not user_input:
-            continue
-
-        question_parts = _split_user_questions(user_input)
-        if len(question_parts) > 1:
-            combined_answers: list[str] = []
-            handled_all = True
-            current_default_label = last_semantic_label
-
-            for index, question in enumerate(question_parts, start=1):
-                question_text = _normalize_text(question)
-                question_labels = _extract_semantic_labels(question_text)
-                answer = _try_answer_deterministic(
-                    ctx,
-                    question,
-                    default_label=current_default_label,
-                )
-                if answer is None:
-                    handled_all = False
-                    break
-                if question_labels:
-                    current_default_label = question_labels[0]
-                combined_answers.append(f"Risposta {index}:\n{answer}")
-
-            if handled_all:
-                last_semantic_label = current_default_label
-                combined_text = "\n\n".join(combined_answers)
-                print(f"\nAgent: {combined_text}\n")
-                continue
-
-        text = _normalize_text(user_input)
-        labels_in_input = _extract_semantic_labels(text)
-        deterministic_answer = _try_answer_deterministic(
-            ctx,
-            user_input,
-            default_label=last_semantic_label,
-        )
-        if labels_in_input:
-            last_semantic_label = labels_in_input[0]
-        if deterministic_answer is not None:
-            print(f"\nAgent: {deterministic_answer}\n")
             continue
 
         messages.append(HumanMessage(content=user_input))
@@ -252,10 +210,10 @@ def _try_answer_deterministic(
         if requested_facts is not None:
             return _format_grounded_answer(
                 observed=requested_facts,
-                relations=_phrase(
-                    language,
-                    it="Nessuna relazione L1/L2/L3 usata: risposta basata su feature geometriche.",
-                    en="No L1/L2/L3 relationship used: answer based on geometric features.",
+            relations=_phrase(
+                language,
+                it="Nessuna relazione di grafo usata: risposta basata su feature geometriche.",
+                en="No graph relationship used: answer based on geometric features.",
                 ),
                 inference=_phrase(
                     language,
@@ -339,8 +297,8 @@ def _try_answer_deterministic(
             observed=_format_relationship_inconsistencies(ctx),
             relations=_phrase(
                 language,
-                it="Controllo incrociato su L1/geometric, L2/structural e L3/mereological.",
-                en="Cross-check across L1/geometric, L2/structural, and L3/mereological.",
+                it="Controllo su L1/geometric e sulle eventuali evidenze CSV/utente; L3 è CIDOC/KG.",
+                en="Check across L1/geometric and optional CSV/user evidence; L3 is CIDOC/KG.",
             ),
             inference=_phrase(
                 language,
@@ -428,8 +386,8 @@ def _try_answer_deterministic(
             observed=requested_facts,
             relations=_phrase(
                 language,
-                it="Nessuna relazione L1/L2/L3 usata: risposta basata su conteggi, classi o feature.",
-                en="No L1/L2/L3 relationship used: answer based on counts, classes, or features.",
+                it="Nessuna relazione di grafo usata: risposta basata su conteggi, classi o feature.",
+                en="No graph relationship used: answer based on counts, classes, or features.",
             ),
             inference=_phrase(
                 language,
@@ -576,23 +534,202 @@ def _relationship_usage_text(level: str, language: str = "it") -> str:
             it="L1/geometric: near, adjacent_to, above, below.",
             en="L1/geometric: near, adjacent_to, above, below.",
         )
-    if level == "L2":
+    if level == "structural_evidence":
         return _phrase(
             language,
-            it="L2/structural: supports, rests_on, filtrate dalle regole architettoniche.",
-            en="L2/structural: supports, rests_on, filtered by architectural rules.",
+            it="Evidenza strutturale: supports/rests_on letti solo da CSV o da descrizioni esplicite fornite dall'utente. Non e un grafo L2.",
+            en="Structural evidence: supports/rests_on read only from CSV or explicit user-provided descriptions. This is not an L2 graph.",
+        )
+    if level == "L2_DETAIL":
+        return _phrase(
+            language,
+            it="L2: dettaglio descrittivo da CSV su scena e oggetti; non contiene archi di grafo.",
+            en="L2: descriptive CSV detail for scene and objects; it does not contain graph edges.",
         )
     if level == "L3":
         return _phrase(
             language,
-            it="L3/mereological: has_part, is_opening_in, is_ornament_of, is_attached_to e relazioni parte-tutto.",
-            en="L3/mereological: has_part, is_opening_in, is_ornament_of, is_attached_to, and part-whole relations.",
+            it="L3/CIDOC knowledge graph: grafo semantico costruito da CSV/user metadata; non e il vecchio layer mereologico.",
+            en="L3/CIDOC knowledge graph: semantic graph built from CSV/user metadata; it is not the old mereological layer.",
         )
     return _phrase(
         language,
-        it="Cascata completa: prima L1/geometric, poi L2/structural, infine L3/mereological.",
-        en="Full cascade: first L1/geometric, then L2/structural, finally L3/mereological.",
+        it="Cascata: L1/geometric -> L2 CSV/user metadata -> L3 CIDOC/KG.",
+        en="Cascade: L1/geometric -> L2 CSV/user metadata -> L3 CIDOC/KG.",
     )
+
+def _structural_evidence_relationships(ctx: SceneContext) -> list[Relationship]:
+    """Return supports/rests_on evidence stated in matched CSV annotations."""
+    object_annotations = getattr(ctx, "object_annotations", {})
+    if not object_annotations:
+        return []
+
+    relationships: list[Relationship] = []
+    seen = set()
+
+    for object_name, annotations in object_annotations.items():
+        source_label = ctx.objects.get(object_name, {}).get("semantic_label")
+        if not source_label:
+            continue
+        for annotation in annotations:
+            for target_label in _csv_support_target_labels(annotation, source_label):
+                for target_name in _objects_with_semantic_label(ctx, target_label):
+                    item = (object_name, target_name, "supports", "csv_structural_evidence")
+                    if item not in seen:
+                        relationships.append(item)
+                        seen.add(item)
+                    inverse = (target_name, object_name, "rests_on", "csv_structural_evidence")
+                    if inverse not in seen:
+                        relationships.append(inverse)
+                        seen.add(inverse)
+
+            for source_support_label in _csv_supported_by_labels(annotation, source_label):
+                for source_name in _objects_with_semantic_label(ctx, source_support_label):
+                    item = (source_name, object_name, "supports", "csv_structural_evidence")
+                    if item not in seen:
+                        relationships.append(item)
+                        seen.add(item)
+                    inverse = (object_name, source_name, "rests_on", "csv_structural_evidence")
+                    if inverse not in seen:
+                        relationships.append(inverse)
+                        seen.add(inverse)
+
+    return relationships
+
+
+def _csv_support_target_labels(annotation: dict, source_label: str) -> list[str]:
+    explicit_text = _annotation_first_value(
+        annotation,
+        (
+            "supports",
+            "supporta",
+            "sostiene",
+            "sorregge",
+            "support_target",
+            "supported_object",
+            "supported_class",
+            "structural_supports",
+        ),
+    )
+    labels = _labels_mentioned_in_annotation_value(explicit_text, exclude={source_label})
+    if labels:
+        return labels
+
+    descriptive_text = " ".join(
+        str(annotation.get(key, "") or "")
+        for key in (
+            "function",
+            "funzione",
+            "description",
+            "descrizione",
+            "historical_description",
+            "descrizione_storica",
+            "notes",
+            "note",
+            "structural_evidence",
+            "evidenza_strutturale",
+        )
+    )
+    normalized = _normalize_text(descriptive_text)
+    support_terms = (
+        "support",
+        "sostegn",
+        "sosten",
+        "sorregg",
+        "regge",
+        "portante",
+        "load-bearing",
+        "load bearing",
+    )
+    if not any(term in normalized for term in support_terms):
+        return []
+    return _labels_mentioned_in_annotation_value(descriptive_text, exclude={source_label})
+
+
+def _csv_supported_by_labels(annotation: dict, source_label: str) -> list[str]:
+    explicit_text = _annotation_first_value(
+        annotation,
+        (
+            "supported_by",
+            "supportato_da",
+            "sostenuto_da",
+            "sorretta_da",
+            "sorretto_da",
+            "rests_on",
+            "resting_on",
+            "appoggia_su",
+            "appoggiato_su",
+            "structural_supported_by",
+        ),
+    )
+    return _labels_mentioned_in_annotation_value(explicit_text, exclude={source_label})
+
+
+def _labels_mentioned_in_annotation_value(value: object | None, exclude: set[str] | None = None) -> list[str]:
+    if value is None:
+        return []
+    normalized = _normalize_text(str(value))
+    exclude = exclude or set()
+    labels: list[str] = []
+    for alias, label in _SEMANTIC_ALIASES:
+        if label in exclude or label in labels:
+            continue
+        if re.search(rf"\b{re.escape(alias)}\b", normalized):
+            labels.append(label)
+    return labels
+
+
+def _l2_csv_detail_summary(ctx: SceneContext, language: str = "it") -> str:
+    matched = sum(
+        len(entries)
+        for entries in getattr(ctx, "object_annotations", {}).values()
+    )
+    annotated_objects = len(getattr(ctx, "object_annotations", {}))
+    unmatched = len(getattr(ctx, "unmatched_annotations", []))
+    if language == "en":
+        return (
+            "L2 is CSV descriptive detail, not a graph. "
+            f"Matched annotations: {matched} on {annotated_objects} objects; "
+            f"unmatched CSV rows: {unmatched}."
+        )
+    return (
+        "L2 è dettaglio descrittivo da CSV, non un grafo. "
+        f"Annotazioni associate: {matched} su {annotated_objects} oggetti; "
+        f"righe CSV non associate: {unmatched}."
+    )
+
+
+def _l3_kg_summary(ctx: SceneContext, language: str = "it") -> str:
+    matched = sum(
+        len(entries)
+        for entries in getattr(ctx, "object_annotations", {}).values()
+    )
+    annotated_objects = len(getattr(ctx, "object_annotations", {}))
+    if language == "en":
+        return (
+            "L3 is CIDOC/knowledge graph, not the old mereological relationship layer. "
+            f"It can be built from CSV/user metadata: {matched} matched annotations "
+            f"on {annotated_objects} objects."
+        )
+    return (
+        "L3 e CIDOC/knowledge graph, non il vecchio layer di relazioni mereologiche. "
+        f"Puo essere costruito da metadati CSV/utente: {matched} annotazioni associate "
+        f"su {annotated_objects} oggetti."
+    )
+
+
+def _relationships_for_query_level(ctx: SceneContext, level: str) -> list[Relationship]:
+    if level == "structural_evidence":
+        return _structural_evidence_relationships(ctx)
+    if level == "L3":
+        return []
+    return list(ctx.relationship_layers.get(level, []))
+
+
+def _relationship_levels_for_query(level: str) -> tuple[str, ...]:
+    if level == "all":
+        return tuple(RELATIONSHIP_LAYER_ORDER) + ("structural_evidence",)
+    return (level,)
 
 
 def _format_requested_facts(
@@ -876,11 +1013,11 @@ def _try_answer_above_support_question(text: str, language: str = "it") -> str |
     )
     if not (has_above and asks_support):
         return None
-    return _phrase(
-        language,
-        it="No. `above` è solo una relazione L1 geometrica; il supporto strutturale richiede una relazione L2 `supports`.",
-        en="No. `above` is only an L1 geometric relation; structural support requires an L2 `supports` relation.",
-    )
+        return _phrase(
+            language,
+            it="No. `above` è solo una relazione L1 geometrica; il supporto strutturale richiede evidenza `supports` coerente.",
+            en="No. `above` is only an L1 geometric relation; structural support requires coherent `supports` evidence.",
+        )
 
 
 def _try_answer_dominant_element(
@@ -1563,40 +1700,42 @@ def _try_answer_opening_in_wall_question(
     if subject_label is None:
         return None
 
-    if subject_label != "door_window":
-        alternate = mereological_relation_type(subject_label, "wall")
-        if language == "en":
-            if alternate:
-                return (
-                    f"No. `{subject_label}` is not an opening in `wall`; "
-                    f"the applicable L3 relation is `{alternate}`."
-                )
-            return f"No. `{subject_label}` is not defined as an opening in `wall`."
-        if alternate:
-            return (
-                f"No. `{subject_label}` non è un'apertura nel `wall`; "
-                f"la relazione L3 applicabile è `{alternate}`."
-            )
-        return f"No. `{subject_label}` non è definito come apertura nel `wall`."
+    subject_names = _objects_with_semantic_label(ctx, subject_label)
+    wall_names = _objects_with_semantic_label(ctx, "wall")
 
-    relationships = [
-        rel for rel in ctx.relationship_layers.get("L3", [])
-        if rel[2] == "is_opening_in"
-        and ctx.objects.get(rel[0], {}).get("semantic_label") == "door_window"
-        and ctx.objects.get(rel[1], {}).get("semantic_label") == "wall"
-    ]
-    if relationships:
+    if subject_label != "door_window":
         return _phrase(
             language,
-            it=f"Sì. Trovate {len(relationships)} relazioni L3 `is_opening_in` door_window -> wall.",
-            en=f"Yes. Found {len(relationships)} L3 `is_opening_in` relationships door_window -> wall.",
+            it=(
+                f"No. `{subject_label}` non e una classe di apertura nel `wall`. "
+                "L3 ora e CIDOC/KG: un legame oggetto-muro va letto da CSV/KG, non dal vecchio layer mereologico."
+            ),
+            en=(
+                f"No. `{subject_label}` is not an opening class in `wall`. "
+                "L3 is now CIDOC/KG: object-wall links must come from CSV/KG, not the old mereological layer."
+            ),
         )
+
+    if not subject_names or not wall_names:
+        return _phrase(
+            language,
+            it=f"No nella scena: door_window={len(subject_names)}, wall={len(wall_names)}.",
+            en=f"No in this scene: door_window={len(subject_names)}, wall={len(wall_names)}.",
+        )
+
     return _phrase(
         language,
-        it="No. La regola door_window -> wall esiste, ma nella scena non ci sono relazioni L3 `is_opening_in`.",
-        en="No. The door_window -> wall rule exists, but the scene has no L3 `is_opening_in` relationships.",
+        it=(
+            f"Si, come ruolo di classe: `door_window` e una apertura; nella scena ci sono "
+            f"{len(subject_names)} door_window e {len(wall_names)} wall. "
+            "Il collegamento ai singoli wall deve venire da CSV/L3 CIDOC-KG, non da L1."
+        ),
+        en=(
+            f"Yes, as a class role: `door_window` is an opening; this scene has "
+            f"{len(subject_names)} door_window and {len(wall_names)} wall objects. "
+            "Links to specific walls must come from CSV/L3 CIDOC-KG, not from L1."
+        ),
     )
-
 
 def _asks_if_opening_in_wall(text: str) -> bool:
     opening_terms = (
@@ -1622,69 +1761,20 @@ def _try_answer_mereological_between_classes(
     if not _asks_for_mereological_relation(text):
         return None
 
-    strict_opening_answer = _try_answer_strict_opening_mereology(
-        ctx,
-        labels,
-        text,
-        language=language,
-    )
-    if strict_opening_answer is not None:
-        return strict_opening_answer
-
-    pair = _mereological_label_pair(labels)
-    if pair is None:
-        return None
-
-    child_label, parent_label, relation_type = pair
-    child_names = _objects_with_semantic_label(ctx, child_label)
-    parent_names = _objects_with_semantic_label(ctx, parent_label)
-    relationships = [
-        rel for rel in ctx.relationship_layers.get("L3", [])
-        if rel[2] == relation_type
-        and ctx.objects.get(rel[0], {}).get("semantic_label") == child_label
-        and ctx.objects.get(rel[1], {}).get("semantic_label") == parent_label
-    ]
-
-    if relationships:
-        return _phrase(
-            language,
-            it=(
-                f"Sì. Trovate {len(relationships)} relazioni L3 `{relation_type}` "
-                f"{child_label} -> {parent_label}."
-            ),
-            en=(
-                f"Yes. Found {len(relationships)} L3 `{relation_type}` relationships "
-                f"{child_label} -> {parent_label}."
-            ),
-        )
-
-    if not child_names or not parent_names:
-        return _phrase(
-            language,
-            it=(
-                f"No nella scena. La regola esiste ({child_label} -> {parent_label}: "
-                f"`{relation_type}`), ma qui ci sono {len(child_names)} `{child_label}` "
-                f"e {len(parent_names)} `{parent_label}`."
-            ),
-            en=(
-                f"No in this scene. The rule exists ({child_label} -> {parent_label}: "
-                f"`{relation_type}`), but here there are {len(child_names)} `{child_label}` "
-                f"and {len(parent_names)} `{parent_label}`."
-            ),
-        )
-
+    label_text = " e ".join(f"`{label}`" for label in labels[:2])
     return _phrase(
         language,
         it=(
-            f"No. La regola lo ammette ({child_label} -> {parent_label}: "
-            f"`{relation_type}`), ma il grafo corrente non contiene relazioni L3 corrispondenti."
+            f"Non lo confermo come relazione L3 calcolata tra {label_text}. "
+            "L3 non e piu un layer mereologico: ora e CIDOC/KG. "
+            "Questa relazione deve essere esplicitata nel CSV o nel knowledge graph."
         ),
         en=(
-            f"No. The rule allows it ({child_label} -> {parent_label}: "
-            f"`{relation_type}`), but the current graph has no matching L3 relationship."
+            f"I cannot confirm it as a computed L3 relationship between {label_text}. "
+            "L3 is no longer a mereological layer: it is now CIDOC/KG. "
+            "This relationship must be explicitly encoded in the CSV or knowledge graph."
         ),
     )
-
 
 def _try_answer_strict_opening_mereology(
     ctx: SceneContext,
@@ -1694,38 +1784,7 @@ def _try_answer_strict_opening_mereology(
 ) -> str | None:
     if not _asks_if_opening_in_wall(text):
         return None
-
-    subject = next((label for label in labels if label != "wall"), None)
-    if subject != "door_window":
-        subject_text = f"`{subject}`" if subject else "questa classe"
-        if language == "en":
-            return (
-                f"No. {subject_text} is not an opening in `wall`; "
-                "only `door_window -> wall` can have L3 `is_opening_in`."
-            )
-        return (
-            f"No. {subject_text} non è un'apertura nel `wall`; "
-            "solo `door_window -> wall` può avere L3 `is_opening_in`."
-        )
-
-    relationships = [
-        rel for rel in ctx.relationship_layers.get("L3", [])
-        if rel[2] == "is_opening_in"
-        and ctx.objects.get(rel[0], {}).get("semantic_label") == "door_window"
-        and ctx.objects.get(rel[1], {}).get("semantic_label") == "wall"
-    ]
-    if relationships:
-        return _phrase(
-            language,
-            it=f"Sì. Trovate {len(relationships)} relazioni L3 `is_opening_in` door_window -> wall.",
-            en=f"Yes. Found {len(relationships)} L3 `is_opening_in` relationships door_window -> wall.",
-        )
-    return _phrase(
-        language,
-        it="No. La regola `door_window -> wall` esiste, ma nella scena non ci sono relazioni L3 `is_opening_in`.",
-        en="No. The `door_window -> wall` rule exists, but the scene has no L3 `is_opening_in` relationships.",
-    )
-
+    return _try_answer_opening_in_wall_question(ctx, text, language=language)
 
 def _asks_for_mereological_relation(text: str) -> bool:
     terms = (
@@ -1768,7 +1827,7 @@ def _try_answer_load_bearing_elements(
     support_surfaces = _objects_with_roles(ctx, {"support_surface"})
     non_bearing = _objects_with_roles(ctx, {"ornamental", "opening", "circulation", "unknown"})
     supports = [
-        rel for rel in ctx.relationship_layers.get("L2", [])
+        rel for rel in _structural_evidence_relationships(ctx)
         if rel[2] == "supports"
     ]
 
@@ -1778,14 +1837,14 @@ def _try_answer_load_bearing_elements(
                 "Potentially load-bearing by ontology: " + _format_role_groups(ctx, structural),
                 "Support surfaces: " + _format_role_groups(ctx, support_surfaces),
                 "Non-load-bearing or undetermined: " + _format_role_groups(ctx, non_bearing),
-                f"L2 supports relationships found: {len(supports)}.",
+                f"CSV/user structural evidence found: {len(supports)} supports relationships.",
             ]),
-            relations="Architectural roles from the ontology; L2/structural supports only as supporting evidence.",
+            relations="Architectural roles from the prompt ontology; supports/rests_on are accepted only as CSV/user structural evidence, not as an L2 graph.",
             inference=(
                 "Columns, walls, vaults, roofs, and arches are treated as structural classes. "
                 "This is not a mechanical verification of load transfer."
             ),
-            confidence="medium: role is semantic; actual load transfer depends on L2 relations and segmentation.",
+            confidence="medium: role is semantic; actual load transfer depends on CSV/user evidence and segmentation.",
             language=language,
         )
 
@@ -1794,14 +1853,14 @@ def _try_answer_load_bearing_elements(
             "Potenzialmente portanti da ontologia: " + _format_role_groups(ctx, structural),
             "Superfici di appoggio: " + _format_role_groups(ctx, support_surfaces),
             "Non portanti o non determinati: " + _format_role_groups(ctx, non_bearing),
-            f"Relazioni L2 supports trovate: {len(supports)}.",
+            f"Evidenze strutturali CSV/utente `supports` trovate: {len(supports)}.",
         ]),
-        relations="Ruoli architettonici dall'ontologia; L2/structural supports solo come evidenza di supporto.",
+        relations="Ruoli architettonici dall'ontologia del prompt; supports/rests_on valgono solo come evidenza strutturale CSV/utente, non come grafo L2.",
         inference=(
             "Column, wall, vault, roof e arch sono trattati come classi strutturali. "
             "Non è una verifica meccanica del trasferimento dei carichi."
         ),
-        confidence="media: il ruolo è semantico; la portanza effettiva dipende da L2 e segmentazione.",
+        confidence="media: il ruolo è semantico; la portanza effettiva dipende dall'evidenza CSV/utente e dalla segmentazione.",
         language=language,
     )
 
@@ -2062,7 +2121,7 @@ def _try_answer_support_between_classes(
         lower_label, upper_label = labels[0], labels[1]
 
     supports = [
-        rel for rel in ctx.relationship_layers.get("L2", [])
+        rel for rel in _structural_evidence_relationships(ctx)
         if rel[2] == "supports"
         and ctx.objects.get(rel[0], {}).get("semantic_label") == lower_label
         and ctx.objects.get(rel[1], {}).get("semantic_label") == upper_label
@@ -2071,23 +2130,21 @@ def _try_answer_support_between_classes(
     if supports:
         return _phrase(
             language,
-            it=f"Sì: {len(supports)} relazioni L2 supports {lower_label} -> {upper_label}.",
-            en=f"Yes: {len(supports)} L2 supports relationships {lower_label} -> {upper_label}.",
-        )
-
-    if supports_label_pair(lower_label, upper_label):
-        return _phrase(
-            language,
-            it=f"No: nessuna relazione L2 supports {lower_label} -> {upper_label} nella scena.",
-            en=f"No: no L2 supports relationship {lower_label} -> {upper_label} in the scene.",
+            it=f"Si: nel CSV/descrizione esplicita ci sono {len(supports)} evidenze `supports` {lower_label} -> {upper_label}.",
+            en=f"Yes: CSV/explicit description contains {len(supports)} `supports` evidence relationships {lower_label} -> {upper_label}.",
         )
 
     return _phrase(
         language,
-        it=f"No: l'ontologia non ammette {lower_label} -> {upper_label} come supporto.",
-        en=f"No: the ontology does not allow {lower_label} -> {upper_label} as a support relation.",
+        it=(
+            f"No: nessuna evidenza CSV/descrittiva `supports` {lower_label} -> {upper_label} "
+            "nella scena. Non lo ricavo da L1 o da regole geometriche."
+        ),
+        en=(
+            f"No: no CSV/descriptive `supports` evidence {lower_label} -> {upper_label} "
+            "in the scene. I do not derive it from L1 or geometric rules."
+        ),
     )
-
 
 def _try_answer_open_support_question(
     ctx: SceneContext,
@@ -2104,14 +2161,14 @@ def _try_answer_open_support_question(
     label = labels[0]
     if _asks_what_subject_supports(text):
         supports = [
-            rel for rel in ctx.relationship_layers.get("L2", [])
+            rel for rel in _structural_evidence_relationships(ctx)
             if rel[2] == "supports"
             and ctx.objects.get(rel[0], {}).get("semantic_label") == label
         ]
         return _format_open_support_brief(ctx, label, supports, direction="out", language=language)
     if _is_passive_support_question(text) or _asks_what_supports_subject(text):
         supports = [
-            rel for rel in ctx.relationship_layers.get("L2", [])
+            rel for rel in _structural_evidence_relationships(ctx)
             if rel[2] == "supports"
             and ctx.objects.get(rel[1], {}).get("semantic_label") == label
         ]
@@ -2130,13 +2187,13 @@ def _format_open_support_brief(
         if direction == "out":
             return _phrase(
                 language,
-                it=f"{label} non supporta nessuna classe tramite relazioni L2.",
-                en=f"{label} does not support any class through L2 relationships.",
+                it=f"{label} non supporta nessuna classe secondo il CSV/descrizione esplicita.",
+                en=f"{label} does not support any class according to CSV/explicit description.",
             )
         return _phrase(
             language,
-            it=f"{label} non è supportato da nessuna classe tramite relazioni L2.",
-            en=f"{label} is not supported by any class through L2 relationships.",
+            it=f"{label} non è supportato da nessuna classe secondo il CSV/descrizione esplicita.",
+            en=f"{label} is not supported by any class according to CSV/explicit description.",
         )
 
     class_index = 1 if direction == "out" else 0
@@ -2151,13 +2208,13 @@ def _format_open_support_brief(
     if direction == "out":
         return _phrase(
             language,
-            it=f"{label} supporta: {summary} (L2 supports).",
-            en=f"{label} supports: {summary} (L2 supports).",
+            it=f"{label} supporta: {summary} (evidenza CSV/descrittiva `supports`).",
+            en=f"{label} supports: {summary} (CSV/descriptive `supports` evidence).",
         )
     return _phrase(
         language,
-        it=f"{label} è supportato da: {summary} (L2 supports).",
-        en=f"{label} is supported by: {summary} (L2 supports).",
+        it=f"{label} è supportato da: {summary} (evidenza CSV/descrittiva `supports`).",
+        en=f"{label} is supported by: {summary} (CSV/descriptive `supports` evidence).",
     )
 
 
@@ -2199,7 +2256,7 @@ def _asks_what_supports_subject(text: str) -> bool:
 def _format_support_targets_for_label(ctx: SceneContext, label: str) -> str:
     object_names = _objects_with_semantic_label(ctx, label)
     supports = [
-        rel for rel in ctx.relationship_layers.get("L2", [])
+        rel for rel in _structural_evidence_relationships(ctx)
         if rel[2] == "supports"
         and ctx.objects.get(rel[0], {}).get("semantic_label") == label
     ]
@@ -2215,7 +2272,7 @@ def _format_support_targets_for_label(ctx: SceneContext, label: str) -> str:
 def _format_support_sources_for_label(ctx: SceneContext, label: str) -> str:
     object_names = _objects_with_semantic_label(ctx, label)
     supports = [
-        rel for rel in ctx.relationship_layers.get("L2", [])
+        rel for rel in _structural_evidence_relationships(ctx)
         if rel[2] == "supports"
         and ctx.objects.get(rel[1], {}).get("semantic_label") == label
     ]
@@ -2241,7 +2298,7 @@ def _format_support_relationships(
     ]
     if not supports:
         relation_text = "in uscita" if direction == "out" else "in ingresso"
-        lines.append(f"Nessuna relazione L2 supports {relation_text} trovata.")
+        lines.append(f"Nessuna evidenza CSV/descrittiva `supports` {relation_text} trovata.")
         return "\n".join(lines)
 
     target_index = 1 if direction == "out" else 0
@@ -2249,13 +2306,13 @@ def _format_support_relationships(
         ctx.objects.get(rel[target_index], {}).get("semantic_label", "unknown")
         for rel in supports
     )
-    lines.append(f"Relazioni L2 supports trovate: {len(supports)}.")
+    lines.append(f"Evidenze CSV/descrittive `supports` trovate: {len(supports)}.")
     lines.append(
         "Classi coinvolte: "
         + ", ".join(f"{class_label}={count}" for class_label, count in sorted(class_counts.items()))
     )
     for src, tgt, _, _ in supports[:30]:
-        lines.append(f"  - {src} --[structural:supports]--> {tgt}")
+        lines.append(f"  - {src} --[structural_evidence:supports]--> {tgt}")
     if len(supports) > 30:
         lines.append(f"  ... {len(supports) - 30} non mostrate.")
     return "\n".join(lines)
@@ -2298,23 +2355,23 @@ def _try_answer_class_relationships(
             relations=_phrase(
                 language,
                 it=(
-                    "Cascata L1->L2->L3: filtro sulle relazioni che collegano "
+                    "Cascata L1 -> L2 CSV/user metadata -> L3 CIDOC/KG: filtro sulle evidenze che collegano "
                     f"solo `{label_a}` e `{label_b}`."
                 ),
                 en=(
-                    "L1->L2->L3 cascade: filter on relationships connecting "
+                    "Cascade L1 -> L2 CSV/user metadata -> L3 CIDOC/KG: filter on evidence connecting "
                     f"only `{label_a}` and `{label_b}`."
                 ),
             ),
             inference=_phrase(
                 language,
                 it=(
-                    "L1 descrive relazioni geometriche; solo L2 supports/rests_on "
-                    "viene trattato come evidenza strutturale."
+                    "L1 descrive relazioni geometriche; supports/rests_on sono "
+                    "evidenza strutturale solo se presenti in CSV/descrizione. L2 e dettaglio CSV, non grafo."
                 ),
                 en=(
-                    "L1 describes geometric relationships; only L2 supports/rests_on "
-                    "is treated as structural evidence."
+                    "L1 describes geometric relationships; supports/rests_on are "
+                    "structural evidence only when present in CSV/description. L2 is CSV detail, not a graph."
                 ),
             ),
             confidence=_phrase(
@@ -2352,11 +2409,11 @@ def _try_answer_class_relationships(
         relations=_phrase(
             language,
             it=(
-                "Cascata L1->L2->L3: riepilogo delle relazioni che coinvolgono "
+                "Cascata L1 -> L2 CSV/user metadata -> L3 CIDOC/KG: riepilogo delle evidenze che coinvolgono "
                 f"oggetti di classe '{label}', raggruppate per altra classe, tipo e direzione."
             ),
             en=(
-                "L1->L2->L3 cascade: summary of relationships involving "
+                "Cascade L1 -> L2 CSV/user metadata -> L3 CIDOC/KG: summary of evidence involving "
                 f"objects of class '{label}', grouped by other class, type, and direction."
             ),
         ),
@@ -2364,13 +2421,13 @@ def _try_answer_class_relationships(
             language,
             it=(
                 "Le relazioni L1 descrivono vicinanza, adiacenza e sopra/sotto; "
-                "solo L2 supports/rests_on viene trattato come evidenza strutturale. "
-                "L3, se presente, resta una relazione parte-tutto o di appartenenza."
+                "supports/rests_on sono evidenza strutturale solo se esplicitata in CSV/descrizione. "
+                "L3, se disponibile, e CIDOC/knowledge graph."
             ),
             en=(
                 "L1 relationships describe proximity, adjacency, and above/below; "
-                "only L2 supports/rests_on is treated as structural evidence. "
-                "L3, when present, remains a part-whole or belonging relationship."
+                "supports/rests_on are structural evidence only when explicit in CSV/description. "
+                "L3, when available, is CIDOC/knowledge graph."
             ),
         ),
         confidence=_phrase(
@@ -2427,9 +2484,9 @@ def _format_class_relationship_summary(
     counts: Counter[tuple[str, str, str, str, str]] = Counter()
     examples: dict[tuple[str, str, str, str, str], list[Relationship]] = defaultdict(list)
 
-    levels = RELATIONSHIP_LAYER_ORDER if level == "all" else (level,)
+    levels = _relationship_levels_for_query(level)
     for current_level in levels:
-        for relationship in ctx.relationship_layers.get(current_level, []):
+        for relationship in _relationships_for_query_level(ctx, current_level):
             src, tgt, rel_type, rel_level = relationship
             if relationship_type is not None and rel_type != relationship_type:
                 continue
@@ -2505,10 +2562,10 @@ def _format_class_relationship_details(
             en=f"No object of class '{label}' found in the scene.",
         )
 
-    levels = RELATIONSHIP_LAYER_ORDER if level == "all" else (level,)
+    levels = _relationship_levels_for_query(level)
     rows: list[Relationship] = []
     for current_level in levels:
-        for relationship in ctx.relationship_layers.get(current_level, []):
+        for relationship in _relationships_for_query_level(ctx, current_level):
             src, tgt, rel_type, _ = relationship
             if relationship_type is not None and rel_type != relationship_type:
                 continue
@@ -2683,10 +2740,10 @@ def _class_pair_relationship_rows(
     level: str = "all",
     relationship_type: str | None = None,
 ) -> list[Relationship]:
-    levels = RELATIONSHIP_LAYER_ORDER if level == "all" else (level,)
+    levels = _relationship_levels_for_query(level)
     rows: list[Relationship] = []
     for current_level in levels:
-        for relationship in ctx.relationship_layers.get(current_level, []):
+        for relationship in _relationships_for_query_level(ctx, current_level):
             src, tgt, rel_type, _ = relationship
             if relationship_type is not None and rel_type != relationship_type:
                 continue
@@ -2698,6 +2755,8 @@ def _class_pair_relationship_rows(
 
 
 def _relationship_layer_from_level(rel_level: str) -> str:
+    if rel_level == "csv_structural_evidence":
+        return "structural_evidence"
     for layer, name in RELATIONSHIP_LAYER_NAMES.items():
         if name == rel_level:
             return layer
@@ -3102,6 +3161,43 @@ def _asks_for_relationship_inconsistencies(text: str) -> bool:
 
 
 def _try_answer_relationship_layer_conflict(text: str, language: str = "it") -> str | None:
+    asks_l2_graph = "l2" in text and any(
+        term in text for term in ("graph", "grafo", "relationship", "relationships", "relazione", "relazioni", "structural", "struttural")
+    )
+    if asks_l2_graph:
+        return _phrase(
+            language,
+            it=(
+                "L2 non è un grafo e non contiene archi strutturali calcolati. "
+                "L2 è il livello di dettaglio descrittivo fornito dal CSV: descrizioni della scena, "
+                "degli oggetti specifici, materiale, tipologia, funzione, note ed eventuale evidenza "
+                "strutturale esplicita."
+            ),
+            en=(
+                "L2 is not a graph and does not contain computed structural edges. "
+                "L2 is the CSV descriptive-detail level: scene descriptions, object-specific "
+                "descriptions, material, typology, function, notes, and optional explicit structural evidence."
+            ),
+        )
+
+    asks_l3_mereological = "l3" in text and any(
+        term in text for term in ("mereolog", "has_part", "part_of", "is_opening_in", "is_ornament_of")
+    )
+    if asks_l3_mereological:
+        return _phrase(
+            language,
+            it=(
+                "L3 non è più un grafo mereologico. L3 ora è CIDOC/knowledge graph "
+                "costruito da CSV o descrizioni utente; has_part/is_opening_in/is_ornament_of "
+                "valgono solo se codificati nel KG."
+            ),
+            en=(
+                "L3 is no longer a mereological graph. L3 is now a CIDOC/knowledge graph "
+                "built from CSV or user descriptions; has_part/is_opening_in/is_ornament_of "
+                "count only if encoded in the KG."
+            ),
+        )
+
     asks_l1_structural = "l1" in text and any(
         term in text for term in ("structural", "strutturale", "strutturali")
     )
@@ -3111,12 +3207,12 @@ def _try_answer_relationship_layer_conflict(text: str, language: str = "it") -> 
             it=(
                 "Nessuna relazione strutturale è in L1. "
                 "L1 contiene solo relazioni geometriche (`near`, `adjacent_to`, `above`, `below`); "
-                "le relazioni strutturali sono in L2 (`supports`, `rests_on`)."
+                "`supports` e `rests_on` sono evidenza strutturale separata, non un grafo L2."
             ),
             en=(
                 "There are no structural relationships in L1. "
                 "L1 contains only geometric relationships (`near`, `adjacent_to`, `above`, `below`); "
-                "structural relationships are in L2 (`supports`, `rests_on`)."
+                "`supports` and `rests_on` are separate structural evidence, not an L2 graph."
             ),
         )
     return None
@@ -3146,8 +3242,10 @@ def _extract_relationship_level(text: str) -> str:
         return "L1"
     if "l1" in text or "geometric" in text or "geometrich" in text:
         return "L1"
-    if "l2" in text or "structural" in text or "struttural" in text:
-        return "L2"
+    if "l2" in text:
+        return "L2_DETAIL"
+    if "structural" in text or "struttural" in text:
+        return "structural_evidence"
     if "l3" in text or "mereolog" in text:
         return "L3"
     return "all"
@@ -3180,11 +3278,16 @@ def _format_relationship_type_summary(
     relationship_type: str | None = None,
     language: str = "it",
 ) -> str:
+    if level == "L2_DETAIL":
+        return _l2_csv_detail_summary(ctx, language=language)
+    if level == "L3":
+        return _l3_kg_summary(ctx, language=language)
+
     if level == "all":
         parts = []
-        for layer in RELATIONSHIP_LAYER_ORDER:
+        for layer in _relationship_levels_for_query(level):
             relationships = [
-                rel for rel in ctx.relationship_layers.get(layer, [])
+                rel for rel in _relationships_for_query_level(ctx, layer)
                 if relationship_type is None or rel[2] == relationship_type
             ]
             type_counts = Counter(rel_type for _, _, rel_type, _ in relationships)
@@ -3195,13 +3298,13 @@ def _format_relationship_type_summary(
             parts.append(f"{layer}/{RELATIONSHIP_LAYER_NAMES.get(layer, layer)}: {type_text}")
         suffix = _phrase(
             language,
-            it="L1 è geometrico; non implica supporto strutturale.",
-            en="L1 is geometric; it does not imply structural support.",
+            it="L1 e geometrico; l'evidenza strutturale viene solo da CSV/utente; L2 e CSV descrittivo; L3 e CIDOC/KG.",
+            en="L1 is geometric; structural evidence comes only from CSV/user metadata; L2 is CSV detail; L3 is CIDOC/KG.",
         )
         return "; ".join(parts) + f". {suffix}"
 
     relationships = [
-        rel for rel in ctx.relationship_layers.get(level, [])
+        rel for rel in _relationships_for_query_level(ctx, level)
         if relationship_type is None or rel[2] == relationship_type
     ]
     layer_name = RELATIONSHIP_LAYER_NAMES.get(level, level)
@@ -3226,6 +3329,11 @@ def _format_relationships(
     relationship_type: str | None = None,
     limit: int = 30,
 ) -> str:
+    if level == "L2_DETAIL":
+        return _l2_csv_detail_summary(ctx)
+    if level == "L3":
+        return _l3_kg_summary(ctx)
+
     if level == "all":
         return _format_relationships_cascade(
             ctx,
@@ -3234,10 +3342,11 @@ def _format_relationships(
         )
 
     relationships = [
-        rel for rel in ctx.relationship_layers.get(level, [])
+        rel for rel in _relationships_for_query_level(ctx, level)
         if relationship_type is None or rel[2] == relationship_type
     ]
-    lines = [f"Relazioni {level}: {len(relationships)}"]
+    layer_name = RELATIONSHIP_LAYER_NAMES.get(level, level)
+    lines = [f"Relazioni {level}/{layer_name}: {len(relationships)}"]
     type_counts = Counter(rel_type for _, _, rel_type, _ in relationships)
     if type_counts:
         lines.append("Distribuzione per tipo:")
@@ -3265,21 +3374,21 @@ def _format_relationships_cascade(
     max_rows = max(1, min(int(limit), 1000))
     total = sum(
         len([
-            rel for rel in ctx.relationship_layers.get(level, [])
+            rel for rel in _relationships_for_query_level(ctx, level)
             if relationship_type is None or rel[2] == relationship_type
         ])
-        for level in RELATIONSHIP_LAYER_ORDER
+        for level in _relationship_levels_for_query("all")
     )
     lines = [
         f"Relazioni all: {total}",
-        "Ordine di analisi: L1/geometric -> L2/structural -> L3/mereological",
+        "Ordine di analisi: L1/geometric -> L2 CSV/user metadata -> L3 CIDOC/KG. L2 non e un grafo.",
     ]
 
     remaining = max_rows
     hidden = 0
-    for level in RELATIONSHIP_LAYER_ORDER:
+    for level in _relationship_levels_for_query("all"):
         relationships = [
-            rel for rel in ctx.relationship_layers.get(level, [])
+            rel for rel in _relationships_for_query_level(ctx, level)
             if relationship_type is None or rel[2] == relationship_type
         ]
         layer_name = RELATIONSHIP_LAYER_NAMES.get(level, level)
@@ -3340,10 +3449,10 @@ def _try_answer_above_below_elements(
         return _format_grounded_answer(
             observed="\n".join(observed_lines),
             relations="L1/geometric: `above` and `below`; `below` is the inverse of `above`.",
-            inference=(
-                "These relationships describe vertical order only. "
-                "They are not structural support unless matching L2 `supports` relationships exist."
-            ),
+        inference=(
+            "These relationships describe vertical order only. "
+            "They are not structural support unless coherent `supports` structural evidence exists."
+        ),
             confidence="high for vertical geometry; medium-low for structural interpretation.",
             language=language,
         )
@@ -3363,7 +3472,7 @@ def _try_answer_above_below_elements(
         relations="L1/geometric: `above` e `below`; `below` è l'inverso di `above`.",
         inference=(
             "Queste relazioni descrivono solo l'ordine verticale. "
-            "Non sono supporto strutturale senza relazioni L2 `supports` coerenti."
+            "Non sono supporto strutturale senza evidenze strutturali `supports` coerenti."
         ),
         confidence="alta per la geometria verticale; media-bassa per l'interpretazione strutturale.",
         language=language,
@@ -3414,13 +3523,13 @@ def _format_relationship_inconsistencies(ctx: SceneContext) -> str:
         ):
             issues.append(f"{a} e {b}: entrambi risultano 'below' l'uno rispetto all'altro.")
         if (
-            (a, b, "supports", "structural") in rel_set
-            and (b, a, "supports", "structural") in rel_set
+            (a, b, "supports", "structural_evidence") in rel_set
+            and (b, a, "supports", "structural_evidence") in rel_set
         ):
             issues.append(f"{a} e {b}: entrambi risultano supportarsi reciprocamente.")
         if (
-            (a, b, "rests_on", "structural") in rel_set
-            and (b, a, "rests_on", "structural") in rel_set
+            (a, b, "rests_on", "structural_evidence") in rel_set
+            and (b, a, "rests_on", "structural_evidence") in rel_set
         ):
             issues.append(f"{a} e {b}: entrambi risultano appoggiati l'uno sull'altro.")
 
@@ -3439,34 +3548,6 @@ def _format_relationship_inconsistencies(ctx: SceneContext) -> str:
                 issues.append(
                     f"{src} -> {tgt}: un floor non dovrebbe contenere una door_window."
                 )
-            if rel_type == "supports" and not supports_label_pair(src_label, tgt_label):
-                issues.append(
-                    f"{src} -> {tgt}: supports non ammessa per classi {src_label}->{tgt_label}."
-                )
-            if rel_type == "rests_on" and not supports_label_pair(tgt_label, src_label):
-                issues.append(
-                    f"{src} -> {tgt}: rests_on non ammessa per classi {src_label}->{tgt_label}."
-                )
-            if rel_level == "mereological":
-                if rel_type == "has_part":
-                    expected = mereological_relation_type(tgt_label, src_label)
-                    if expected is None:
-                        issues.append(
-                            f"{src} -> {tgt}: has_part senza regola mereologica inversa "
-                            f"per classi {src_label}->{tgt_label}."
-                        )
-                else:
-                    expected = mereological_relation_type(src_label, tgt_label)
-                    if expected is None:
-                        issues.append(
-                            f"{src} -> {tgt}: relazione mereologica '{rel_type}' non ammessa "
-                            f"per classi {src_label}->{tgt_label}."
-                        )
-                    elif rel_type != expected:
-                        issues.append(
-                            f"{src} -> {tgt}: relazione mereologica '{rel_type}' diversa "
-                            f"da quella attesa '{expected}' per classi {src_label}->{tgt_label}."
-                        )
             if rel_type == "is_placed_on" and not (src_label == "stairs" and tgt_label == "floor"):
                 suspicious.append(
                     f"{src} -> {tgt}: is_placed_on inattesa per classi {src_label}->{tgt_label}."
@@ -3503,14 +3584,17 @@ def _try_answer_scene_brief(
         f"{label}={count}" for label, count in sorted(class_counts.items())
     ) or "none"
     l1 = len(ctx.relationship_layers.get("L1", []))
-    l2 = len(ctx.relationship_layers.get("L2", []))
+    structural_evidence = len(_structural_evidence_relationships(ctx))
     l3 = len(ctx.relationship_layers.get("L3", []))
+    l2_details = sum(len(entries) for entries in getattr(ctx, "object_annotations", {}).values())
 
     if language == "en":
         return _format_grounded_answer(
             observed=(
                 f"The scene contains {len(ctx.objects)} objects. "
-                f"Classes: {classes}. Relationships: L1={l1}, L2={l2}, L3={l3}."
+                f"Classes: {classes}. Relationships: L1={l1}, "
+                f"structural_evidence={structural_evidence}, L3={l3}. "
+                f"L2 CSV details={l2_details}."
             ),
             relations="No specific relation is required for this brief inventory.",
             inference=_brief_scene_inference(class_counts, language=language),
@@ -3521,7 +3605,9 @@ def _try_answer_scene_brief(
     return _format_grounded_answer(
         observed=(
             f"La scena contiene {len(ctx.objects)} oggetti. "
-            f"Classi: {classes}. Relazioni: L1={l1}, L2={l2}, L3={l3}."
+            f"Classi: {classes}. Relazioni: L1={l1}, "
+            f"evidenza_strutturale={structural_evidence}, L3={l3}. "
+            f"Dettagli L2 CSV={l2_details}."
         ),
         relations="Nessuna relazione specifica richiesta per questo inventario breve.",
         inference=_brief_scene_inference(class_counts, language=language),
@@ -3544,7 +3630,7 @@ def _brief_scene_inference(class_counts: Counter, language: str = "it") -> str:
         if {"wall", "door_window"} & labels and "moldings" in labels:
             return (
                 "It appears to be an architectural scene with walls/openings and ornamental elements; "
-                "structural interpretation should rely on L2 relations."
+                "structural interpretation should rely on support evidence."
             )
         if "column" in labels and ({"roof", "vault"} & labels):
             return "It appears to be a covered or semi-covered colonnaded architectural space."
@@ -3553,7 +3639,7 @@ def _brief_scene_inference(class_counts: Counter, language: str = "it") -> str:
     if {"wall", "door_window"} & labels and "moldings" in labels:
         return (
             "Sembra una scena architettonica con muri/aperture ed elementi ornamentali; "
-            "l'interpretazione strutturale va fondata sulle relazioni L2."
+            "l'interpretazione strutturale va fondata sull'evidenza di supporto."
         )
     if "column" in labels and ({"roof", "vault"} & labels):
         return "Sembra uno spazio architettonico coperto o semi-coperto con colonne."

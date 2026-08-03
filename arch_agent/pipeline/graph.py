@@ -44,7 +44,7 @@ def build_scene_graphs(
     return {
         level: build_scene_graph(objects, relationships, features, object_annotations)
         for level, relationships in relationship_layers.items()
-        if level != "all"
+        if level in {"L1", "L3"}
     }
 
 

@@ -1,5 +1,11 @@
-from collections import Counter
+﻿from collections import Counter
+<<<<<<< Updated upstream
 from typing import Literal, Optional
+=======
+import re
+from typing import Optional
+import unicodedata
+>>>>>>> Stashed changes
 
 import networkx as nx
 from langchain_core.tools import tool
@@ -10,8 +16,6 @@ from ..pipeline.relationships import (
     RELATIONSHIP_LAYER_NAMES,
     RELATIONSHIP_LAYER_ORDER,
     architectural_role,
-    mereological_relation_type,
-    supports_label_pair,
 )
 from ..settings import get_config
 
@@ -22,6 +26,65 @@ def _structural_elements() -> set[str]:
 
 def _all_semantic_classes() -> list[str]:
     return list(get_config()["semantic_classes"]["names"])
+
+
+_SEMANTIC_ALIASES = (
+    ("porta finestra", "door_window"),
+    ("porta-finestra", "door_window"),
+    ("porte finestre", "door_window"),
+    ("porte-finestre", "door_window"),
+    ("openings", "door_window"),
+    ("opening", "door_window"),
+    ("aperture", "door_window"),
+    ("apertura", "door_window"),
+    ("porte", "door_window"),
+    ("porta", "door_window"),
+    ("finestre", "door_window"),
+    ("finestra", "door_window"),
+    ("doors", "door_window"),
+    ("door", "door_window"),
+    ("windows", "door_window"),
+    ("window", "door_window"),
+    ("archi", "arch"),
+    ("arco", "arch"),
+    ("arches", "arch"),
+    ("arch", "arch"),
+    ("colonne", "column"),
+    ("colonna", "column"),
+    ("columns", "column"),
+    ("column", "column"),
+    ("muri", "wall"),
+    ("muro", "wall"),
+    ("pareti", "wall"),
+    ("parete", "wall"),
+    ("walls", "wall"),
+    ("wall", "wall"),
+    ("pavimenti", "floor"),
+    ("pavimento", "floor"),
+    ("floors", "floor"),
+    ("floor", "floor"),
+    ("tetti", "roof"),
+    ("tetto", "roof"),
+    ("coperture", "roof"),
+    ("copertura", "roof"),
+    ("roofs", "roof"),
+    ("roof", "roof"),
+    ("volte", "vault"),
+    ("volta", "vault"),
+    ("vaults", "vault"),
+    ("vault", "vault"),
+    ("scale", "stairs"),
+    ("scala", "stairs"),
+    ("stairs", "stairs"),
+    ("stair", "stairs"),
+    ("modanatur", "moldings"),
+    ("modanature", "moldings"),
+    ("modanatura", "moldings"),
+    ("moldings", "moldings"),
+    ("molding", "moldings"),
+    ("altro", "other"),
+    ("other", "other"),
+)
 
 
 def _classify_area(label_set: set) -> str:
@@ -346,6 +409,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
         return "\n\n".join(blocks)
 
     @tool
+<<<<<<< Updated upstream
     def find_relationships(
         object_name: Optional[str] = None,
         semantic_label: Optional[SemanticLabel] = None,
@@ -356,6 +420,10 @@ def create_scene_tools(ctx: SceneContext) -> list:
         - object_name: one exact object id (e.g. 'column_2') for a single instance.
         - semantic_label: a semantic class (e.g. 'column') to aggregate the
           relationships of every instance of that class.
+=======
+    def find_relationships(object_name: str) -> str:
+        """Find all relationships involving a given object.
+>>>>>>> Stashed changes
 
         Args:
             object_name: Exact object id for a single instance.
@@ -367,12 +435,17 @@ def create_scene_tools(ctx: SceneContext) -> list:
         target_set = set(target_names)
 
         lines = [
+<<<<<<< Updated upstream
             f"Relationships for {len(target_names)} object(s): {', '.join(target_names)}",
-            "Cascade: L1/geometric -> L2/structural -> L3/mereological",
+            "Cascade: L1/geometric -> L2 CSV/user metadata -> L3 CIDOC/KG. L2 is not a graph.",
+=======
+            f"Relationships for '{object_name}':",
+            "Cascade: L1/geometric -> structural_evidence -> L3/mereological. L2 is CSV detail, not a graph.",
+>>>>>>> Stashed changes
         ]
         total = 0
 
-        for level, relationships in _relationship_layers_in_order(ctx):
+        for level, relationships in _relationship_layers_with_csv_evidence(ctx):
             seen = set()
             filtered = []
             for rel in relationships:
@@ -498,8 +571,9 @@ def create_scene_tools(ctx: SceneContext) -> list:
         class (e.g. 'column'). Omit both to list all relationships.
 
         Args:
-            level: Relationship level to list: 'L1', 'L2', 'L3', 'geometric',
-                'structural', 'mereological', or 'all'.
+            level: Relationship level to list: 'L1', 'L3', 'geometric',
+                'structural_evidence', 'structural', 'csv', 'L3', 'cidoc', 'kg', or 'all'.
+                'L2' returns CSV detail metadata because L2 is not a graph.
             relationship_type: Optional relationship type, e.g. 'above',
                 'supports', 'is_opening_in'.
             object_name: Optional exact object id. If provided, only
@@ -512,12 +586,17 @@ def create_scene_tools(ctx: SceneContext) -> list:
         """
         layer_key = _relationship_layer_key(level)
         if layer_key is None:
-            valid = "all, L1/geometric, L2/structural, L3/mereological"
+            valid = "all, L1/geometric, structural_evidence from CSV, L2/CSV detail, L3/CIDOC-KG"
             return f"Unknown relationship level '{level}'. Valid values: {valid}."
+<<<<<<< Updated upstream
         object_name = _clean_optional(object_name)
         semantic_label = _clean_optional(semantic_label)
         if object_name and semantic_label:
             return "Provide only one of object_name or semantic_label, not both."
+=======
+        if layer_key == "L2_DETAIL":
+            return _l2_detail_tool_summary(ctx)
+>>>>>>> Stashed changes
         if object_name and object_name not in ctx.objects:
             return _object_not_found_message(object_name, ctx.objects)
 
@@ -553,7 +632,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
 
         title = f"Relationships ({level}): {len(filtered)}"
         if layer_key == "all":
-            title += " | cascade=L1/geometric->L2/structural->L3/mereological"
+            title += " | cascade=L1/geometric->L2 CSV/user metadata->L3 CIDOC/KG"
         if relationship_type:
             title += f" | type={relationship_type}"
         if object_name:
@@ -1144,14 +1223,36 @@ def _relationship_layer_key(level: str) -> str | None:
         "l1": "L1",
         "geometric": "L1",
         "geometry": "L1",
-        "l2": "L2",
-        "structural": "L2",
-        "structure": "L2",
+        "l2": "L2_DETAIL",
+        "csv": "L2_DETAIL",
+        "metadata": "L2_DETAIL",
+        "detail": "L2_DETAIL",
+        "details": "L2_DETAIL",
+        "structural": "structural_evidence",
+        "structure": "structural_evidence",
+        "structural_evidence": "structural_evidence",
+        "support_evidence": "structural_evidence",
         "l3": "L3",
         "mereological": "L3",
         "composition": "L3",
     }
     return aliases.get(normalized)
+
+
+def _l2_detail_tool_summary(ctx: SceneContext) -> str:
+    matched = sum(
+        len(entries)
+        for entries in getattr(ctx, "object_annotations", {}).values()
+    )
+    annotated_objects = len(getattr(ctx, "object_annotations", {}))
+    unmatched = len(getattr(ctx, "unmatched_annotations", []))
+    return (
+        "L2 is CSV descriptive detail, not a relationship graph. "
+        f"Matched annotations: {matched} on {annotated_objects} objects; "
+        f"unmatched CSV rows: {unmatched}. "
+        "Use get_object_annotation for scene/object descriptions, material, "
+        "typology, function, and notes."
+    )
 
 
 def _concat_frames(frames):
@@ -1338,13 +1439,13 @@ def _relationship_anomalies(ctx: SceneContext) -> list[str]:
         ):
             issues.append(f"{a} and {b}: reciprocal 'below' relation.")
         if (
-            (a, b, "supports", "structural") in rel_set
-            and (b, a, "supports", "structural") in rel_set
+            (a, b, "supports", "structural_evidence") in rel_set
+            and (b, a, "supports", "structural_evidence") in rel_set
         ):
             issues.append(f"{a} and {b}: reciprocal 'supports' relation.")
         if (
-            (a, b, "rests_on", "structural") in rel_set
-            and (b, a, "rests_on", "structural") in rel_set
+            (a, b, "rests_on", "structural_evidence") in rel_set
+            and (b, a, "rests_on", "structural_evidence") in rel_set
         ):
             issues.append(f"{a} and {b}: reciprocal 'rests_on' relation.")
 

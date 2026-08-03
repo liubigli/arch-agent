@@ -3,14 +3,14 @@ import numpy as np
 Relationship = tuple[str, str, str, str]
 
 GEOMETRIC_LEVEL = "geometric"
-STRUCTURAL_LEVEL = "structural"
-MEREOLOGICAL_LEVEL = "mereological"
+STRUCTURAL_EVIDENCE_LEVEL = "csv_structural_evidence"
+CIDOC_KG_LEVEL = "cidoc_knowledge_graph"
 
-RELATIONSHIP_LAYER_ORDER = ("L1", "L2", "L3")
+RELATIONSHIP_LAYER_ORDER = ("L1",)
 RELATIONSHIP_LAYER_NAMES = {
     "L1": GEOMETRIC_LEVEL,
-    "L2": STRUCTURAL_LEVEL,
-    "L3": MEREOLOGICAL_LEVEL,
+    "L2": "csv_detail",
+    "L3": CIDOC_KG_LEVEL,
 }
 
 ARCHITECTURAL_CLASS_RULES = {
@@ -274,21 +274,14 @@ def compute_all_relations_stratified(
     threshold = distance_threshold or auto_threshold(objects)
 
     geometric = compute_spatial_relationships(objects, threshold)
-    structural = compute_structural_relations(objects)
-    mereological = compute_mereological_relations(
-        objects,
-        surface_contact_thresh=surface_contact_thresh,
-    )
     relationship_layers = {
         "L1": geometric,
-        "L2": structural,
-        "L3": mereological,
     }
     all_relationships = flatten_relationship_layers(relationship_layers)
 
-    print(f"L1 geometric    : {len(geometric):>4} relationships")
-    print(f"L2 structural   : {len(structural):>4} relationships")
-    print(f"L3 mereological : {len(mereological):>4} relationships")
+    print(f"L1 geometric : {len(geometric):>4} relationships")
+    print("L2 CSV detail: loaded from annotation CSV, not a graph")
+    print("L3 CIDOC/KG  : built from CSV detail when requested, not a mereological layer")
 
     return {**relationship_layers, "all": all_relationships}
 
@@ -346,59 +339,24 @@ def _determine_geometric_relationships(
 
 
 def compute_structural_relations(objects: dict) -> list[Relationship]:
-    relationships: list[Relationship] = []
-    names = list(objects.keys())
+    """Deprecated compatibility hook.
 
-    for i, obj1 in enumerate(names):
-        for obj2 in names[i + 1:]:
-            if _rests_on(objects[obj1], objects[obj2]):
-                relationships.extend([
-                    (obj2, obj1, "supports", STRUCTURAL_LEVEL),
-                    (obj1, obj2, "rests_on", STRUCTURAL_LEVEL),
-                ])
-            if _rests_on(objects[obj2], objects[obj1]):
-                relationships.extend([
-                    (obj1, obj2, "supports", STRUCTURAL_LEVEL),
-                    (obj2, obj1, "rests_on", STRUCTURAL_LEVEL),
-                ])
-
-    return _deduplicate(relationships)
+    Structural evidence is no longer inferred from geometry/class rules here.
+    It must come from scene CSV annotations or explicit user-provided metadata.
+    """
+    return []
 
 
 def compute_mereological_relations(
     objects: dict,
     surface_contact_thresh: float = 0.10,
 ) -> list[Relationship]:
-    relationships: list[Relationship] = []
-    names = list(objects.keys())
+    """Deprecated compatibility hook.
 
-    for child_name in names:
-        child = objects[child_name]
-        child_label = child["semantic_label"]
-        parent_labels = MEREOLOGICAL_RULES.get(child_label, [])
-        if not parent_labels:
-            continue
-
-        for parent_name in names:
-            if parent_name == child_name:
-                continue
-
-            parent = objects[parent_name]
-            if parent["semantic_label"] not in parent_labels:
-                continue
-
-            contact_like = (
-                _overlap_xy_ratio(child["bounds"], parent["bounds"]) >= surface_contact_thresh
-                or _bounds_gap(child["bounds"], parent["bounds"]) <= 0.35
-            )
-            if not contact_like:
-                continue
-
-            rel = _mereological_relation(child_label, parent["semantic_label"])
-            relationships.append((child_name, parent_name, rel, MEREOLOGICAL_LEVEL))
-            relationships.append((parent_name, child_name, "has_part", MEREOLOGICAL_LEVEL))
-
-    return _deduplicate(relationships)
+    L3 is now a CIDOC/knowledge-graph layer built from CSV/user metadata and
+    supported geometric context, not a mereological edge set inferred here.
+    """
+    return []
 
 
 def _mereological_relation(child_label: str, parent_label: str) -> str:

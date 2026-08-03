@@ -63,3 +63,28 @@ pixi run view-pointcloud "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/l
 
 #caricare tutti i punti della scena
 pixi run view-pointcloud "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --sample-n 0 --point-size 1
+
+
+#visualizzare il grafo L1 geometrico con NetworkX/Matplotlib
+pixi run view-graph "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --level L1
+
+
+#visualizzare il grafo L1 solo per una classe e i suoi vicini
+pixi run view-graph "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --level L1 --classes wall --include-neighbors
+
+
+#visualizzare solo alcune relazioni L1
+pixi run view-graph "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --level L1 --relation-types near adjacent_to --edge-labels
+
+
+#visualizzare il grafo L3 CIDOC/ontologico
+#L3 richiede il CSV: L2 non e un grafo, ma lo strato descrittivo letto dal CSV
+pixi run view-graph "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --level L3 --annotation-csv "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL_annotations.csv" --edge-labels
+
+
+#salvare il grafo L1 come immagine PNG senza aprire la finestra
+pixi run view-graph "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --level L1 --output "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/scena4_VAL_L1_graph.png" --no-show
+
+
+#salvare il grafo L3 come immagine PNG senza aprire la finestra
+pixi run view-graph "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --level L3 --annotation-csv "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL_annotations.csv" --edge-labels --output "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/scena4_VAL_L3_graph.png" --no-show

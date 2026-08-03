@@ -9,6 +9,7 @@ version = "0.1.0"
 view-pointcloud = "python -m arch_agent.visualization.pointcloud_viewer --mode semantic"
 view-dbscan = "python -m arch_agent.visualization.pointcloud_viewer --mode clusters"
 view-pointcloud-both = "python -m arch_agent.visualization.pointcloud_viewer --mode both"
+view-graph = "python -m arch_agent.visualization.graph_viewer"
 
 [dependencies]
 python = "3.12.*"
