@@ -207,6 +207,25 @@ python main.py --use-normals
 python main.py path/to/scene.laz
 ```
 
+### Open3D visualization
+
+The project includes a small Open3D viewer with the same workflow used by the
+notebook-style prototype: semantic point cloud first, DBSCAN clusters second.
+
+```bash
+# Semantic classes with flat colors
+pixi run view-pointcloud /mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz
+
+# DBSCAN output with one color per detected object
+pixi run view-dbscan /mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz --eps 0.5 --min-samples 15
+
+# Open both viewers in sequence; close the first window to open the second
+pixi run view-pointcloud-both /mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz
+
+# Optional: show only selected semantic classes and their AABB boxes
+pixi run view-dbscan path/to/scene.laz --classes column wall --with-boxes
+```
+
 ### All options
 
 | Flag | Default | Description |
