@@ -42,6 +42,15 @@ def parse_args() -> argparse.Namespace:
     group.add_argument("--annotation-csv", default=None)
     group.add_argument("--annotation-match-threshold", type=float, default=2.0)
 
+    group3 = parser.add_argument_group("visualization parameters")
+    group3.add_argument(
+        "--plot-segmentation", action="store_true",
+        help=(
+            "Open an Open3D window showing the segmented (DBSCAN) point "
+            "cloud objects once the scene graph has been built."
+        ),
+    )
+
     group2 = parser.add_argument_group("benchmark parameters")
     group2.add_argument(
         "--model", default="llama3",
@@ -98,6 +107,10 @@ def main() -> None:
         annotation_match_threshold=args.annotation_match_threshold,
     )
     ctx = run_pipeline(params)
+
+    if args.plot_segmentation:
+        from arch_agent.visualization.pointcloud_viewer import visualize_clustered_objects
+        visualize_clustered_objects(ctx.objects)
 
     questions = load_questions(args.questions_file)
     if args.limit > 0:

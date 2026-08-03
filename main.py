@@ -74,6 +74,16 @@ def parse_args() -> argparse.Namespace:
         help="Max distance in meters for matching CSV global_box_center to object AABB box_center",
     )
 
+    # Visualization params
+    group3 = parser.add_argument_group("visualization parameters")
+    group3.add_argument(
+        "--plot-segmentation", action="store_true",
+        help=(
+            "Open an Open3D window showing the segmented (DBSCAN) point "
+            "cloud objects once the scene graph has been built."
+        ),
+    )
+
     # Agent params
     group2 = parser.add_argument_group("agent parameters")
     group2.add_argument(
@@ -156,6 +166,11 @@ def main() -> None:
     )
 
     ctx = run_pipeline(params)
+
+    if args.plot_segmentation:
+        from arch_agent.visualization.pointcloud_viewer import visualize_clustered_objects
+        visualize_clustered_objects(ctx.objects)
+
     run_agent(ctx, model=args.model, capture_reasoning=args.capture_reasoning)
 
 
