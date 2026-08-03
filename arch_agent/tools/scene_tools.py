@@ -39,6 +39,150 @@ def _classify_area(label_set: set) -> str:
     return "general_area"
 
 
+def _structural_evidence_relationships(ctx: SceneContext) -> list[tuple[str, str, str, str]]:
+    """Return supports/rests_on evidence stated in matched CSV annotations."""
+    object_annotations = getattr(ctx, "object_annotations", {})
+    if not object_annotations:
+        return []
+
+    relationships: list[tuple[str, str, str, str]] = []
+    seen = set()
+    for object_name, annotations in object_annotations.items():
+        source_label = ctx.objects.get(object_name, {}).get("semantic_label")
+        if not source_label:
+            continue
+        for annotation in annotations:
+            for target_label in _csv_support_target_labels(annotation, source_label):
+                for target_name in _objects_with_semantic_label(ctx, target_label):
+                    item = (object_name, target_name, "supports", "csv_structural_evidence")
+                    if item not in seen:
+                        relationships.append(item)
+                        seen.add(item)
+                    inverse = (target_name, object_name, "rests_on", "csv_structural_evidence")
+                    if inverse not in seen:
+                        relationships.append(inverse)
+                        seen.add(inverse)
+
+            for source_support_label in _csv_supported_by_labels(annotation, source_label):
+                for source_name in _objects_with_semantic_label(ctx, source_support_label):
+                    item = (source_name, object_name, "supports", "csv_structural_evidence")
+                    if item not in seen:
+                        relationships.append(item)
+                        seen.add(item)
+                    inverse = (object_name, source_name, "rests_on", "csv_structural_evidence")
+                    if inverse not in seen:
+                        relationships.append(inverse)
+                        seen.add(inverse)
+
+    return relationships
+
+
+def _csv_support_target_labels(annotation: dict, source_label: str) -> list[str]:
+    explicit_text = _annotation_first_value(
+        annotation,
+        (
+            "supports",
+            "supporta",
+            "sostiene",
+            "sorregge",
+            "support_target",
+            "supported_object",
+            "supported_class",
+            "structural_supports",
+        ),
+    )
+    labels = _labels_mentioned_in_annotation_value(explicit_text, exclude={source_label})
+    if labels:
+        return labels
+
+    descriptive_text = " ".join(
+        str(annotation.get(key, "") or "")
+        for key in (
+            "function",
+            "funzione",
+            "description",
+            "descrizione",
+            "historical_description",
+            "descrizione_storica",
+            "notes",
+            "note",
+            "structural_evidence",
+            "evidenza_strutturale",
+        )
+    )
+    normalized = _normalize_text(descriptive_text)
+    support_terms = (
+        "support",
+        "sostegn",
+        "sosten",
+        "sorregg",
+        "regge",
+        "portante",
+        "load-bearing",
+        "load bearing",
+    )
+    if not any(term in normalized for term in support_terms):
+        return []
+    return _labels_mentioned_in_annotation_value(descriptive_text, exclude={source_label})
+
+
+def _csv_supported_by_labels(annotation: dict, source_label: str) -> list[str]:
+    explicit_text = _annotation_first_value(
+        annotation,
+        (
+            "supported_by",
+            "supportato_da",
+            "sostenuto_da",
+            "sorretta_da",
+            "sorretto_da",
+            "rests_on",
+            "resting_on",
+            "appoggia_su",
+            "appoggiato_su",
+            "structural_supported_by",
+        ),
+    )
+    return _labels_mentioned_in_annotation_value(explicit_text, exclude={source_label})
+
+
+def _annotation_first_value(annotation: dict, keys: tuple[str, ...]) -> object | None:
+    for key in keys:
+        value = annotation.get(key)
+        if value:
+            return value
+    return None
+
+
+def _labels_mentioned_in_annotation_value(
+    value: object | None,
+    exclude: set[str] | None = None,
+) -> list[str]:
+    if value is None:
+        return []
+    normalized = _normalize_text(str(value))
+    exclude = exclude or set()
+    labels: list[str] = []
+    for alias, label in _SEMANTIC_ALIASES:
+        if label in exclude or label in labels:
+            continue
+        if re.search(rf"\b{re.escape(alias)}\b", normalized):
+            labels.append(label)
+    return labels
+
+
+def _objects_with_semantic_label(ctx: SceneContext, label: str) -> list[str]:
+    return sorted(
+        name
+        for name, obj in ctx.objects.items()
+        if obj.get("semantic_label") == label
+    )
+
+
+def _normalize_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKD", str(text).strip().lower())
+    return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
 def create_scene_tools(ctx: SceneContext) -> list:
     # Scene-specific enum: only classes actually present in this scene are
     # valid values, so the model cannot pass a semantic class where an exact
