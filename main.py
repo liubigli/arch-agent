@@ -98,6 +98,15 @@ def parse_args() -> argparse.Namespace:
             "calls per turn."
         ),
     )
+    group2.add_argument(
+        "--deterministic-router",
+        action="store_true",
+        help=(
+            "Answer supported simple queries directly with Python before "
+            "calling the LLM. Leave disabled when testing whether the LLM "
+            "chooses the right tools."
+        ),
+    )
 
     return parser.parse_args()
 
@@ -171,7 +180,12 @@ def main() -> None:
         from arch_agent.visualization.pointcloud_viewer import visualize_clustered_objects
         visualize_clustered_objects(ctx.objects)
 
-    run_agent(ctx, model=args.model, capture_reasoning=args.capture_reasoning)
+    run_agent(
+        ctx,
+        model=args.model,
+        capture_reasoning=args.capture_reasoning,
+        deterministic_router=args.deterministic_router,
+    )
 
 
 if __name__ == "__main__":

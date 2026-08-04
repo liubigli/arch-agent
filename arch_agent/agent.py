@@ -145,7 +145,12 @@ def create_agent(ctx: SceneContext, model: str = "llama3", capture_reasoning: bo
     return graph.compile()
 
 
-def run_agent(ctx: SceneContext, model: str = "llama3", capture_reasoning: bool = False) -> None:
+def run_agent(
+    ctx: SceneContext,
+    model: str = "llama3",
+    capture_reasoning: bool = False,
+    deterministic_router: bool = False,
+) -> None:
     agent = create_agent(ctx, model=model, capture_reasoning=capture_reasoning)
 
     print("=" * 60)
@@ -169,6 +174,14 @@ def run_agent(ctx: SceneContext, model: str = "llama3", capture_reasoning: bool 
         if not user_input:
             continue
 
+        if deterministic_router:
+            direct_response = _try_answer_deterministic_for_input(ctx, user_input)
+            if direct_response is not None:
+                messages.append(HumanMessage(content=user_input))
+                messages.append(AIMessage(content=direct_response))
+                print(f"\nAgent: {direct_response}\n")
+                continue
+
         messages.append(HumanMessage(content=user_input))
         previous_len = len(messages)
         try:
@@ -183,6 +196,21 @@ def run_agent(ctx: SceneContext, model: str = "llama3", capture_reasoning: bool 
             print(f"\n[thinking] {reasoning}")
         _print_tool_reasoning(messages[previous_len:])
         print(f"\nAgent: {messages[-1].content}\n")
+
+
+def _try_answer_deterministic_for_input(
+    ctx: SceneContext,
+    user_input: str,
+    default_label: str | None = None,
+) -> str | None:
+    parts = _split_user_questions(user_input)
+    answers = []
+    for part in parts:
+        answer = _try_answer_deterministic(ctx, part, default_label=default_label)
+        if answer is None:
+            return None
+        answers.append(answer)
+    return "\n\n".join(answers)
 
 
 def _print_tool_reasoning(new_messages: list[BaseMessage]) -> None:
@@ -1483,6 +1511,14 @@ def _format_csv_annotation_inventory(
     if not entries:
         return _format_no_csv_annotations(None, ctx, language=language)
 
+    material_aliases = _extract_material_aliases(text)
+    if material_aliases is not None:
+        return _format_scene_material_yes_no_from_csv(
+            entries,
+            material_aliases,
+            language=language,
+        )
+
     fields = _requested_annotation_fields(text, language=language)
     by_label: dict[str, list[tuple[str, dict]]] = defaultdict(list)
     for object_name, annotation in entries:
@@ -1562,19 +1598,7 @@ def _format_material_yes_no_from_csv(
     aliases: tuple[str, ...],
     language: str = "it",
 ) -> str:
-    material_fields = (
-        "material_description",
-        "descrizione_materica",
-        "material",
-        "materiale",
-        "materica",
-    )
-    hits = []
-    for object_name, annotation in entries:
-        value = _annotation_first_value(annotation, material_fields)
-        if value and _annotation_value_contains_alias(value, aliases):
-            hits.append((object_name, value))
-
+    hits = _material_hits_from_csv(entries, aliases)
     requested = "/".join(aliases[:2])
     if hits:
         prefix = "Yes" if language == "en" else "Sì"
@@ -1601,6 +1625,61 @@ def _format_material_yes_no_from_csv(
             f"matched to `{label}` through `global_box_center`."
         ),
     )
+
+
+def _format_scene_material_yes_no_from_csv(
+    entries: list[tuple[str, dict]],
+    aliases: tuple[str, ...],
+    language: str = "it",
+) -> str:
+    hits = _material_hits_from_csv(entries, aliases)
+    requested = "/".join(aliases[:2])
+    if hits:
+        prefix = "Yes" if language == "en" else "Sì"
+        lines = [
+            _phrase(
+                language,
+                it=f"{prefix}. Nel CSV trovo oggetti con materiale compatibile con `{requested}`:",
+                en=f"{prefix}. In the CSV I find objects with material compatible with `{requested}`:",
+            )
+        ]
+        for object_name, value in hits[:12]:
+            lines.append(f"  - {object_name}: {value}")
+        if len(hits) > 12:
+            lines.append(f"  ... {len(hits) - 12} altri oggetti non mostrati.")
+        return "\n".join(lines)
+
+    prefix = "No" if language == "en" else "No"
+    return _phrase(
+        language,
+        it=(
+            f"{prefix}. Nel CSV non trovo oggetti con materiale `{requested}`. "
+            "Non lo inferisco da descrizione libera, RGB, rugosità o classe semantica."
+        ),
+        en=(
+            f"{prefix}. In the CSV I do not find objects with material `{requested}`. "
+            "I do not infer it from free description, RGB, roughness, or semantic class."
+        ),
+    )
+
+
+def _material_hits_from_csv(
+    entries: list[tuple[str, dict]],
+    aliases: tuple[str, ...],
+) -> list[tuple[str, object]]:
+    material_fields = (
+        "material_description",
+        "descrizione_materica",
+        "material",
+        "materiale",
+        "materica",
+    )
+    hits = []
+    for object_name, annotation in entries:
+        value = _annotation_first_value(annotation, material_fields)
+        if value and _annotation_value_contains_alias(value, aliases):
+            hits.append((object_name, value))
+    return hits
 
 
 def _annotation_value_contains_alias(value: object, aliases: tuple[str, ...]) -> bool:

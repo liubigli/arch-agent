@@ -359,7 +359,12 @@ def create_scene_tools(ctx: SceneContext) -> list:
         object_name: Optional[str] = None,
         semantic_label: Optional[SemanticLabel] = None,
     ) -> str:
-        """Get detailed geometric and semantic information about object(s).
+        """Get geometric and semantic-class information about object(s).
+
+        Use this for centroid, dimensions, point count, AABB volume, surface
+        area, height, compactness, and architectural role. For material,
+        typology, function, or descriptive CSV metadata, use
+        get_object_annotation instead.
 
         Provide exactly one of the two:
         - object_name: one exact object id (e.g. 'column_2') for a single instance.
@@ -457,7 +462,11 @@ def create_scene_tools(ctx: SceneContext) -> list:
         semantic_label: Optional[str] = None,
         position: Optional[str] = None,
     ) -> str:
-        """Get user-provided CSV annotation/description for a matched object.
+        """Get user-provided CSV annotation/description for a matched object or class.
+
+        Use this for material, typology, function, historical notes, or
+        descriptive cards of a specific object/class. The result comes from
+        matched CSV metadata only.
 
         Prefer semantic_label plus position when the user does not know object
         ids, e.g. semantic_label='column', position='central'.
@@ -494,6 +503,80 @@ def create_scene_tools(ctx: SceneContext) -> list:
         if not annotations:
             return f"No CSV annotation is associated with {object_name}."
         return _format_annotations_for_object(ctx, object_name, annotations)
+
+    @tool
+    def find_objects_by_material(
+        material: str,
+        semantic_label: Optional[SemanticLabel] = None,
+        limit: int = 30,
+    ) -> str:
+        """Find objects whose CSV material fields mention a requested material.
+
+        Use this for scene-wide material questions such as "ci sono oggetti
+        in legno?" or "are there wooden objects?". The search uses only CSV
+        material fields: material/materiale/material_description/
+        descrizione_materica. It does not use RGB, roughness, semantic class,
+        or free historical descriptions to infer materials.
+
+        Args:
+            material: Requested material, e.g. 'legno', 'wood', 'marmo'.
+            semantic_label: Optional class filter, e.g. 'column'.
+            limit: Maximum number of matched objects to list.
+        """
+        material = (material or "").strip()
+        semantic_label = _clean_optional(semantic_label)
+        if not material:
+            return "Provide a material to search for, e.g. material='legno'."
+
+        annotations = getattr(ctx, "object_annotations", {})
+        if not annotations:
+            return (
+                "No CSV annotations are matched to this scene. Material search "
+                "uses CSV material fields only."
+            )
+
+        aliases = _material_aliases_for_query(material)
+        hits = []
+        inspected = 0
+        for object_name in sorted(ctx.objects):
+            obj = ctx.objects[object_name]
+            if semantic_label and obj.get("semantic_label") != semantic_label:
+                continue
+            for annotation in annotations.get(object_name, []):
+                material_value = _annotation_material_value(annotation)
+                if not material_value:
+                    continue
+                inspected += 1
+                if _text_contains_any(material_value, aliases):
+                    hits.append((object_name, obj["semantic_label"], material_value, annotation))
+
+        scope = f" for class {semantic_label}" if semantic_label else ""
+        if not hits:
+            return (
+                f"No CSV material matches{scope} for {material!r}. "
+                "Searched only material/materiale/material_description/"
+                "descrizione_materica. I do not infer material from descriptions, "
+                "RGB, roughness, or semantic class. "
+                f"CSV material entries checked: {inspected}."
+            )
+
+        max_rows = max(1, min(int(limit), 200))
+        lines = [
+            f"CSV material matches{scope} for {material!r}: {len(hits)}",
+            "Source: CSV material fields only.",
+        ]
+        for object_name, label, value, annotation in hits[:max_rows]:
+            match = annotation.get("match", {})
+            distance = match.get("distance_m")
+            match_text = (
+                f"; global_box_center distance={distance:.3f} m"
+                if distance is not None
+                else ""
+            )
+            lines.append(f"  - {object_name} ({label}): {value}{match_text}")
+        if len(hits) > max_rows:
+            lines.append(f"  ... {len(hits) - max_rows} more matches not shown.")
+        return "\n".join(lines)
 
     @tool
     def get_object_semantic_details(
@@ -1019,6 +1102,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
         list_object_geometry,
         get_object_info,
         get_object_annotation,
+        find_objects_by_material,
         get_object_semantic_details,
         find_relationships,
         list_relationships,
@@ -1114,6 +1198,44 @@ def _format_annotations_for_class(
     if len(annotated) > 30:
         lines.append(f"  ... {len(annotated) - 30} annotations not shown.")
     return "\n".join(lines)
+
+
+def _annotation_material_value(annotation: dict) -> object | None:
+    return _annotation_first_value(
+        annotation,
+        (
+            "material_description",
+            "descrizione_materica",
+            "material",
+            "materiale",
+            "materica",
+        ),
+    )
+
+
+def _material_aliases_for_query(material: str) -> tuple[str, ...]:
+    normalized = _normalize_text(material)
+    groups = (
+        ("marmo", "marble"),
+        ("calcare", "limestone"),
+        ("pietra", "stone"),
+        ("laterizio", "brick", "mattoni", "brick masonry"),
+        ("intonaco", "plaster"),
+        ("stucco",),
+        ("legno", "wood"),
+        ("metallo", "metal"),
+        ("vetro", "glass"),
+        ("terracotta", "cotto", "tile"),
+    )
+    for aliases in groups:
+        if any(_normalize_text(alias) in normalized for alias in aliases):
+            return aliases
+    return (normalized,)
+
+
+def _text_contains_any(value: object, aliases: tuple[str, ...]) -> bool:
+    normalized_value = _normalize_text(str(value))
+    return any(_normalize_text(alias) in normalized_value for alias in aliases)
 
 
 def _resolve_annotation_object(
