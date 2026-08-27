@@ -114,7 +114,11 @@ def create_agent(ctx: SceneContext, model: str = "llama3", capture_reasoning: bo
     tool_node = ToolNode(tools)
 
     def chat_node(state: AgentState) -> AgentState:
-        messages = [SystemMessage(content=_load_system_prompt())] + state["messages"]
+        language = _response_language(_latest_human_message_text(state["messages"]))
+        messages = [
+            SystemMessage(content=_load_system_prompt()),
+            SystemMessage(content=_turn_language_instruction(language)),
+        ] + state["messages"]
         return {"messages": [llm_with_tools.invoke(messages)]}
 
     def think_node(state: AgentState) -> AgentState:
@@ -125,7 +129,11 @@ def create_agent(ctx: SceneContext, model: str = "llama3", capture_reasoning: bo
         # the next, tool-bound call see a conversation that already looks
         # answered and stop calling tools. So the reasoning is kept in a
         # side-channel state field instead, never replayed back to the model.
-        messages = [SystemMessage(content=_load_system_prompt() + _THINK_SUFFIX)] + state["messages"]
+        language = _response_language(_latest_human_message_text(state["messages"]))
+        messages = [
+            SystemMessage(content=_load_system_prompt() + _THINK_SUFFIX),
+            SystemMessage(content=_turn_language_instruction(language)),
+        ] + state["messages"]
         response = llm.invoke(messages)
         content = response.content.strip() if isinstance(response.content, str) else ""
         return {"reasoning": content or None}
@@ -537,6 +545,33 @@ def _response_language(text: str) -> str:
     english_score = sum(marker in normalized for marker in english_markers)
     italian_score = sum(marker in normalized for marker in italian_markers)
     return "en" if english_score > italian_score else "it"
+
+
+def _latest_human_message_text(messages: list[BaseMessage]) -> str:
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            content = message.content
+            if isinstance(content, str):
+                return content
+            return str(content)
+    return ""
+
+
+def _turn_language_instruction(language: str) -> str:
+    if language == "en":
+        return (
+            "Current user turn language: English. The final answer for this "
+            "turn must be in English only. Ignore the language used in previous "
+            "turns and in tool outputs. Keep object ids, semantic labels, CSV "
+            "values, and relationship names exactly as returned by tools."
+        )
+    return (
+        "Lingua del turno corrente: italiano. La risposta finale di questo "
+        "turno deve essere solo in italiano. Ignora la lingua usata nei turni "
+        "precedenti e negli output dei tool. Mantieni invariati object id, "
+        "etichette semantiche, valori CSV e nomi delle relazioni restituiti "
+        "dai tool."
+    )
 
 
 def _phrase(language: str, *, it: str, en: str) -> str:
