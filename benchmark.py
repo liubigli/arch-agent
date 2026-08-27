@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
         help="Ollama model name (must be pulled via 'ollama pull <model>')",
     )
     group2.add_argument(
-        "--questions-file", default="tmp/domande_per_scene.txt",
+        "--questions-file", default="benchmark/domande_per_scene.txt",
         help="Plain-text file with one question per line (lines must end with '?').",
     )
     group2.add_argument(
