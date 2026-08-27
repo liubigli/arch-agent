@@ -34,17 +34,20 @@ _DEFAULT_PROFILE = ModelProfile(num_ctx=8192)
 # `think=True` on a model whose Modelfile doesn't implement it is untested
 # and left as None (unset) instead.
 _PROFILES: dict[str, ModelProfile] = {
+    "qwen3.5": ModelProfile(num_ctx=32768, think=True, num_predict=4096),
     "qwen3": ModelProfile(num_ctx=32768, think=True, num_predict=4096),
     "qwen2.5": ModelProfile(num_ctx=16384),
     "qwen2": ModelProfile(num_ctx=16384),
     "deepseek-r1": ModelProfile(num_ctx=32768, think=True, num_predict=4096),
-    "gemma4:31b": ModelProfile(num_ctx=32768, think=True, num_predict=4096),
+    "gemma4": ModelProfile(num_ctx=32768, think=True, num_predict=4096),
     "gpt-oss": ModelProfile(num_ctx=16384, think=True, num_predict=4096),
     "llama3.3": ModelProfile(num_ctx=16384),
     "llama3.2": ModelProfile(num_ctx=16384),
     "llama3.1": ModelProfile(num_ctx=16384),
     "llama3": ModelProfile(num_ctx=8192),
     "mixtral": ModelProfile(num_ctx=16384),
+    "mistral-small3.2": ModelProfile(num_ctx=32768),
+    "mistral-small": ModelProfile(num_ctx=32768),
     "mistral": ModelProfile(num_ctx=8192),
     "gemma2": ModelProfile(num_ctx=8192),
     "phi4": ModelProfile(num_ctx=16384),
@@ -56,12 +59,17 @@ _PROFILES: dict[str, ModelProfile] = {
 def resolve_model_profile(model: str) -> ModelProfile:
     """Look up the default profile for an Ollama model tag.
 
-    Matches by longest known prefix against the tag name before ':'
-    (e.g. "qwen3.5:latest" -> "qwen3.5", matched by prefix "qwen3"), so
+    Matches by longest known prefix against both the full model tag and the
+    family name before ':' (e.g. "qwen3:30b" and "qwen3.5:latest"), so
     version/size suffixes like ":latest" or ":8b" don't need their own entry.
     """
-    name = model.split(":", 1)[0].lower()
-    matches = [prefix for prefix in _PROFILES if name.startswith(prefix)]
+    full_name = model.lower()
+    family_name = full_name.split(":", 1)[0]
+    matches = [
+        prefix
+        for prefix in _PROFILES
+        if full_name.startswith(prefix) or family_name.startswith(prefix)
+    ]
     if not matches:
         return _DEFAULT_PROFILE
     best = max(matches, key=len)
