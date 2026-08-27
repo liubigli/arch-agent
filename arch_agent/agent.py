@@ -14,6 +14,7 @@ from typing_extensions import TypedDict
 from pathlib import Path
 
 from .benchmark.reference_answers import answer_evaluation_prompt
+from .model_profiles import resolve_model_profile
 from .pipeline.pipeline import SceneContext
 from .pipeline.relationships import (
     Relationship,
@@ -109,7 +110,18 @@ _THINK_SUFFIX = (
 
 def create_agent(ctx: SceneContext, model: str = "llama3", capture_reasoning: bool = False):
     tools = create_scene_tools(ctx)
-    llm = ChatOllama(model=model, base_url=_OLLAMA_BASE_URL, temperature=0.0)
+    profile = resolve_model_profile(model)
+    llm_kwargs = {
+        "model": model,
+        "base_url": _OLLAMA_BASE_URL,
+        "temperature": 0.0,
+        "num_ctx": profile.num_ctx,
+    }
+    if profile.think is not None:
+        llm_kwargs["think"] = profile.think
+    if profile.num_predict is not None:
+        llm_kwargs["num_predict"] = profile.num_predict
+    llm = ChatOllama(**llm_kwargs)
     llm_with_tools = llm.bind_tools(tools)
     tool_node = ToolNode(tools)
 

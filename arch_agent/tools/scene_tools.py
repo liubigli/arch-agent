@@ -11,7 +11,7 @@ from ..pipeline.graph import ANNOTATION_NODE_FIELDS, analyze_scene_graph
 from ..pipeline.relationships import (
     RELATIONSHIP_LAYER_NAMES,
     RELATIONSHIP_LAYER_ORDER,
-    architectural_role,
+    architectural_role
 )
 from ..settings import get_config
 
@@ -413,6 +413,8 @@ def create_scene_tools(ctx: SceneContext) -> list:
     def find_relationships(
         object_name: Optional[str] = None,
         semantic_label: Optional[SemanticLabel] = None,
+        limit: int = 40,
+        offset: int = 0,
     ) -> str:
         """Find all relationships/evidence involving object(s).
 
@@ -421,9 +423,18 @@ def create_scene_tools(ctx: SceneContext) -> list:
         - semantic_label: a semantic class (e.g. 'column') to aggregate the
           relationships of every instance of that class.
 
+        Results are paginated to avoid flooding the chat with a large scene's
+        full relationship graph. If the response says rows were not shown,
+        call again with the suggested offset to see the next batch; rows are
+        always returned in the same order for the same object(s), so no row
+        is skipped or repeated across calls.
+
         Args:
             object_name: Exact object id for a single instance.
             semantic_label: Semantic class to query across all its instances.
+            limit: Maximum number of relationship rows to return in this call.
+            offset: Number of relationship rows to skip before collecting up
+                to `limit` rows, to page through a result already seen.
         """
         object_name = _clean_optional(object_name)
         semantic_label = _clean_optional(semantic_label)
@@ -432,11 +443,16 @@ def create_scene_tools(ctx: SceneContext) -> list:
             return target_names
         target_set = set(target_names)
 
+        max_rows = max(1, min(int(limit), 200))
+        skip = max(0, int(offset))
+
         lines = [
             f"Relationships/evidence for {len(target_names)} object(s): {', '.join(target_names)}",
             "Cascade: L1/geometric -> L2 CSV/user metadata -> L3 CIDOC/KG. L2 is not a graph.",
         ]
         total = 0
+        shown = 0
+        remaining = max_rows
 
         for level, relationships in _relationship_layers_with_csv_evidence(ctx):
             seen = set()
@@ -449,10 +465,31 @@ def create_scene_tools(ctx: SceneContext) -> list:
             layer_name = RELATIONSHIP_LAYER_NAMES.get(level, level)
             lines.append(f"  {level}/{layer_name}: {len(filtered)}")
             for src, tgt, rel_type, rel_level in filtered:
+                if skip > 0:
+                    skip -= 1
+                    continue
+                if remaining <= 0:
+                    continue
                 lines.append(f"    {src} --[{rel_level}:{rel_type}]--> {tgt}")
+                remaining -= 1
+                shown += 1
 
         if total == 0:
             lines.append("  No relationships found.")
+        elif offset >= total:
+            lines.append(
+                f"  offset={offset} is beyond the last row; "
+                f"this object set has {total} relationship(s) total."
+            )
+        else:
+            hidden = total - offset - shown
+            if hidden > 0:
+                next_offset = offset + shown
+                lines.append(
+                    f"  Showing rows {offset + 1}-{offset + shown} of {total}; "
+                    f"{hidden} more not shown. Call again with offset={next_offset} "
+                    "to see the next batch."
+                )
 
         return "\n".join(lines)
 
@@ -633,6 +670,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
         object_name: Optional[str] = None,
         semantic_label: Optional[SemanticLabel] = None,
         limit: int = 30,
+        offset: int = 0,
     ) -> str:
         """List relationships from the scene graph.
 
@@ -640,6 +678,11 @@ def create_scene_tools(ctx: SceneContext) -> list:
         exclusive: use object_name for one exact instance (e.g. 'column_2'),
         or semantic_label to match relationships for every instance of a
         class (e.g. 'column'). Omit both to list all relationships.
+
+        Results are paginated: if the response says rows were not shown,
+        call again with the suggested offset to see the next batch; rows are
+        always returned in the same order for the same filters, so no row is
+        skipped or repeated across calls.
 
         Args:
             level: Relationship/evidence level to list: 'L1', 'geometric',
@@ -653,8 +696,10 @@ def create_scene_tools(ctx: SceneContext) -> list:
             semantic_label: Optional semantic class. If provided, only
                 relationships where an instance of this class is source or
                 target are listed.
-            limit: Maximum number of relationship rows to return. Default is
-                intentionally small to avoid flooding the chat.
+            limit: Maximum number of relationship rows to return in this
+                call. Default is intentionally small to avoid flooding the chat.
+            offset: Number of relationship rows to skip before collecting up
+                to `limit` rows, to page through a result already seen.
         """
         layer_key = _relationship_layer_key(level)
         if layer_key is None:
@@ -718,24 +763,40 @@ def create_scene_tools(ctx: SceneContext) -> list:
             )
 
         max_rows = max(1, min(int(limit), 200))
+        skip = max(0, int(offset))
         lines = [title]
         remaining = max_rows
-        hidden = 0
+        shown = 0
         for layer, layer_relationships in filtered_by_layer:
             layer_name = RELATIONSHIP_LAYER_NAMES.get(layer, layer)
             lines.append(f"  {layer}/{layer_name}: {len(layer_relationships)}")
-            shown = layer_relationships[:remaining] if remaining > 0 else []
-            for src, tgt, rel_type, rel_level in shown:
+            for src, tgt, rel_type, rel_level in layer_relationships:
+                if skip > 0:
+                    skip -= 1
+                    continue
+                if remaining <= 0:
+                    continue
                 lines.append(f"    - {src} --[{rel_level}:{rel_type}]--> {tgt}")
-            hidden += max(0, len(layer_relationships) - len(shown))
-            remaining -= len(shown)
-        if hidden:
-            lines.append(
-                f"  ... {hidden} more relationships not shown; "
-                "increase limit if needed, but avoid pasting thousands of rows into chat."
-            )
-        if not filtered:
+                remaining -= 1
+                shown += 1
+
+        total = len(filtered)
+        if total == 0:
             lines.append("  No matching relationships found.")
+        elif offset >= total:
+            lines.append(
+                f"  offset={offset} is beyond the last row; "
+                f"this filter has {total} relationship(s) total."
+            )
+        else:
+            hidden = total - offset - shown
+            if hidden > 0:
+                next_offset = offset + shown
+                lines.append(
+                    f"  Showing rows {offset + 1}-{offset + shown} of {total}; "
+                    f"{hidden} more not shown. Call again with offset={next_offset} "
+                    "to see the next batch."
+                )
         return "\n".join(lines)
 
     @tool
