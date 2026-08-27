@@ -126,12 +126,16 @@ def create_agent(ctx: SceneContext, model: str = "llama3", capture_reasoning: bo
     tool_node = ToolNode(tools)
 
     def chat_node(state: AgentState) -> AgentState:
-        language = _response_language(_latest_human_message_text(state["messages"]))
+        user_text = _latest_human_message_text(state["messages"])
+        language = _response_language(user_text)
         messages = [
             SystemMessage(content=_load_system_prompt()),
             SystemMessage(content=_turn_language_instruction(language)),
         ] + state["messages"]
-        return {"messages": [llm_with_tools.invoke(messages)]}
+        response = llm_with_tools.invoke(messages)
+        if not response.tool_calls:
+            response = _repair_final_answer_language(llm, response, user_text, language)
+        return {"messages": [response]}
 
     def think_node(state: AgentState) -> AgentState:
         # Deliberately does NOT return "messages": this call is unbound from
@@ -584,6 +588,121 @@ def _turn_language_instruction(language: str) -> str:
         "etichette semantiche, valori CSV e nomi delle relazioni restituiti "
         "dai tool."
     )
+
+
+def _repair_final_answer_language(
+    llm,
+    response: AIMessage,
+    user_text: str,
+    language: str,
+) -> AIMessage:
+    content = response.content.strip() if isinstance(response.content, str) else ""
+    if not content or not _needs_language_repair(content, language):
+        return response
+
+    target = "English" if language == "en" else "Italian"
+    repair_prompt = (
+        f"Rewrite the assistant answer in {target} only. Do not add, remove, "
+        "or reinterpret facts. Keep object ids, semantic labels, relationship "
+        "names, numbers, measurements, file paths, and CSV values exactly as "
+        "they are. Output only the rewritten answer."
+    )
+    rewritten = llm.invoke(
+        [
+            SystemMessage(content=repair_prompt),
+            HumanMessage(
+                content=(
+                    f"Latest user question:\n{user_text}\n\n"
+                    f"Assistant answer to rewrite:\n{content}"
+                )
+            ),
+        ]
+    )
+    rewritten_content = (
+        rewritten.content.strip()
+        if isinstance(rewritten.content, str) and rewritten.content.strip()
+        else content
+    )
+    return AIMessage(content=rewritten_content)
+
+
+def _needs_language_repair(text: str, language: str) -> bool:
+    normalized = _normalize_text(text)
+    if language == "en":
+        hard_italian_markers = (
+            "osservato dai dati",
+            "relazioni usate",
+            "inferenza",
+            "confidenza",
+            "nella scena",
+            "sono presenti",
+            "oggetti di classe",
+            "nessuna relazione",
+            "trovate ",
+            "si.",
+        )
+        if any(marker in normalized for marker in hard_italian_markers):
+            return True
+        return _language_marker_score(normalized, _ITALIAN_OUTPUT_MARKERS) > (
+            _language_marker_score(normalized, _ENGLISH_OUTPUT_MARKERS) + 1
+        )
+
+    hard_english_markers = (
+        "observed data",
+        "relationships used",
+        "inference",
+        "confidence",
+        "there are",
+        "objects with",
+        "according to the csv",
+    )
+    if any(marker in normalized for marker in hard_english_markers):
+        return True
+    return _language_marker_score(normalized, _ENGLISH_OUTPUT_MARKERS) > (
+        _language_marker_score(normalized, _ITALIAN_OUTPUT_MARKERS) + 1
+    )
+
+
+_ITALIAN_OUTPUT_MARKERS = (
+    "oggetti",
+    "classi",
+    "colonne",
+    "muri",
+    "pavimento",
+    "tetto",
+    "volte",
+    "scena",
+    "presenti",
+    "assenti",
+    "secondo",
+    "dati",
+    "nessuna",
+    "relazione",
+    "risposta",
+)
+
+
+_ENGLISH_OUTPUT_MARKERS = (
+    "objects",
+    "classes",
+    "columns",
+    "walls",
+    "floor",
+    "roof",
+    "vaults",
+    "scene",
+    "present",
+    "absent",
+    "according",
+    "data",
+    "no ",
+    "relationship",
+    "answer",
+)
+
+
+def _language_marker_score(text: str, markers: tuple[str, ...]) -> int:
+    return sum(marker in text for marker in markers)
 
 
 def _phrase(language: str, *, it: str, en: str) -> str:

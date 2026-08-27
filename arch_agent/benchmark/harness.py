@@ -4,6 +4,9 @@ Unlike the interactive CLI (`arch_agent.agent.run_agent`), every question here i
 sent straight to the LLM+tools graph — the deterministic pattern-matching layer
 (`_try_answer_deterministic`) is never used to short-circuit the answer. It is
 only used, separately, to compute a reference answer for comparison.
+
+Reports also include language compliance fields, so English questions can be
+checked for English final answers and Italian questions for Italian answers.
 """
 
 from __future__ import annotations
@@ -17,7 +20,12 @@ from pathlib import Path
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from ..agent import _try_answer_deterministic, create_agent
+from ..agent import (
+    _needs_language_repair,
+    _response_language,
+    _try_answer_deterministic,
+    create_agent,
+)
 from ..pipeline.pipeline import SceneContext
 from .grounding_checks import GroundingIssue, check_groundedness
 
@@ -34,6 +42,9 @@ class ToolCall:
 class BenchmarkResult:
     question: str
     model: str
+    expected_language: str | None = None
+    language_ok: bool | None = None
+    language_issue: str | None = None
     chain_of_thought: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
     final_answer: str | None = None
@@ -114,6 +125,7 @@ def _normalize(text: str) -> str:
 
 def run_question(agent, ctx: SceneContext, model: str, question: str) -> BenchmarkResult:
     result = BenchmarkResult(question=question, model=model)
+    result.expected_language = _response_language(question)
     result.reference_answer = _try_answer_deterministic(ctx, question)
 
     start = time.monotonic()
@@ -149,9 +161,27 @@ def run_question(agent, ctx: SceneContext, model: str, question: str) -> Benchma
     if messages and isinstance(messages[-1], AIMessage):
         result.final_answer = messages[-1].content
 
+    _set_language_check(result)
     result.grounding_issues = check_groundedness(ctx, question, result.final_answer)
 
     return result
+
+
+def _set_language_check(result: BenchmarkResult) -> None:
+    if result.error:
+        return
+    if not result.final_answer:
+        result.language_issue = "No final answer to check."
+        return
+
+    expected = result.expected_language or _response_language(result.question)
+    result.language_ok = not _needs_language_repair(result.final_answer, expected)
+    if result.language_ok:
+        result.language_issue = None
+        return
+
+    language_name = "English" if expected == "en" else "Italian"
+    result.language_issue = f"Expected final answer in {language_name}."
 
 
 def build_trace(result: BenchmarkResult) -> list[str]:
@@ -170,6 +200,9 @@ def build_trace(result: BenchmarkResult) -> list[str]:
     """
     steps = [f"1. Domanda: {result.question}"]
     step = 2
+    if result.expected_language:
+        steps.append(f"{step}. Lingua attesa: {result.expected_language}")
+        step += 1
     if result.error:
         steps.append(f"{step}. Errore: {result.error}")
         return steps
@@ -183,6 +216,11 @@ def build_trace(result: BenchmarkResult) -> list[str]:
         steps.append(f"{step}. Risultato del tool: {call.output or '(nessun output)'}")
         step += 1
     steps.append(f"{step}. Risposta finale: {result.final_answer or '(nessuna risposta)'}")
+    step += 1
+    if result.language_ok is not None:
+        status = "ok" if result.language_ok else "errore"
+        detail = f" ({result.language_issue})" if result.language_issue else ""
+        steps.append(f"{step}. Controllo lingua: {status}{detail}")
     return steps
 
 
@@ -207,6 +245,9 @@ def write_csv_report(results: list[BenchmarkResult], path: str | Path) -> None:
     fieldnames = [
         "question",
         "model",
+        "expected_language",
+        "language_ok",
+        "language_issue",
         "chain_of_thought",
         "trace",
         "num_tool_calls",
@@ -227,6 +268,11 @@ def write_csv_report(results: list[BenchmarkResult], path: str | Path) -> None:
                 {
                     "question": result.question,
                     "model": result.model,
+                    "expected_language": result.expected_language or "",
+                    "language_ok": (
+                        "" if result.language_ok is None else str(result.language_ok)
+                    ),
+                    "language_issue": result.language_issue or "",
                     "chain_of_thought": result.chain_of_thought or "",
                     "trace": "\n".join(build_trace(result)),
                     "num_tool_calls": result.num_tool_calls,
@@ -262,6 +308,8 @@ def summarize(results: list[BenchmarkResult]) -> str:
     total = len(results)
     errors = sum(1 for r in results if r.error)
     zero_tool_calls = sum(1 for r in results if not r.error and r.num_tool_calls == 0)
+    language_checked = sum(1 for r in results if r.language_ok is not None)
+    language_mismatches = sum(1 for r in results if r.language_ok is False)
     reliability_counts: dict[str, int] = {}
     for result in results:
         reliability_counts[result.reliability] = reliability_counts.get(result.reliability, 0) + 1
@@ -289,6 +337,7 @@ def summarize(results: list[BenchmarkResult]) -> str:
         f"Questions: {total}",
         f"Errors (LLM/tool invocation failed): {errors}",
         f"Answered with zero tool calls: {zero_tool_calls}",
+        f"Language mismatches: {language_mismatches}/{language_checked}",
         f"Questions with a captured chain-of-thought: {with_chain_of_thought}/{total}",
         f"Average tool calls per question: {avg_calls:.2f}",
         f"Tool calls with stated reasoning: {reasoned_calls}/{total_calls} ({reasoning_rate:.0%})",
