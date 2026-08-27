@@ -1,172 +1,62 @@
-﻿LISTA DI DOMANDE DA FARE AD OGNI SCENA
-=======================================
+﻿LISTA DI DOMANDE PER OGNI SCENA
 
-1. Inventario generale
-----------------------
-- Quante porte di legno ci sono nella scena?
-- Sai dirmi la posizione delle porte di legno?
-- Quanti oggetti ci sono nella scena?
-- Quante classi ci sono nella scena?
-- Quali classi sono presenti?
-- Quali classi sono assenti?
-- Quante colonne ci sono?
-- Quanti muri ci sono?
-- Quanti floor ci sono?
-- Quanti roof ci sono?
-- Quante vault ci sono?
-- Quanti arch ci sono?
-- Quante stairs ci sono?
-- Quanti door_window ci sono?
-- Quanti moldings ci sono?
-
-2. Descrizione sintetica della scena
-------------------------------------
-- Descrivi la scena in modo sintetico.
-- Quali elementi principali riconosci?
-- Qual e l'elemento dominante nella scena?
-- Quali oggetti o elementi architettonici identifichi con maggiore sicurezza?
-- La scena e interna, esterna o mista?
-
-3. Confini e organizzazione spaziale
-------------------------------------
-- Quali elementi delimitano lo spazio?
-- Quali sono i confini principali della scena?
-- Quali elementi contengono o organizzano la scena?
-- Quali colonne sono perimetrali?
-- Quali colonne sono interne?
-- Il roof o la vault definiscono una copertura?
-- Il wall definisce un limite laterale?
-- Il floor definisce il piano di appoggio?
-
-4. Relazioni geometriche L1
----------------------------
-- Quali relazioni L1 geometric sono presenti?
-- Quali elementi risultano adiacenti tra loro?
-- Quali elementi sono sopra altri elementi?
-- Quali elementi sono sotto altri elementi?
-- Ci sono elementi che si intersecano o si sovrappongono?
-- Le relazioni above indicano supporto strutturale?
-- Quali relazioni spaziali sono piu evidenti nella scena?
-
-5. Relazioni strutturali L2
----------------------------
-- Quali relazioni L2 structural sono presenti?
-- Quali elementi supportano altri elementi?
-- Quali elementi sono supportati da altri elementi?
-- Cosa supportano le colonne?
-- Le colonne supportano il tetto?
-- Le colonne supportano le volte?
-- Le colonne sono supportate dal floor?
-- Il floor supporta le colonne?
-- Il wall e supportato da colonne?
-- Il roof e supportato da colonne?
-- Il roof e supportato da wall?
-- Le vault sono supportate da colonne?
-- Le vault sono supportate da arch?
-- Gli arch sono supportati da colonne?
-
-6. Relazioni mereologiche L3
-----------------------------
-- Quali relazioni L3 mereological sono presenti?
-- Quali elementi fanno parte di altri elementi?
-- Quali oggetti appartengono allo stesso sistema costruttivo?
-- I moldings sono parte di wall, arch o column?
-- I door_window sono aperture nei wall?
-- Gli arch sono parte o nervature di vault?
-
-7. Relazioni per classe specifica
----------------------------------
-- Che relazioni hanno le colonne con le altre classi della scena?
-- Che relazioni ha il wall con le altre classi?
-- Che relazioni ha il roof con le altre classi?
-- Che relazioni ha il floor con le altre classi?
-- Che relazioni hanno le vault con le altre classi?
-- Che relazioni hanno gli arch con le altre classi?
-- Che relazioni hanno i moldings con le altre classi?
-- Che relazioni hanno le stairs con le altre classi?
-
-8. Elementi portanti e non portanti
------------------------------------
-- Quali elementi sembrano portanti?
-- Quali elementi sembrano non portanti?
-- Quali elementi hanno funzione strutturale?
-- Quali elementi hanno funzione ornamentale?
-- Quali elementi hanno funzione distributiva, di passaggio o di accesso?
-- Riesci a distinguere tra elementi portanti e non portanti?
-- La distinzione portante/non portante deriva da L2 o solo dalla classe semantica?
-
-9. Ambiguita e incongruenze
----------------------------
-- Ci sono elementi ambigui o difficili da interpretare?
-- Ci sono relazioni contraddittorie o incongruenti?
-- Ci sono oggetti parziali, occlusi o rumorosi?
-- Ci sono possibili errori di segmentazione?
-- Ci sono relazioni geometriche che non devono essere interpretate come strutturali?
-- Il modello distingue tra cio che vede e cio che inferisce?
-- Il modello descrive correttamente le relazioni o fa ipotesi troppo generiche?
-
-10. Gerarchia e tipologia
--------------------------
-- La scena mostra una gerarchia chiara tra elementi principali e secondari?
-- Quali sono gli elementi principali?
-- Quali sono gli elementi secondari?
-- Se dovessi dare una tipologia alla scena, quale useresti?
-- La scena sembra un portico, un padiglione, uno spazio interno o altro?
-- Con quale livello di confidenza assegni questa tipologia?
-
-11. Domande secche si/no consigliate
-------------------------------------
-- Le colonne sono supportate dal floor?
-- Le colonne supportano il roof?
-- Le colonne supportano le vault?
-- Il roof e supportato dalle colonne?
-- Il roof e supportato dai wall?
-- Le vault sono supportate dalle colonne?
-- Gli arch sono supportati dalle colonne?
-- Il wall e supportato dalle colonne?
-- I moldings sono ornamentali?
-- I door_window sono aperture nei wall?
-
-12. English test questions
---------------------------
-- How many objects are there in the scene?
-- How many classes are there?
-- How many columns are there?
-- How many walls are there?
-- Which classes are present?
-- Describe the scene briefly.
-- Is the scene interior, exterior, or mixed?
-- Which elements delimit the space?
-- Which columns are perimeter columns?
-- Which elements are adjacent?
-- Which elements are above or below other elements?
-- Which L1 geometric relationships are present?
-- Which L2 structural relationships are present?
-- What do the columns support?
-- Are the columns supported by the floor?
-- Do columns support the roof?
-- Is the roof supported by columns?
-- Are the vaults supported by columns?
-- Which elements are load-bearing?
-- Which elements are non-load-bearing?
-- Are there ambiguous or inconsistent relationships?
-- What typology would you assign to the scene?
-- What is your confidence level?
-
-13. Sequenza consigliata per ogni scena
----------------------------------------
-1. Quante classi ci sono?
-2. Quanti oggetti ci sono?
-3. Descrivi la scena in modo sintetico.
-4. La scena e interna, esterna o mista?
-5. Quali elementi delimitano lo spazio?
-6. Quali colonne sono perimetrali?
-7. Quali relazioni L1 geometric sono presenti?
-8. Quali relazioni L2 structural sono presenti?
-9. Cosa supportano le colonne?
-10. Le colonne sono supportate dal floor?
-11. Le colonne supportano il roof?
-12. Quali elementi sembrano portanti e quali no?
-13. Ci sono relazioni contraddittorie o incongruenti?
-14. Se dovessi dare una tipologia alla scena, quale useresti?
-15. Con quale livello di confidenza?
+Descrivi la scena in modo sintetico.
+How many objects are there in the scene?
+Quali classi semantiche sono presenti nella scena?
+Quali classi semantiche sono assenti rispetto all’insieme atteso?
+Elenca tutti gli oggetti nella scena e fornisci il conteggio per classe semantica.
+What is the object distribution by semantic class?
+Quanti oggetti di tipo column, wall, floor, roof, vault, arch, stairs, door_window, moldings sono presenti?
+Quali elementi principali riconosci nella scena?
+Qual è l’elemento dominante nella scena?
+Quali elementi architettonici identifichi con maggiore sicurezza?
+La scena appare prevalentemente interna, esterna o mista?
+Which scene elements are directly observed, and which conclusions are inferred?
+Con quale livello di confidenza descriveresti la scena?
+Quante colonne ci sono nella scena?
+Quali oggetti column sono presenti nella scena?
+Di che materiale sono le colonne?
+What function is assigned to the columns?
+Le colonne sono elementi strutturali?
+Cosa supportano le colonne?
+Che relazioni hanno le column con le altre classi della scena?
+Quanti muri ci sono nella scena?
+Quali oggetti wall sono presenti nella scena?
+Di che materiale sono i muri?
+Ci sono indicazioni sulla funzione dei wall?
+I muri sono elementi strutturali?
+What relationships involve the wall class?
+Quanti pavimenti ci sono nella scena?
+Quale oggetto floor è presente nella scena?
+Di che materiale è il pavimento?
+Che funzione ha il floor?
+Il pavimento è un elemento strutturale o una superficie di appoggio?
+What relationships involve the floor class?
+Quante volte ci sono nella scena?
+Quale oggetto vault è presente nella scena?
+Di che materiale è la volta?
+Che funzione ha la vault?
+La volta è un elemento strutturale?
+What relationships involve the vault class?
+Quanti tetti ci sono nella scena?
+Che relazioni ha la classe roof con le altre classi?
+Le colonne supportano il tetto?
+Il roof è supportato da colonne?
+Il tetto è supportato dai muri?
+Il roof definisce una copertura nella scena?
+Quanti archi ci sono nella scena?
+What relationships involve the arch class?
+Le volte sono supportate dagli archi?
+Gli arch sono supportati da colonne?
+Gli archi sono parte o nervature della volta?
+Quante scale ci sono nella scena?
+Che relazioni ha la classe stairs con le altre classi?
+Le scale collegano livelli diversi della scena?
+Quante porte/finestre ci sono nella scena?
+Quali oggetti door_window sono presenti nella scena?
+Per ogni porta/finestra, indica materiale, tipologia e funzione.
+Are there wooden door_window objects in the scene?
+Quali sono le posizioni delle porte/finestre in legno?
+Quanti moldings ci sono nella scena?
+Di che materiale sono i moldings?
+I moldings sono elementi strutturali o ornamentali?
