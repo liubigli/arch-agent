@@ -5,8 +5,8 @@ Usage:
     python benchmark.py path/to/scene.laz --models llama3.1 qwen3:30b mistral-small3.2
     python benchmark.py path/to/scene.laz --model llama3.1 --output-prefix results/llama3_1
 
-Reports are written as <prefix>_<YYYYMMDD_HHMMSS>.csv/.json so repeated
-runs do not overwrite previous outputs.
+Reports are written as <prefix>_<model>_<YYYYMMDD_HHMMSS>.csv/.json so
+repeated runs do not overwrite previous outputs and the model is always clear.
 """
 
 import argparse
@@ -88,8 +88,9 @@ def parse_args() -> argparse.Namespace:
     group2.add_argument(
         "--output-prefix", default=None,
         help=(
-            "Prefix for the .csv/.json report files. A timestamp is always "
-            "appended to avoid overwriting previous runs. Default prefix: "
+            "Prefix for the .csv/.json report files. The model name and a "
+            "timestamp are always appended to avoid overwriting previous runs. "
+            "Default prefix: "
             "benchmark_results/<model>/<scene_name>."
         ),
     )
@@ -120,17 +121,14 @@ def _report_prefix(
     args: argparse.Namespace,
     point_cloud_path: str,
     model: str,
-    multiple_models: bool,
     timestamp: str,
 ) -> str:
     model_name = _sanitize_for_path(model)
     if args.output_prefix:
-        prefix = args.output_prefix
-        if multiple_models:
-            prefix = f"{prefix}_{model_name}"
+        prefix = f"{args.output_prefix}_{model_name}"
     else:
         scene_name = _sanitize_for_path(Path(point_cloud_path).stem)
-        prefix = f"benchmark_results/{model_name}/{scene_name}"
+        prefix = f"benchmark_results/{model_name}/{scene_name}_{model_name}"
     return f"{prefix}_{timestamp}"
 
 
@@ -171,7 +169,6 @@ def main() -> None:
         print(f"  [{result.model} | {status}] {result.question}")
 
     timestamp = _timestamp_for_path()
-    multiple_models = len(models) > 1
     for model in models:
         print(f"\nBenchmarking model: {model}")
         results = run_benchmark(
@@ -186,7 +183,6 @@ def main() -> None:
             args,
             point_cloud_path,
             model,
-            multiple_models=multiple_models,
             timestamp=timestamp,
         )
         csv_path = Path(f"{prefix}.csv")
