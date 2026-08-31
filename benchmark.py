@@ -24,7 +24,7 @@ from arch_agent.benchmark.harness import (
     write_manual_review_report,
     write_raw_report,
 )
-from main import DEFAULT_POINT_CLOUD_PATH, resolve_local_path, select_point_cloud
+from main import DEFAULT_POINT_CLOUD_PATH, parse_think_override, resolve_local_path, select_point_cloud
 
 EXPECTED_QUESTION_COUNT = 60
 
@@ -91,6 +91,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     group2.add_argument(
+        "--think",
+        choices=("auto", "true", "false"),
+        default="auto",
+        help=(
+            "Override Ollama thinking mode. Use 'auto' for the model profile, "
+            "'true' to force thinking, or 'false' to disable it."
+        ),
+    )
+    group2.add_argument(
         "--output-dir",
         default=None,
         help=(
@@ -132,6 +141,13 @@ def _models_from_args(args: argparse.Namespace) -> list[str]:
             if model:
                 models.append(model)
     return models
+
+
+def _model_name_for_report(model: str, think_mode: str) -> str:
+    model_name = _sanitize_model_for_path(model)
+    if think_mode != "auto":
+        model_name = f"{model_name}_think_{think_mode}"
+    return model_name
 
 
 def _output_dir_from_args(args: argparse.Namespace) -> Path:
@@ -209,7 +225,9 @@ def main() -> None:
         questions = questions[: args.limit]
     print(f"Running questions: {len(questions)} from {args.questions_file}")
     models = _models_from_args(args)
+    think_override = parse_think_override(args.think)
     print(f"Models: {', '.join(models)}")
+    print(f"Thinking mode: {args.think}")
 
     def on_result(result):
         status = "ERROR" if result.error else f"{result.num_tool_calls} tool call(s)"
@@ -220,11 +238,12 @@ def main() -> None:
     date = _date_for_path()
     for model in models:
         print(f"\nBenchmarking model: {model}")
-        model_name = _sanitize_model_for_path(model)
+        model_name = _model_name_for_report(model, args.think)
         test_n = _next_test_number(output_dir, scene_name, model_name, date)
         metadata = {
             "scene": scene_name,
             "model": model,
+            "think": args.think,
             "date": date,
             "test_n": test_n,
             "questions_loaded": EXPECTED_QUESTION_COUNT,
@@ -235,6 +254,7 @@ def main() -> None:
             model,
             questions,
             capture_reasoning=args.capture_reasoning,
+            think_override=think_override,
             on_result=on_result,
         )
         evaluation_records, summary = evaluate_benchmark(raw_records, ctx)

@@ -4,7 +4,7 @@ import re
 from typing import Annotated
 import unicodedata
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_ollama import ChatOllama
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
@@ -108,7 +108,13 @@ _THINK_SUFFIX = (
 )
 
 
-def create_agent(ctx: SceneContext, model: str = "llama3", capture_reasoning: bool = False):
+def create_agent(
+    ctx: SceneContext,
+    model: str = "llama3",
+    capture_reasoning: bool = False,
+    force_first_tool_call: bool = True,
+    think_override: bool | None = None,
+):
     tools = create_scene_tools(ctx)
     profile = resolve_model_profile(model)
     llm_kwargs = {
@@ -117,22 +123,45 @@ def create_agent(ctx: SceneContext, model: str = "llama3", capture_reasoning: bo
         "temperature": 0.0,
         "num_ctx": profile.num_ctx,
     }
-    if profile.think is not None:
-        llm_kwargs["think"] = profile.think
+    effective_think = profile.think if think_override is None else think_override
+    if effective_think is not None:
+        llm_kwargs["think"] = effective_think
     if profile.num_predict is not None:
         llm_kwargs["num_predict"] = profile.num_predict
     llm = ChatOllama(**llm_kwargs)
     llm_with_tools = llm.bind_tools(tools)
+    llm_with_required_tool = llm.bind_tools(tools, tool_choice="any")
     tool_node = ToolNode(tools)
 
     def chat_node(state: AgentState) -> AgentState:
         user_text = _latest_human_message_text(state["messages"])
         language = _response_language(user_text)
+        has_tool_result = _current_turn_has_tool_result(state["messages"])
         messages = [
             SystemMessage(content=_load_system_prompt()),
             SystemMessage(content=_turn_language_instruction(language)),
         ] + state["messages"]
-        response = llm_with_tools.invoke(messages)
+        runnable = (
+            llm_with_tools
+            if has_tool_result or not force_first_tool_call
+            else llm_with_required_tool
+        )
+        response = runnable.invoke(messages)
+        if (
+            force_first_tool_call
+            and not has_tool_result
+            and not response.tool_calls
+        ):
+            retry_messages = messages + [
+                SystemMessage(
+                    content=(
+                        "Your previous response was invalid for this scene "
+                        "question because it did not call a tool. Call one of "
+                        "the available tools now. Do not answer from memory."
+                    )
+                )
+            ]
+            response = llm_with_required_tool.invoke(retry_messages)
         if not response.tool_calls:
             response = _repair_final_answer_language(llm, response, user_text, language)
         return {"messages": [response]}
@@ -174,8 +203,14 @@ def run_agent(
     model: str = "llama3",
     capture_reasoning: bool = False,
     deterministic_router: bool = False,
+    think_override: bool | None = None,
 ) -> None:
-    agent = create_agent(ctx, model=model, capture_reasoning=capture_reasoning)
+    agent = create_agent(
+        ctx,
+        model=model,
+        capture_reasoning=capture_reasoning,
+        think_override=think_override,
+    )
 
     print("=" * 60)
     print("  Architectural Scene Agent  |  model: " + model)
@@ -247,6 +282,16 @@ def _print_tool_reasoning(new_messages: list[BaseMessage]) -> None:
         for tool_call in message.tool_calls:
             args = ", ".join(f"{key}={value!r}" for key, value in tool_call.get("args", {}).items())
             print(f"[tool call] {tool_call['name']}({args})")
+
+
+def _current_turn_has_tool_result(messages: list[BaseMessage]) -> bool:
+    """Return True once the latest user turn has already received tool data."""
+    for message in reversed(messages):
+        if isinstance(message, ToolMessage):
+            return True
+        if isinstance(message, HumanMessage):
+            return False
+    return False
 
 
 def _try_answer_deterministic(

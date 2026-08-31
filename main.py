@@ -99,6 +99,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     group2.add_argument(
+        "--think",
+        choices=("auto", "true", "false"),
+        default="auto",
+        help=(
+            "Override Ollama thinking mode. Use 'auto' for the model profile, "
+            "'true' to force thinking, or 'false' to disable it."
+        ),
+    )
+    group2.add_argument(
         "--deterministic-router",
         action="store_true",
         help=(
@@ -124,6 +133,14 @@ def resolve_local_path(path_value: str) -> Path:
             return wsl_path
 
     return path
+
+
+def parse_think_override(value: str) -> bool | None:
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    return None
 
 
 def select_point_cloud(path_value: str) -> str:
@@ -185,6 +202,7 @@ def main() -> None:
         model=args.model,
         capture_reasoning=args.capture_reasoning,
         deterministic_router=args.deterministic_router,
+        think_override=parse_think_override(args.think),
     )
 
 

@@ -38,7 +38,7 @@ _PROFILES: dict[str, ModelProfile] = {
     "qwen3": ModelProfile(num_ctx=32768, think=True, num_predict=4096),
     "qwen2.5": ModelProfile(num_ctx=16384),
     "qwen2": ModelProfile(num_ctx=16384),
-    "deepseek-r1": ModelProfile(num_ctx=32768, think=True, num_predict=4096),
+    "deepseek-r1": ModelProfile(num_ctx=32768, num_predict=4096),
     "gemma4": ModelProfile(num_ctx=32768, think=True, num_predict=4096),
     "gpt-oss": ModelProfile(num_ctx=16384, think=True, num_predict=4096),
     "llama3.3": ModelProfile(num_ctx=16384),

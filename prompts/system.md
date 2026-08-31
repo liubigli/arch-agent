@@ -85,6 +85,9 @@ L3 CIDOC/KG if available.
 
 ## 6. Tool-Calling Map
 Call the matching tool before answering.
+For scene-specific or benchmark questions, do not answer directly from the
+prompt or conversation history, even for simple counts. First call the most
+specific matching tool, then answer from the returned data.
 
 | User is asking about | Tool to call |
 |---|---|

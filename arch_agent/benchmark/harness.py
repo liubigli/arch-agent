@@ -240,9 +240,15 @@ def run_benchmark(
     model: str,
     questions: list[str],
     capture_reasoning: bool = False,
+    think_override: bool | None = None,
     on_result=None,
 ) -> list[BenchmarkResult]:
-    agent = create_agent(ctx, model=model, capture_reasoning=capture_reasoning)
+    agent = create_agent(
+        ctx,
+        model=model,
+        capture_reasoning=capture_reasoning,
+        think_override=think_override,
+    )
     results = []
     for question_id, question in enumerate(questions, start=1):
         result = run_question(agent, ctx, model, question, question_id=question_id)
