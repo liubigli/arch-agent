@@ -48,6 +48,43 @@ _ABSENCE_MARKER_PATTERNS = tuple(
 _OBJECT_NAME_RE = re.compile(r"\b([a-z_]+_\d+)\b")
 _NUMBER_RE = re.compile(r"\d+")
 
+ABSENT_CLASS_OK_PATTERNS = (
+    "classe non presente",
+    "classe assente",
+    "non presente",
+    "assente",
+    "not present",
+    "absent",
+    "not found",
+)
+
+ABSENT_CLASS_BAD_PATTERNS = (
+    "supporta",
+    "supportano",
+    "supportato",
+    "supportata",
+    "supported",
+    "adjacent",
+    "adiacente",
+    "above",
+    "below",
+    "sopra",
+    "sotto",
+    "materiale",
+    "material",
+    "funzione",
+    "function",
+)
+
+SUBSTITUTION_PATTERNS = (
+    "se con roof intendi",
+    "se per roof intendi",
+    "roof-like",
+    "equivale",
+    "puo essere interpretata come",
+    "può essere interpretata come",
+)
+
 
 @dataclass
 class GroundingIssue:
@@ -89,26 +126,55 @@ def _check_absent_class_claimed_present(
     if not absent:
         return []
 
-    sentences = _sentences(answer)
+    normalized_answer = _normalize_text(answer)
     issues: list[GroundingIssue] = []
     for label in sorted(absent):
-        pattern = re.compile(rf"\b{re.escape(label)}\b")
-        for sentence in sentences:
-            normalized = _normalize_text(sentence)
-            if not pattern.search(normalized):
-                continue
-            if any(pattern.search(normalized) for pattern in _ABSENCE_MARKER_PATTERNS):
-                continue
-            issues.append(
-                GroundingIssue(
-                    kind="absent_class_claimed_present",
-                    detail=(
-                        f"Answer mentions class '{label}' without flagging it as "
-                        f"absent, but no '{label}' object exists in the scene."
-                    ),
-                )
+        label_pattern = re.compile(rf"\b{re.escape(label)}\b")
+        if not label_pattern.search(normalized_answer):
+            continue
+
+        object_pattern = re.compile(rf"\b{re.escape(label)}_\d+\b")
+        invents_objects = object_pattern.search(normalized_answer) is not None
+        reports_absence = any(
+            pattern in normalized_answer for pattern in ABSENT_CLASS_OK_PATTERNS
+        ) or any(
+            pattern.search(normalized_answer) for pattern in _ABSENCE_MARKER_PATTERNS
+        )
+        reports_zero = (
+            f"{label}: 0" in normalized_answer
+            or f"{label}=0" in normalized_answer
+            or f"{label} = 0" in normalized_answer
+            or f"0 {label}" in normalized_answer
+            or f"nessun oggetto {label}" in normalized_answer
+            or f"non ci sono {label}" in normalized_answer
+            or f"no {label}" in normalized_answer
+        )
+        asserts_properties = any(
+            label in sentence
+            and any(bad in sentence for bad in ABSENT_CLASS_BAD_PATTERNS)
+            for sentence in _sentences(normalized_answer)
+        )
+        substitutes_class = any(
+            pattern in normalized_answer for pattern in SUBSTITUTION_PATTERNS
+        )
+
+        if (
+            (reports_absence or reports_zero)
+            and not invents_objects
+            and not asserts_properties
+            and not substitutes_class
+        ):
+            continue
+
+        issues.append(
+            GroundingIssue(
+                kind="absent_class_claimed_present",
+                detail=(
+                    f"Class '{label}' is absent, but the answer treats it as "
+                    "present or substitutes it with another class."
+                ),
             )
-            break
+        )
     return issues
 
 
