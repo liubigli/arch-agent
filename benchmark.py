@@ -3,25 +3,30 @@ Usage:
     python benchmark.py path/to/scene.laz --questions-file tmp/domande_per_scene.txt
     python benchmark.py path/to/scene.laz --model llama3.1 --limit 20
     python benchmark.py path/to/scene.laz --models llama3.1 qwen3:30b mistral-small3.2
-    python benchmark.py path/to/scene.laz --model llama3.1 --output-prefix results/llama3_1
+    python benchmark.py path/to/scene.laz --model llama3.1 --output-dir results
 
-Reports are written as <prefix>_<model>_<YYYYMMDD_HHMMSS>.csv/.json so
-repeated runs do not overwrite previous outputs and the model is always clear.
+For each model, the runner writes raw, evaluation, and manual-review JSON/CSV
+files named as benchmark_<kind>_<scene>_<model>_<YYYYMMDD>_test_<n>.
 """
 
 import argparse
+import re
 from datetime import datetime
 from pathlib import Path
 
 from arch_agent.pipeline.pipeline import PipelineParams, run_pipeline
 from arch_agent.benchmark.harness import (
+    evaluate_benchmark,
     load_questions,
+    manual_review_records,
     run_benchmark,
-    summarize,
-    write_csv_report,
-    write_json_report,
+    write_evaluation_report,
+    write_manual_review_report,
+    write_raw_report,
 )
 from main import DEFAULT_POINT_CLOUD_PATH, resolve_local_path, select_point_cloud
+
+EXPECTED_QUESTION_COUNT = 60
 
 
 def parse_args() -> argparse.Namespace:
@@ -86,12 +91,19 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     group2.add_argument(
-        "--output-prefix", default=None,
+        "--output-dir",
+        default=None,
         help=(
-            "Prefix for the .csv/.json report files. The model name and a "
-            "timestamp are always appended to avoid overwriting previous runs. "
-            "Default prefix: "
-            "benchmark_results/<model>/<scene_name>."
+            "Directory for benchmark reports. Default: benchmark_results. "
+            "Files are named automatically with kind, scene, model, date, and test number."
+        ),
+    )
+    group2.add_argument(
+        "--output-prefix",
+        default=None,
+        help=(
+            "Deprecated compatibility option. When provided without "
+            "--output-dir, its parent directory is used as output directory."
         ),
     )
 
@@ -102,8 +114,13 @@ def _sanitize_for_path(text: str) -> str:
     return "".join(char if char.isalnum() or char in ".-_" else "_" for char in text)
 
 
-def _timestamp_for_path() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
+def _sanitize_model_for_path(text: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_")
+    return sanitized or "model"
+
+
+def _date_for_path() -> str:
+    return datetime.now().strftime("%Y%m%d")
 
 
 def _models_from_args(args: argparse.Namespace) -> list[str]:
@@ -117,19 +134,44 @@ def _models_from_args(args: argparse.Namespace) -> list[str]:
     return models
 
 
-def _report_prefix(
-    args: argparse.Namespace,
-    point_cloud_path: str,
-    model: str,
-    timestamp: str,
-) -> str:
-    model_name = _sanitize_for_path(model)
+def _output_dir_from_args(args: argparse.Namespace) -> Path:
+    if args.output_dir:
+        return Path(args.output_dir)
     if args.output_prefix:
-        prefix = f"{args.output_prefix}_{model_name}"
-    else:
-        scene_name = _sanitize_for_path(Path(point_cloud_path).stem)
-        prefix = f"benchmark_results/{model_name}/{scene_name}_{model_name}"
-    return f"{prefix}_{timestamp}"
+        return Path(args.output_prefix).parent
+    return Path("benchmark_results")
+
+
+def _next_test_number(
+    output_dir: Path,
+    scene_name: str,
+    model_name: str,
+    date: str,
+) -> int:
+    pattern = f"benchmark_raw_{scene_name}_{model_name}_{date}_test_*.json"
+    test_numbers: list[int] = []
+    for path in output_dir.glob(pattern):
+        match = re.search(r"_test_(\d+)\.json$", path.name)
+        if match:
+            test_numbers.append(int(match.group(1)))
+    return (max(test_numbers) + 1) if test_numbers else 1
+
+
+def _report_paths(
+    output_dir: Path,
+    scene_name: str,
+    model_name: str,
+    date: str,
+    test_n: int,
+) -> dict[str, dict[str, Path]]:
+    paths: dict[str, dict[str, Path]] = {}
+    for kind in ("raw", "evaluation", "manual_review"):
+        stem = f"benchmark_{kind}_{scene_name}_{model_name}_{date}_test_{test_n}"
+        paths[kind] = {
+            "json": output_dir / f"{stem}.json",
+            "csv": output_dir / f"{stem}.csv",
+        }
+    return paths
 
 
 def main() -> None:
@@ -158,9 +200,14 @@ def main() -> None:
         visualize_clustered_objects(ctx.objects)
 
     questions = load_questions(args.questions_file)
+    print(f"Loaded questions: {len(questions)}")
+    if len(questions) != EXPECTED_QUESTION_COUNT:
+        raise ValueError(
+            f"Expected {EXPECTED_QUESTION_COUNT} questions, loaded {len(questions)}"
+        )
     if args.limit > 0:
         questions = questions[: args.limit]
-    print(f"Loaded {len(questions)} unique questions from {args.questions_file}")
+    print(f"Running questions: {len(questions)} from {args.questions_file}")
     models = _models_from_args(args)
     print(f"Models: {', '.join(models)}")
 
@@ -168,31 +215,58 @@ def main() -> None:
         status = "ERROR" if result.error else f"{result.num_tool_calls} tool call(s)"
         print(f"  [{result.model} | {status}] {result.question}")
 
-    timestamp = _timestamp_for_path()
+    output_dir = _output_dir_from_args(args)
+    scene_name = _sanitize_for_path(Path(point_cloud_path).stem)
+    date = _date_for_path()
     for model in models:
         print(f"\nBenchmarking model: {model}")
-        results = run_benchmark(
+        model_name = _sanitize_model_for_path(model)
+        test_n = _next_test_number(output_dir, scene_name, model_name, date)
+        metadata = {
+            "scene": scene_name,
+            "model": model,
+            "date": date,
+            "test_n": test_n,
+            "questions_loaded": EXPECTED_QUESTION_COUNT,
+        }
+
+        raw_records = run_benchmark(
             ctx,
             model,
             questions,
             capture_reasoning=args.capture_reasoning,
             on_result=on_result,
         )
+        evaluation_records, summary = evaluate_benchmark(raw_records, ctx)
+        manual_records = manual_review_records(evaluation_records)
 
-        prefix = _report_prefix(
-            args,
-            point_cloud_path,
-            model,
-            timestamp=timestamp,
+        paths = _report_paths(output_dir, scene_name, model_name, date, test_n)
+        write_raw_report(
+            metadata,
+            raw_records,
+            paths["raw"]["json"],
+            paths["raw"]["csv"],
         )
-        csv_path = Path(f"{prefix}.csv")
-        json_path = Path(f"{prefix}.json")
-        csv_path.parent.mkdir(parents=True, exist_ok=True)
-        write_csv_report(results, csv_path)
-        write_json_report(results, json_path)
+        write_evaluation_report(
+            metadata,
+            evaluation_records,
+            summary,
+            paths["evaluation"]["json"],
+            paths["evaluation"]["csv"],
+        )
+        write_manual_review_report(
+            metadata,
+            manual_records,
+            paths["manual_review"]["json"],
+            paths["manual_review"]["csv"],
+        )
 
-        print("\n" + summarize(results))
-        print(f"\nReports written to {csv_path} and {json_path}")
+        print("\nSummary:")
+        for key, value in summary.items():
+            print(f"  {key}: {value}")
+        print("\nReports written:")
+        for kind, kind_paths in paths.items():
+            print(f"  {kind}: {kind_paths['json']} | {kind_paths['csv']}")
 
 
 if __name__ == "__main__":

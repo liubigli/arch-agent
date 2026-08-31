@@ -15,6 +15,7 @@ import csv
 import json
 import time
 import unicodedata
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -29,6 +30,13 @@ from ..agent import (
 from ..pipeline.pipeline import SceneContext
 from .grounding_checks import GroundingIssue, check_groundedness
 
+REVIEW_RELIABILITY_FILTER = {
+    "ungrounded",
+    "unanswered",
+    "unverified_no_tool",
+    "error",
+}
+
 
 @dataclass
 class ToolCall:
@@ -42,6 +50,7 @@ class ToolCall:
 class BenchmarkResult:
     question: str
     model: str
+    question_id: int | None = None
     expected_language: str | None = None
     language_ok: bool | None = None
     language_issue: str | None = None
@@ -123,10 +132,15 @@ def _normalize(text: str) -> str:
     return " ".join(without_accents.split())
 
 
-def run_question(agent, ctx: SceneContext, model: str, question: str) -> BenchmarkResult:
-    result = BenchmarkResult(question=question, model=model)
+def run_question(
+    agent,
+    ctx: SceneContext,
+    model: str,
+    question: str,
+    question_id: int | None = None,
+) -> BenchmarkResult:
+    result = BenchmarkResult(question=question, model=model, question_id=question_id)
     result.expected_language = _response_language(question)
-    result.reference_answer = _try_answer_deterministic(ctx, question)
 
     start = time.monotonic()
     try:
@@ -160,9 +174,6 @@ def run_question(agent, ctx: SceneContext, model: str, question: str) -> Benchma
 
     if messages and isinstance(messages[-1], AIMessage):
         result.final_answer = messages[-1].content
-
-    _set_language_check(result)
-    result.grounding_issues = check_groundedness(ctx, question, result.final_answer)
 
     return result
 
@@ -233,12 +244,280 @@ def run_benchmark(
 ) -> list[BenchmarkResult]:
     agent = create_agent(ctx, model=model, capture_reasoning=capture_reasoning)
     results = []
-    for question in questions:
-        result = run_question(agent, ctx, model, question)
+    for question_id, question in enumerate(questions, start=1):
+        result = run_question(agent, ctx, model, question, question_id=question_id)
         results.append(result)
         if on_result:
             on_result(result)
     return results
+
+
+def evaluate_benchmark(
+    raw_results: list[BenchmarkResult],
+    ctx: SceneContext,
+) -> tuple[list[BenchmarkResult], dict]:
+    evaluation_results: list[BenchmarkResult] = []
+    for raw_result in raw_results:
+        result = deepcopy(raw_result)
+        result.reference_answer = _try_answer_deterministic(ctx, result.question)
+        _set_language_check(result)
+        result.grounding_issues = check_groundedness(
+            ctx,
+            result.question,
+            result.final_answer,
+        )
+        evaluation_results.append(result)
+    return evaluation_results, build_evaluation_summary(evaluation_results)
+
+
+def manual_review_records(
+    evaluation_results: list[BenchmarkResult],
+) -> list[BenchmarkResult]:
+    return [
+        result
+        for result in evaluation_results
+        if result.reliability in REVIEW_RELIABILITY_FILTER
+    ]
+
+
+def build_evaluation_summary(results: list[BenchmarkResult]) -> dict:
+    total = len(results)
+    errors = sum(1 for result in results if result.error)
+    zero_tool_calls = sum(
+        1
+        for result in results
+        if not result.error and result.num_tool_calls == 0
+    )
+    language_checked = sum(1 for result in results if result.language_ok is not None)
+    language_mismatches = sum(1 for result in results if result.language_ok is False)
+    flagged = sum(1 for result in results if result.grounding_issues)
+    reliability_counts: dict[str, int] = {}
+    for result in results:
+        reliability_counts[result.reliability] = (
+            reliability_counts.get(result.reliability, 0) + 1
+        )
+
+    scoreable = total - errors
+    grounded_rate = (
+        reliability_counts.get("grounded", 0) / scoreable * 100
+        if scoreable
+        else 0.0
+    )
+    avg_calls = (
+        sum(result.num_tool_calls for result in results) / total
+        if total
+        else 0.0
+    )
+    avg_latency = (
+        sum(result.latency_s for result in results) / total
+        if total
+        else 0.0
+    )
+    return {
+        "errors": errors,
+        "answered_with_zero_tool_calls": zero_tool_calls,
+        "language_mismatches": f"{language_mismatches}/{language_checked}",
+        "average_tool_calls_per_question": round(avg_calls, 2),
+        "average_latency_s": round(avg_latency, 3),
+        "answers_flagged_by_groundedness_checks": flagged,
+        "grounded_rate_pct": round(grounded_rate, 1),
+        "reliability_breakdown": dict(
+            sorted(
+                reliability_counts.items(),
+                key=lambda item: item[0],
+            )
+        ),
+    }
+
+
+def write_raw_report(
+    metadata: dict,
+    results: list[BenchmarkResult],
+    json_path: str | Path,
+    csv_path: str | Path,
+) -> None:
+    records = [_raw_record(result) for result in results]
+    _write_json_payload({**metadata, "records": records}, json_path)
+    _write_csv_rows(
+        records,
+        csv_path,
+        [
+            "question_id",
+            "model",
+            "question",
+            "expected_language",
+            "final_answer",
+            "tool_calls",
+            "latency_s",
+            "error",
+        ],
+    )
+
+
+def write_evaluation_report(
+    metadata: dict,
+    results: list[BenchmarkResult],
+    summary: dict,
+    json_path: str | Path,
+    csv_path: str | Path,
+) -> None:
+    records = [_evaluation_record(result) for result in results]
+    _write_json_payload({**metadata, "summary": summary, "records": records}, json_path)
+    _write_csv_rows(
+        records,
+        csv_path,
+        [
+            "question_id",
+            "model",
+            "question",
+            "expected_language",
+            "final_answer",
+            "reference_answer",
+            "reliability",
+            "grounding_issues",
+            "language_ok",
+            "language_issue",
+            "tool_call_count",
+            "latency_s",
+            "error",
+        ],
+    )
+
+
+def write_manual_review_report(
+    metadata: dict,
+    results: list[BenchmarkResult],
+    json_path: str | Path,
+    csv_path: str | Path,
+) -> None:
+    records = [_evaluation_record(result) for result in results]
+    payload = {
+        **metadata,
+        "review_filter": sorted(REVIEW_RELIABILITY_FILTER),
+        "records": records,
+    }
+    _write_json_payload(payload, json_path)
+    _write_csv_rows(
+        records,
+        csv_path,
+        [
+            "question_id",
+            "model",
+            "question",
+            "expected_language",
+            "final_answer",
+            "reference_answer",
+            "reliability",
+            "grounding_issues",
+            "language_ok",
+            "language_issue",
+            "tool_call_count",
+            "latency_s",
+            "error",
+        ],
+    )
+
+
+def _raw_record(result: BenchmarkResult) -> dict:
+    return {
+        "question_id": result.question_id,
+        "model": result.model,
+        "question": result.question,
+        "expected_language": result.expected_language,
+        "final_answer": result.final_answer,
+        "tool_calls": [_tool_call_record(call) for call in result.tool_calls],
+        "trace": build_raw_trace(result),
+        "latency_s": round(result.latency_s, 3),
+        "error": result.error,
+    }
+
+
+def _evaluation_record(result: BenchmarkResult) -> dict:
+    return {
+        "question_id": result.question_id,
+        "model": result.model,
+        "question": result.question,
+        "expected_language": result.expected_language,
+        "final_answer": result.final_answer,
+        "reference_answer": result.reference_answer,
+        "reliability": result.reliability,
+        "grounding_issues": [
+            {"kind": issue.kind, "detail": issue.detail}
+            for issue in result.grounding_issues
+        ],
+        "language_ok": result.language_ok,
+        "language_issue": result.language_issue,
+        "tool_call_count": result.num_tool_calls,
+        "latency_s": round(result.latency_s, 3),
+        "error": result.error,
+    }
+
+
+def _tool_call_record(call: ToolCall) -> dict:
+    return {
+        "name": call.name,
+        "args": call.args,
+        "output": call.output,
+        "reasoning": call.reasoning,
+    }
+
+
+def build_raw_trace(result: BenchmarkResult) -> list[str]:
+    steps = [f"1. Question: {result.question}"]
+    step = 2
+    if result.expected_language:
+        steps.append(f"{step}. Expected language: {result.expected_language}")
+        step += 1
+    if result.error:
+        steps.append(f"{step}. Error: {result.error}")
+        return steps
+    if not result.tool_calls:
+        steps.append(f"{step}. No tool called.")
+        step += 1
+    for call in result.tool_calls:
+        args_text = ", ".join(f"{key}={value!r}" for key, value in call.args.items())
+        steps.append(f"{step}. Tool call: {call.name}({args_text})")
+        step += 1
+        steps.append(f"{step}. Tool output: {call.output or '(no output)'}")
+        step += 1
+    steps.append(f"{step}. Final answer: {result.final_answer or '(no answer)'}")
+    return steps
+
+
+def _write_json_payload(payload: dict, path: str | Path) -> None:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _write_csv_rows(
+    records: list[dict],
+    path: str | Path,
+    fieldnames: list[str],
+) -> None:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for record in records:
+            writer.writerow(
+                {
+                    field: _csv_cell(record.get(field))
+                    for field in fieldnames
+                }
+            )
+
+
+def _csv_cell(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
 
 
 def write_csv_report(results: list[BenchmarkResult], path: str | Path) -> None:

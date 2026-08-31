@@ -1,62 +1,62 @@
-﻿LISTA DI DOMANDE PER OGNI SCENA
+LISTA DI DOMANDE PER OGNI SCENA
 
 Come descriveresti la scena in modo sintetico?
 How many objects are there in the scene?
-Quali classi semantiche sono presenti nella scena?
-Quali classi semantiche sono assenti rispetto all’insieme atteso?
-Puoi elencare tutti gli oggetti nella scena e fornire il conteggio per classe semantica?
+Quante classi semantiche ci sono nella scena?
+Which semantic classes are present in the scene?
+Quali classi semantiche sono assenti rispetto all'insieme atteso?
 What is the object distribution by semantic class?
-Quanti oggetti di tipo column, wall, floor, roof, vault, arch, stairs, door_window, moldings sono presenti?
-Quali elementi principali riconosci nella scena?
-Qual è l’elemento dominante nella scena?
-Quali elementi architettonici identifichi con maggiore sicurezza?
-La scena appare prevalentemente interna, esterna o mista?
-Which scene elements are directly observed, and which conclusions are inferred?
-Con quale livello di confidenza descriveresti la scena?
 Quante colonne ci sono nella scena?
 Quali oggetti column sono presenti nella scena?
-Di che materiale sono le colonne?
-What function is assigned to the columns?
-Le colonne sono elementi strutturali?
-Cosa supportano le colonne?
-Che relazioni hanno le column con le altre classi della scena?
 Quanti muri ci sono nella scena?
 Quali oggetti wall sono presenti nella scena?
-Di che materiale sono i muri?
-Ci sono indicazioni sulla funzione dei wall?
-I muri sono elementi strutturali?
-What relationships involve the wall class?
 Quanti pavimenti ci sono nella scena?
 Quale oggetto floor è presente nella scena?
-Di che materiale è il pavimento?
-Che funzione ha il floor?
-Il pavimento è un elemento strutturale o una superficie di appoggio?
-What relationships involve the floor class?
 Quante volte ci sono nella scena?
 Quale oggetto vault è presente nella scena?
-Di che materiale è la volta?
-Che funzione ha la vault?
-La volta è un elemento strutturale?
-What relationships involve the vault class?
 Quanti tetti ci sono nella scena?
-Che relazioni ha la classe roof con le altre classi?
-Le colonne supportano il tetto?
-Il roof è supportato da colonne?
-Il tetto è supportato dai muri?
-Il roof definisce una copertura nella scena?
 Quanti archi ci sono nella scena?
-What relationships involve the arch class?
-Le volte sono supportate dagli archi?
-Gli arch sono supportati da colonne?
-Gli archi sono parte o nervature della volta?
 Quante scale ci sono nella scena?
-Che relazioni ha la classe stairs con le altre classi?
-Le scale collegano livelli diversi della scena?
-Quante porte/finestre ci sono nella scena?
+Quanti door_window ci sono nella scena?
 Quali oggetti door_window sono presenti nella scena?
-Puoi indicare, per ogni porta/finestra, materiale, tipologia e funzione?
-Are there wooden door_window objects in the scene?
-Quali sono le posizioni delle porte/finestre in legno?
 Quanti moldings ci sono nella scena?
-Di che materiale sono i moldings?
-I moldings sono elementi strutturali o ornamentali?
+Quali oggetti moldings sono presenti nella scena?
+Quali classi sono considerate strutturali dal sistema?
+Which classes are considered structural by the system?
+Quali classi sono considerate non strutturali dal sistema?
+Are columns classified as structural elements by the system?
+I moldings che ruolo hanno nel sistema?
+What role do door_window elements have in the system?
+Il floor è classificato come struttura o superficie di appoggio?
+La risposta sui ruoli deriva dal sistema o dal CSV?
+Il CSV è stato associato correttamente alla scena?
+Quanti oggetti hanno una descrizione CSV associata?
+Which objects have CSV descriptions?
+Quali oggetti non hanno una descrizione CSV associata?
+Which CSV rows were not matched to scene objects?
+Quali materiali sono indicati nel CSV?
+What material are the columns according to the CSV?
+Di che materiale sono i muri secondo il CSV?
+Di che materiale sono i moldings secondo il CSV?
+Are there wooden objects according to the CSV?
+Ci sono oggetti in marmo secondo il CSV?
+Quali funzioni sono indicate nel CSV?
+What function is assigned to the columns in the CSV?
+Quale funzione hanno i door_window secondo il CSV?
+I moldings sono descritti come ornamentali nel CSV?
+I door_window sono descritti come aperture o accessi nel CSV?
+Qual è il global box center di ogni colonna?
+What is the global box center of each molding?
+Quali colonne sono più esterne?
+Which columns are internal columns?
+Quali oggetti sono più vicini alla colonna centrale?
+Quali relazioni spaziali sono presenti nella scena?
+Which elements are adjacent to each other?
+Quali elementi sono sopra altri elementi?
+Which elements are below other elements?
+Le relazioni spaziali bastano per dichiarare una funzione strutturale?
+Can the model infer material from RGB color?
+Ci sono oggetti con pochi punti o possibili errori di segmentazione?
+Are there ambiguous or inconsistent relationships?
+Che tipologia assegneresti alla scena?
+Is the typology based on geometry, CSV metadata, system roles, or inference?
