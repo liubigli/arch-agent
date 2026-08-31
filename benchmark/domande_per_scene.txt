@@ -1,10 +1,10 @@
 ﻿LISTA DI DOMANDE PER OGNI SCENA
 
-Descrivi la scena in modo sintetico.
+Come descriveresti la scena in modo sintetico?
 How many objects are there in the scene?
 Quali classi semantiche sono presenti nella scena?
 Quali classi semantiche sono assenti rispetto all’insieme atteso?
-Elenca tutti gli oggetti nella scena e fornisci il conteggio per classe semantica.
+Puoi elencare tutti gli oggetti nella scena e fornire il conteggio per classe semantica?
 What is the object distribution by semantic class?
 Quanti oggetti di tipo column, wall, floor, roof, vault, arch, stairs, door_window, moldings sono presenti?
 Quali elementi principali riconosci nella scena?
@@ -54,7 +54,7 @@ Che relazioni ha la classe stairs con le altre classi?
 Le scale collegano livelli diversi della scena?
 Quante porte/finestre ci sono nella scena?
 Quali oggetti door_window sono presenti nella scena?
-Per ogni porta/finestra, indica materiale, tipologia e funzione.
+Puoi indicare, per ogni porta/finestra, materiale, tipologia e funzione?
 Are there wooden door_window objects in the scene?
 Quali sono le posizioni delle porte/finestre in legno?
 Quanti moldings ci sono nella scena?
