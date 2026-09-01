@@ -215,7 +215,8 @@ def main() -> None:
         from arch_agent.visualization.pointcloud_viewer import visualize_clustered_objects
         visualize_clustered_objects(ctx.objects)
 
-    questions = load_questions(args.questions_file)
+    questions_file = resolve_local_path(args.questions_file)
+    questions = load_questions(questions_file)
     print(f"Loaded questions: {len(questions)}")
     if len(questions) != EXPECTED_QUESTION_COUNT:
         raise ValueError(
@@ -223,7 +224,7 @@ def main() -> None:
         )
     if args.limit > 0:
         questions = questions[: args.limit]
-    print(f"Running questions: {len(questions)} from {args.questions_file}")
+    print(f"Running questions: {len(questions)} from {questions_file}")
     models = _models_from_args(args)
     think_override = parse_think_override(args.think)
     print(f"Models: {', '.join(models)}")
