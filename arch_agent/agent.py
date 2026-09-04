@@ -141,6 +141,7 @@ def create_agent(
             SystemMessage(content=_load_system_prompt()),
             SystemMessage(content=_turn_language_instruction(language)),
         ] + state["messages"]
+        messages = _sanitize_messages_for_llm(messages)
         runnable = (
             llm_with_tools
             if has_tool_result or not force_first_tool_call
@@ -161,6 +162,7 @@ def create_agent(
                     )
                 )
             ]
+            retry_messages = _sanitize_messages_for_llm(retry_messages)
             response = llm_with_required_tool.invoke(retry_messages)
         if not response.tool_calls:
             response = _repair_final_answer_language(llm, response, user_text, language)
@@ -179,6 +181,7 @@ def create_agent(
             SystemMessage(content=_load_system_prompt() + _THINK_SUFFIX),
             SystemMessage(content=_turn_language_instruction(language)),
         ] + state["messages"]
+        messages = _sanitize_messages_for_llm(messages)
         response = llm.invoke(messages)
         content = response.content.strip() if isinstance(response.content, str) else ""
         return {"reasoning": content or None}
@@ -232,6 +235,7 @@ def run_agent(
             break
         if not user_input:
             continue
+        user_input = _sanitize_text_for_llm(user_input)
 
         if deterministic_router:
             direct_response = _try_answer_deterministic_for_input(ctx, user_input)
@@ -616,6 +620,37 @@ def _latest_human_message_text(messages: list[BaseMessage]) -> str:
                 return content
             return str(content)
     return ""
+
+
+def _sanitize_messages_for_llm(messages: list[BaseMessage]) -> list[BaseMessage]:
+    return [_sanitize_message_for_llm(message) for message in messages]
+
+
+def _sanitize_message_for_llm(message: BaseMessage) -> BaseMessage:
+    content = getattr(message, "content", None)
+    clean_content = _sanitize_content_for_llm(content)
+    if clean_content == content:
+        return message
+    if hasattr(message, "model_copy"):
+        return message.model_copy(update={"content": clean_content})
+    return message.copy(update={"content": clean_content})
+
+
+def _sanitize_content_for_llm(value):
+    if isinstance(value, str):
+        return _sanitize_text_for_llm(value)
+    if isinstance(value, list):
+        return [_sanitize_content_for_llm(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_content_for_llm(item)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _sanitize_text_for_llm(value: str) -> str:
+    return value.encode("utf-8", errors="replace").decode("utf-8")
 
 
 def _turn_language_instruction(language: str) -> str:

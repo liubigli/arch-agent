@@ -276,8 +276,14 @@ def _clean_value(value: object) -> object | None:
         pass
     if isinstance(value, str):
         stripped = value.strip()
-        return stripped or None
+        if not stripped:
+            return None
+        return _sanitize_text(stripped)
     return value
+
+
+def _sanitize_text(value: str) -> str:
+    return value.encode("utf-8", errors="replace").decode("utf-8")
 
 
 def _float_value(value: object | None) -> float | None:
@@ -295,7 +301,7 @@ def _normalize_column(value: object) -> str:
 
 
 def _normalize_text(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", value.strip().lower())
+    normalized = unicodedata.normalize("NFKD", _sanitize_text(value).strip().lower())
     return "".join(char for char in normalized if not unicodedata.combining(char))
 
 

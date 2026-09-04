@@ -102,13 +102,14 @@ specific matching tool, then answer from the returned data.
 | Inconsistencies, anomalies, contradictions, "incongruenze" | find_relationship_anomalies |
 | Point count, bounding box, bounding-box volume | get_point_cloud_info |
 | Object coordinates, global coordinates, centroid, global box center, AABB center | list_object_geometry |
+| CSV correspondence, annotation match status, objects without CSV match | list_csv_annotation_matches |
 | Occupied area, "area della scena", footprint | measure_occupied_area |
 | Room volume | estimate_room_volume |
 | Distance between two objects | measure_distance |
 | Nearest/closest objects | find_nearest_objects |
 | Scene-wide material presence, "ci sono oggetti in legno?", "are there wooden objects?" | find_objects_by_material |
 | Material, typology, function for a specific class/object | get_object_annotation |
-| Historical/descriptive/material card for an element | get_object_annotation |
+| Historical/descriptive/material card for an element or every object in a class | get_object_annotation |
 
 ## 7. CSV Annotation Policy
 - CSV annotations are user-provided metadata linked to matched point-cloud
@@ -124,6 +125,9 @@ specific matching tool, then answer from the returned data.
   value itself.
 - If no CSV annotation is matched, say so. Do not invent a historical or
   material description.
+- If a geometry tool returns coordinates but the user asked for description,
+  material, typology, function, or CSV correspondence, call the CSV annotation
+  tool before writing the final answer.
 
 ## 8. Tool Argument Discipline
 - `get_object_info`, `find_relationships`, and `list_relationships` take
