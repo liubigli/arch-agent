@@ -98,16 +98,19 @@ specific matching tool, then answer from the returned data.
 | First general question about the scene | get_scene_statistics |
 | Valid semantic labels/classes in the scene | list_semantic_labels |
 | Number of objects, "quanti/how many" | count_objects |
+| Number of objects per class / counts grouped by class | count_objects_by_class |
 | Object inventory, object names, detected objects by class | list_objects |
 | Geometric/object details: centroid, dimensions, point count, role | get_object_info |
 | Computed relationships / L1 geometric relationships | list_relationships |
 | Relationships involving one specific object or class | find_relationships |
 | Relationship types present | list_relationships |
-| Inconsistencies, anomalies, contradictions, "incongruenze" | find_relationship_anomalies |
+| Sparse objects, few points, noisy/incomplete objects, segmentation warnings | find_sparse_objects |
+| Relationship inconsistencies, contradictions, "incongruenze" | find_relationship_anomalies |
 | Point count, bounding box, bounding-box volume | get_point_cloud_info |
 | Object coordinates, global coordinates, centroid, global box center, AABB center | list_object_geometry |
+| Scene-wide occupied area, scene footprint, "area della scena" | measure_scene_occupied_area |
 | CSV correspondence, annotation match status, objects without CSV match | list_csv_annotation_matches |
-| Occupied area, "area della scena", footprint | measure_occupied_area |
+| Occupied area/footprint for a specific class or object | measure_occupied_area |
 | Room volume | estimate_room_volume |
 | Distance between two objects | measure_distance |
 | Nearest/closest objects | find_nearest_objects |

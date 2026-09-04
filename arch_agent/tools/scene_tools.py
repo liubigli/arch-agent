@@ -287,6 +287,28 @@ def create_scene_tools(ctx: SceneContext) -> list:
         return f"Total detected objects: {len(ctx.objects)}"
 
     @tool
+    def count_objects_by_class() -> str:
+        """Count all detected objects grouped by semantic class.
+
+        Use this for questions such as "quanti oggetti ci sono per ogni
+        classe?", "class counts", or "how many objects per class?". It returns
+        every class present in one call, so no class is accidentally omitted.
+        """
+        counts = Counter(obj["semantic_label"] for obj in ctx.objects.values())
+        if not counts:
+            return "No objects in the scene."
+        lines = [
+            f"Total detected objects: {len(ctx.objects)}",
+            f"Semantic classes present: {len(counts)}",
+            "Objects per class:",
+        ]
+        lines.extend(
+            f"  - {label}: {count}"
+            for label, count in sorted(counts.items())
+        )
+        return "\n".join(lines)
+
+    @tool
     def list_objects() -> str:
         """List all objects detected in the scene, grouped by semantic class."""
         if not ctx.objects:
@@ -1023,6 +1045,58 @@ def create_scene_tools(ctx: SceneContext) -> list:
         return "\n".join(lines)
 
     @tool
+    def find_sparse_objects(
+        min_points: Optional[int] = None,
+        limit: int = 20,
+    ) -> str:
+        """List objects with few points as possible segmentation-quality warnings.
+
+        Use this for questions about sparse objects, objects with few points,
+        noisy/incomplete objects, possible segmentation errors, or "pochi
+        punti". This does not inspect relationship contradictions; for
+        relationship anomalies use find_relationship_anomalies.
+
+        Args:
+            min_points: Optional point-count threshold. If omitted, an
+                automatic threshold is selected from the scene distribution.
+            limit: Maximum number of low-point objects to list.
+        """
+        if not ctx.objects:
+            return "No objects in the scene."
+
+        point_counts = sorted(int(obj.get("point_count", 0)) for obj in ctx.objects.values())
+        if min_points is None:
+            low_decile_index = max(0, int(len(point_counts) * 0.10) - 1)
+            threshold = max(100, point_counts[low_decile_index])
+        else:
+            threshold = max(0, int(min_points))
+
+        sparse_rows = [
+            (name, obj["semantic_label"], int(obj.get("point_count", 0)))
+            for name, obj in ctx.objects.items()
+            if int(obj.get("point_count", 0)) <= threshold
+        ]
+        sparse_rows.sort(key=lambda row: (row[2], row[0]))
+
+        max_rows = max(1, min(int(limit), 200))
+        lines = [
+            "Sparse-object check:",
+            f"  Threshold: <= {threshold} points",
+            f"  Objects flagged: {len(sparse_rows)}",
+            "  Meaning: low point count is a segmentation-quality warning, not a confirmed error.",
+        ]
+        for name, label, point_count in sparse_rows[:max_rows]:
+            lines.append(
+                f"  - {name} ({label}): {point_count:,} points; "
+                f"box_center={_object_box_center_text(ctx, name)}"
+            )
+        if len(sparse_rows) > max_rows:
+            lines.append(f"  ... {len(sparse_rows) - max_rows} more objects not shown.")
+        if not sparse_rows:
+            lines.append("  No objects below the selected threshold.")
+        return "\n".join(lines)
+
+    @tool
     def get_point_cloud_info() -> str:
         """Get point-cloud level metrics: point count, classes, bounding box, and footprint."""
         if ctx.df is None or ctx.df.empty:
@@ -1047,6 +1121,26 @@ def create_scene_tools(ctx: SceneContext) -> list:
         ]
         lines.extend(f"  - {label}: {count:,}" for label, count in class_counts.items())
         return "\n".join(lines)
+
+    @tool
+    def measure_scene_occupied_area() -> str:
+        """Measure the whole scene occupied area/footprint in square meters.
+
+        Use this for scene-wide questions such as "area occupata dalla scena",
+        "superficie della scena", "scene occupied area", or "scene footprint".
+        This returns the XY AABB footprint of all loaded points in m2.
+        """
+        if ctx.df is None or ctx.df.empty:
+            return "No point-cloud dataframe is available."
+        mins = ctx.df[["x", "y"]].min()
+        maxs = ctx.df[["x", "y"]].max()
+        dx = float(maxs["x"] - mins["x"])
+        dy = float(maxs["y"] - mins["y"])
+        area = dx * dy
+        return (
+            f"Scene occupied area: {area:.3f} m2 "
+            f"(XY AABB footprint of all loaded points: {dx:.3f} x {dy:.3f} m; not volume)."
+        )
 
     @tool
     def measure_occupied_area(
@@ -1317,6 +1411,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
     return [
         list_semantic_labels,
         count_objects,
+        count_objects_by_class,
         list_objects,
         list_object_geometry,
         get_object_info,
@@ -1328,7 +1423,9 @@ def create_scene_tools(ctx: SceneContext) -> list:
         list_relationships,
         find_relationship_anomalies,
         get_scene_statistics,
+        find_sparse_objects,
         get_point_cloud_info,
+        measure_scene_occupied_area,
         measure_occupied_area,
         estimate_room_volume,
         measure_distance,
