@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from io import StringIO
 from pathlib import Path
 import math
 import unicodedata
@@ -125,20 +126,37 @@ def load_object_annotations(
 
 
 def _read_annotation_csv(csv_path: str) -> pd.DataFrame:
-    last_error: UnicodeDecodeError | None = None
+    path = Path(csv_path)
+    raw = path.read_bytes()
+    decoded_candidates: list[tuple[int, str, str]] = []
+
     for encoding in CSV_ENCODINGS:
         try:
-            return pd.read_csv(
-                csv_path,
-                sep=None,
-                engine="python",
-                encoding=encoding,
-            )
-        except UnicodeDecodeError as exc:
+            text = raw.decode(encoding)
+            decoded_candidates.append((_decoded_text_score(text), encoding, text))
+        except UnicodeDecodeError:
+            if encoding.startswith("utf-8"):
+                text = raw.decode(encoding, errors="replace")
+                decoded_candidates.append(
+                    (_decoded_text_score(text), f"{encoding}+replace", text)
+                )
+
+    last_error: Exception | None = None
+    for _, _, text in sorted(decoded_candidates, key=lambda item: item[0]):
+        try:
+            return pd.read_csv(StringIO(text), sep=None, engine="python")
+        except Exception as exc:
             last_error = exc
     if last_error is not None:
         raise last_error
     return pd.read_csv(csv_path, sep=None, engine="python")
+
+
+def _decoded_text_score(text: str) -> int:
+    mojibake_markers = ("Ã", "Â", "â€", "â€™", "â€œ", "â€\x9d")
+    return text.count("\ufffd") * 5 + sum(
+        text.count(marker) * 3 for marker in mojibake_markers
+    )
 
 
 def _repair_single_field_rows(df: pd.DataFrame) -> pd.DataFrame:

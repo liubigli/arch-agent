@@ -687,7 +687,7 @@ def _repair_final_answer_language(
         "names, numbers, measurements, file paths, and CSV values exactly as "
         "they are. Output only the rewritten answer."
     )
-    rewritten = llm.invoke(
+    repair_messages = _sanitize_messages_for_llm(
         [
             SystemMessage(content=repair_prompt),
             HumanMessage(
@@ -698,6 +698,7 @@ def _repair_final_answer_language(
             ),
         ]
     )
+    rewritten = llm.invoke(repair_messages)
     rewritten_content = (
         rewritten.content.strip()
         if isinstance(rewritten.content, str) and rewritten.content.strip()
@@ -714,12 +715,17 @@ def _needs_language_repair(text: str, language: str) -> bool:
             "relazioni usate",
             "inferenza",
             "confidenza",
+            "ecco",
             "nella scena",
             "sono presenti",
+            "sono fatti",
+            "sono fatte",
             "oggetti di classe",
+            "ogni oggetto",
             "nessuna relazione",
             "trovate ",
             "si.",
+            "usando il csv",
         )
         if any(marker in normalized for marker in hard_italian_markers):
             return True
@@ -732,8 +738,15 @@ def _needs_language_repair(text: str, language: str) -> bool:
         "relationships used",
         "inference",
         "confidence",
+        "here are",
+        "using the csv",
+        "from the csv",
         "there are",
+        "is made of",
+        "are made of",
         "objects with",
+        "the descriptions",
+        "each molding",
         "according to the csv",
     )
     if any(marker in normalized for marker in hard_english_markers):

@@ -110,6 +110,7 @@ specific matching tool, then answer from the returned data.
 | Scene-wide material presence, "ci sono oggetti in legno?", "are there wooden objects?" | find_objects_by_material |
 | Material, typology, function for a specific class/object | get_object_annotation |
 | Historical/descriptive/material card for an element or every object in a class | get_object_annotation |
+| Description of every object in a class using the CSV | get_object_annotation |
 
 ## 7. CSV Annotation Policy
 - CSV annotations are user-provided metadata linked to matched point-cloud
@@ -119,6 +120,9 @@ specific matching tool, then answer from the returned data.
 - Material, typology, and function must come only from CSV metadata.
 - Do not infer material from RGB, roughness, free descriptions, geometry,
   semantic class, or architectural priors.
+- Do not collapse different CSV values into one generic answer. If different
+  objects in the same class have different materials, typologies, or functions,
+  group them by object or by exact CSV value.
 - For material search results, preserve exact object ids, semantic labels, and
   material values returned by the tool. Do not rename `door_window` as "door",
   "window", "portone", or "finestra" unless that wording appears in the CSV
