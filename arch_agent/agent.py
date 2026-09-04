@@ -166,6 +166,11 @@ def create_agent(
             response = llm_with_required_tool.invoke(retry_messages)
         if not response.tool_calls:
             response = _repair_final_answer_language(llm, response, user_text, language)
+            response = _csv_tool_fallback_if_needed(
+                response,
+                state["messages"],
+                language=language,
+            )
         return {"messages": [response]}
 
     def think_node(state: AgentState) -> AgentState:
@@ -236,6 +241,7 @@ def run_agent(
         if not user_input:
             continue
         user_input = _sanitize_text_for_llm(user_input)
+        input_parts = _split_user_questions(user_input)
 
         if deterministic_router:
             direct_response = _try_answer_deterministic_for_input(ctx, user_input)
@@ -245,20 +251,21 @@ def run_agent(
                 print(f"\nAgent: {direct_response}\n")
                 continue
 
-        messages.append(HumanMessage(content=user_input))
-        previous_len = len(messages)
-        try:
-            result = agent.invoke({"messages": messages})
-        except Exception as exc:
-            messages.pop()
-            print(f"\nAgent: {_format_llm_error(exc, model)}\n")
-            continue
-        messages = result["messages"]
-        reasoning = result.get("reasoning")
-        if reasoning:
-            print(f"\n[thinking] {reasoning}")
-        _print_tool_reasoning(messages[previous_len:])
-        print(f"\nAgent: {messages[-1].content}\n")
+        for part in input_parts:
+            messages.append(HumanMessage(content=part))
+            previous_len = len(messages)
+            try:
+                result = agent.invoke({"messages": messages})
+            except Exception as exc:
+                messages.pop()
+                print(f"\nAgent: {_format_llm_error(exc, model)}\n")
+                break
+            messages = result["messages"]
+            reasoning = result.get("reasoning")
+            if reasoning:
+                print(f"\n[thinking] {reasoning}")
+            _print_tool_reasoning(messages[previous_len:])
+            print(f"\nAgent: {messages[-1].content}\n")
 
 
 def _try_answer_deterministic_for_input(
@@ -519,11 +526,17 @@ def _try_answer_deterministic(
 
 
 def _split_user_questions(user_input: str) -> list[str]:
-    parts = [
-        part.strip()
-        for part in re.split(r"(?<=[?])\s*", user_input)
-        if part.strip()
-    ]
+    raw_parts: list[str] = []
+    for line in user_input.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        raw_parts.extend(
+            part.strip()
+            for part in re.split(r"(?<=[?])\s*", line)
+            if part.strip()
+        )
+    parts = raw_parts or [user_input]
     if len(parts) <= 1:
         return [user_input]
     return parts
@@ -653,6 +666,119 @@ def _sanitize_text_for_llm(value: str) -> str:
     return value.encode("utf-8", errors="replace").decode("utf-8")
 
 
+_CSV_VERBATIM_TOOLS = {"get_object_annotation", "list_csv_annotation_matches"}
+
+
+def _csv_tool_fallback_if_needed(
+    response: AIMessage,
+    messages: list[BaseMessage],
+    language: str,
+) -> AIMessage:
+    content = response.content.strip() if isinstance(response.content, str) else ""
+    normalized = _normalize_text(content)
+    needs_fallback = (
+        _needs_language_repair(content, language)
+        or "rewritten answer" in normalized
+        or "risposta riscritta" in normalized
+    )
+    if not needs_fallback:
+        return response
+
+    tool_messages = [
+        message for message in _latest_turn_tool_messages(messages)
+        if _is_csv_verbatim_tool_message(message)
+    ]
+    if not tool_messages:
+        return response
+
+    return AIMessage(
+        content=_format_csv_tool_fallback(tool_messages, language=language)
+    )
+
+
+def _latest_turn_tool_messages(messages: list[BaseMessage]) -> list[ToolMessage]:
+    tool_messages: list[ToolMessage] = []
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            break
+        if isinstance(message, ToolMessage):
+            tool_messages.append(message)
+    return list(reversed(tool_messages))
+
+
+def _is_csv_verbatim_tool_message(message: ToolMessage) -> bool:
+    if getattr(message, "name", None) in _CSV_VERBATIM_TOOLS:
+        return True
+    content = _tool_content_to_text(message.content)
+    normalized = _normalize_text(content)
+    return (
+        normalized.startswith("csv annotations for ")
+        or normalized.startswith("csv annotation match status")
+        or "matching method should be global_box_center" in normalized
+        or "match method: csv global_box_center" in normalized
+    )
+
+
+def _format_csv_tool_fallback(
+    tool_messages: list[ToolMessage],
+    language: str,
+) -> str:
+    chunks = [
+        _tool_content_to_text(message.content)
+        for message in tool_messages
+        if _tool_content_to_text(message.content).strip()
+    ]
+    text = "\n\n".join(chunks).strip()
+    text = _sanitize_text_for_llm(text)
+    if language == "en":
+        return "From the CSV, using source values verbatim:\n" + text
+    return (
+        "Dal CSV, con valori riportati senza traduzione:\n"
+        + _localize_csv_tool_scaffold(text)
+    )
+
+
+def _tool_content_to_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(_tool_content_to_text(item) for item in content)
+    if isinstance(content, dict):
+        return "\n".join(
+            f"{key}: {_tool_content_to_text(value)}"
+            for key, value in content.items()
+        )
+    return str(content)
+
+
+def _localize_csv_tool_scaffold(text: str) -> str:
+    text = re.sub(
+        r"CSV annotations for class ([^:]+): (\d+) matched entries\.",
+        r"Annotazioni CSV per la classe \1: \2 record abbinati.",
+        text,
+    )
+    text = re.sub(
+        r"CSV annotations for ([^(]+) \(([^)]+)\):",
+        r"Annotazioni CSV per \1 (\2):",
+        text,
+    )
+    replacements = {
+        "Matching method should be global_box_center when the CSV provides global_box_center_x/y/z.": (
+            "Metodo di match: global_box_center quando il CSV fornisce "
+            "global_box_center_x/y/z."
+        ),
+        "Entry ": "Record ",
+        "source row": "riga sorgente",
+        "No CSV annotations are loaded. Start main.py with --annotation-csv or place a matching CSV next to the LAZ file.": (
+            "Nessuna annotazione CSV caricata. Avvia main.py con "
+            "--annotation-csv oppure metti un CSV corrispondente accanto al LAZ."
+        ),
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
+
+
 def _turn_language_instruction(language: str) -> str:
     if language == "en":
         return (
@@ -680,13 +806,20 @@ def _repair_final_answer_language(
     if not content or not _needs_language_repair(content, language):
         return response
 
-    target = "English" if language == "en" else "Italian"
-    repair_prompt = (
-        f"Rewrite the assistant answer in {target} only. Do not add, remove, "
-        "or reinterpret facts. Keep object ids, semantic labels, relationship "
-        "names, numbers, measurements, file paths, and CSV values exactly as "
-        "they are. Output only the rewritten answer."
-    )
+    if language == "en":
+        repair_prompt = (
+            "Rewrite the assistant answer in English only. Do not add, remove, "
+            "or reinterpret facts. Keep object ids, semantic labels, relationship "
+            "names, numbers, measurements, file paths, and CSV values exactly as "
+            "they are. Output only the rewritten answer, with no introduction."
+        )
+    else:
+        repair_prompt = (
+            "Riscrivi la risposta dell'assistente solo in italiano. Non aggiungere, "
+            "rimuovere o reinterpretare fatti. Mantieni identici object id, "
+            "etichette semantiche, nomi di relazioni, numeri, misure, percorsi file "
+            "e valori CSV. Produci solo la risposta riscritta, senza introduzioni."
+        )
     repair_messages = _sanitize_messages_for_llm(
         [
             SystemMessage(content=repair_prompt),
@@ -738,12 +871,19 @@ def _needs_language_repair(text: str, language: str) -> bool:
         "relationships used",
         "inference",
         "confidence",
+        "here is",
         "here are",
+        "using only the csv",
         "using the csv",
         "from the csv",
+        "note that",
+        "extracted directly",
+        "have not been interpreted",
         "there are",
         "is made of",
         "are made of",
+        "the object",
+        "the objects",
         "objects with",
         "the descriptions",
         "each molding",

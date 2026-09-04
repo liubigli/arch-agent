@@ -154,6 +154,33 @@ def _bounds_gap(b1: dict, b2: dict) -> float:
     return float(np.linalg.norm(gaps))
 
 
+def _horizontal_gap(b1: dict, b2: dict) -> float:
+    gaps = [
+        _axis_gap(
+            float(b1["min"][axis]),
+            float(b1["max"][axis]),
+            float(b2["min"][axis]),
+            float(b2["max"][axis]),
+        )
+        for axis in range(2)
+    ]
+    return float(np.linalg.norm(gaps))
+
+
+def _axis_overlap_ratio(b1: dict, b2: dict, axis: int) -> float:
+    overlap = max(
+        0.0,
+        min(float(b1["max"][axis]), float(b2["max"][axis]))
+        - max(float(b1["min"][axis]), float(b2["min"][axis])),
+    )
+    size1 = max(float(b1["max"][axis]) - float(b1["min"][axis]), 0.0)
+    size2 = max(float(b2["max"][axis]) - float(b2["min"][axis]), 0.0)
+    reference = min(size1, size2)
+    if reference <= 0:
+        return 0.0
+    return float(overlap / reference)
+
+
 def _vertical_gap(upper_bounds: dict, lower_bounds: dict) -> float:
     return float(upper_bounds["min"][2] - lower_bounds["max"][2])
 
@@ -213,6 +240,44 @@ def _rests_on(upper: dict, lower: dict) -> bool:
         upper["centroid"][2] > lower["centroid"][2]
         and -0.15 <= z_gap <= 0.35
         and _overlap_xy_ratio(upper_bounds, lower_bounds) >= 0.10
+    )
+
+
+def _is_adjacent_laterally(
+    obj1: dict,
+    obj2: dict,
+    max_gap: float,
+) -> bool:
+    label1 = obj1.get("semantic_label")
+    label2 = obj2.get("semantic_label")
+
+    # A floor is a horizontal support surface: relations with vertical
+    # architectural elements should be represented by above/below, not
+    # lateral adjacency.
+    if "floor" in {label1, label2} and label1 != label2:
+        return False
+
+    if _is_above(obj1, obj2) or _is_above(obj2, obj1):
+        return False
+
+    b1 = obj1["bounds"]
+    b2 = obj2["bounds"]
+    if _horizontal_gap(b1, b2) > max_gap:
+        return False
+
+    # Lateral adjacency requires the two elements to share a comparable
+    # vertical range. This avoids treating stacked elements as adjacent.
+    if _axis_overlap_ratio(b1, b2, axis=2) < 0.10:
+        return False
+
+    x_overlap = _axis_overlap_ratio(b1, b2, axis=0)
+    y_overlap = _axis_overlap_ratio(b1, b2, axis=1)
+    x_gap = _axis_gap(float(b1["min"][0]), float(b1["max"][0]), float(b2["min"][0]), float(b2["max"][0]))
+    y_gap = _axis_gap(float(b1["min"][1]), float(b1["max"][1]), float(b2["min"][1]), float(b2["max"][1]))
+
+    return (
+        (x_gap <= max_gap and y_overlap >= 0.05)
+        or (y_gap <= max_gap and x_overlap >= 0.05)
     )
 
 
@@ -324,14 +389,18 @@ def _determine_geometric_relationships(
         relationships.append((name1, name2, "near", GEOMETRIC_LEVEL))
         relationships.append((name2, name1, "near", GEOMETRIC_LEVEL))
 
-    if _is_above(obj1, obj2):
+    obj1_above_obj2 = _is_above(obj1, obj2)
+    obj2_above_obj1 = _is_above(obj2, obj1)
+
+    if obj1_above_obj2:
         relationships.append((name1, name2, "above", GEOMETRIC_LEVEL))
         relationships.append((name2, name1, "below", GEOMETRIC_LEVEL))
-    elif _is_above(obj2, obj1):
+    elif obj2_above_obj1:
         relationships.append((name2, name1, "above", GEOMETRIC_LEVEL))
         relationships.append((name1, name2, "below", GEOMETRIC_LEVEL))
 
-    if _bounds_gap(obj1["bounds"], obj2["bounds"]) <= min(distance_threshold * 0.25, 0.75):
+    adjacent_gap = min(distance_threshold * 0.25, 0.75)
+    if _is_adjacent_laterally(obj1, obj2, adjacent_gap):
         relationships.append((name1, name2, "adjacent_to", GEOMETRIC_LEVEL))
         relationships.append((name2, name1, "adjacent_to", GEOMETRIC_LEVEL))
 

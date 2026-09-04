@@ -276,6 +276,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
             semantic_label: Optional semantic class to count, e.g. 'wall',
                 'column', or 'floor'. If omitted, returns the total object count.
         """
+        semantic_label = _canonical_semantic_label(semantic_label)
         if semantic_label:
             count = sum(
                 1 for obj in ctx.objects.values()
@@ -319,9 +320,17 @@ def create_scene_tools(ctx: SceneContext) -> list:
             semantic_label: Optional semantic class, e.g. 'moldings'.
             object_name: Optional object name, e.g. 'moldings_0'.
         """
+        semantic_label = _canonical_semantic_label(semantic_label)
         if object_name:
             if object_name not in ctx.objects:
-                return _object_not_found_message(object_name, ctx.objects)
+                object_as_label = _canonical_semantic_label(object_name)
+                if object_as_label and _objects_with_semantic_label(ctx, object_as_label):
+                    semantic_label = object_as_label
+                    object_name = None
+                else:
+                    return _object_not_found_message(object_name, ctx.objects)
+
+        if object_name:
             names = [object_name]
             target = object_name
         elif semantic_label:
@@ -441,7 +450,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
                 to `limit` rows, to page through a result already seen.
         """
         object_name = _clean_optional(object_name)
-        semantic_label = _clean_optional(semantic_label)
+        semantic_label = _canonical_semantic_label(semantic_label)
         target_names = _resolve_target_names(ctx, object_name, semantic_label)
         if isinstance(target_names, str):
             return target_names
@@ -517,6 +526,14 @@ def create_scene_tools(ctx: SceneContext) -> list:
             semantic_label: Optional semantic class, e.g. 'column'.
             position: Optional spatial selector, e.g. 'central', 'left', 'north'.
         """
+        semantic_label = _canonical_semantic_label(semantic_label)
+        object_name = _clean_optional(object_name)
+        if object_name and object_name not in ctx.objects and semantic_label is None:
+            object_as_label = _canonical_semantic_label(object_name)
+            if object_as_label and _objects_with_semantic_label(ctx, object_as_label):
+                semantic_label = object_as_label
+                object_name = None
+
         if object_name is None and semantic_label and position is None:
             candidates = [
                 name for name, obj in ctx.objects.items()
@@ -562,6 +579,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
             limit: Maximum number of rows to show.
         """
         semantic_label = _clean_optional(semantic_label)
+        semantic_label = _canonical_semantic_label(semantic_label)
         max_rows = max(1, min(int(limit), 300))
         object_annotations = getattr(ctx, "object_annotations", {})
         unmatched_annotations = getattr(ctx, "unmatched_annotations", [])
@@ -693,7 +711,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
             limit: Maximum number of matched objects to list.
         """
         material = (material or "").strip()
-        semantic_label = _clean_optional(semantic_label)
+        semantic_label = _canonical_semantic_label(semantic_label)
         if not material:
             return "Provide a material to search for, e.g. material='legno'."
 
@@ -766,6 +784,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
         """
         if object_name not in ctx.objects:
             return _object_not_found_message(object_name, ctx.objects)
+        semantic_label = _canonical_semantic_label(semantic_label)
         obj = ctx.objects[object_name]
         if obj["semantic_label"] != semantic_label:
             return (
@@ -838,9 +857,14 @@ def create_scene_tools(ctx: SceneContext) -> list:
             valid = "all, L1/geometric, structural_evidence from CSV, L2/CSV detail, L3/CIDOC-KG"
             return f"Unknown relationship level '{level}'. Valid values: {valid}."
         object_name = _clean_optional(object_name)
-        semantic_label = _clean_optional(semantic_label)
+        semantic_label = _canonical_semantic_label(semantic_label)
         if object_name and semantic_label:
             return "Provide only one of object_name or semantic_label, not both."
+        if object_name and object_name not in ctx.objects:
+            object_as_label = _canonical_semantic_label(object_name)
+            if object_as_label and _objects_with_semantic_label(ctx, object_as_label):
+                semantic_label = object_as_label
+                object_name = None
         if layer_key == "L2_DETAIL":
             return _l2_detail_tool_summary(ctx)
         if layer_key == "L3_KG_DETAIL":
@@ -1156,7 +1180,8 @@ def create_scene_tools(ctx: SceneContext) -> list:
         lines = [
             f"Nearest objects to {object_name}"
             + (f" with class {semantic_label}" if semantic_label else "")
-            + f": {len(rows)} candidates"
+            + f": {len(rows)} candidates",
+            "Sorted by bbox_gap: minimum distance between bounding boxes, not centroid distance.",
         ]
         for candidate_name, label, metrics in rows[:max_rows]:
             lines.append(
@@ -1205,6 +1230,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
         lines = []
 
         if semantic_label:
+            semantic_label = _canonical_semantic_label(semantic_label)
             matches = [
                 name for name, obj in ctx.objects.items()
                 if obj["semantic_label"] == semantic_label
@@ -1367,6 +1393,7 @@ def _format_annotations_for_class(
         "Matching method should be global_box_center when the CSV provides global_box_center_x/y/z.",
     ]
     for object_name, annotation in annotated[:30]:
+        box_center = _object_box_center_text(ctx, object_name)
         values = []
         for key in (
             "material_description",
@@ -1388,7 +1415,10 @@ def _format_annotations_for_class(
         match_text = match.get("method", "unknown")
         if distance is not None:
             match_text += f", distance={distance:.3f} m"
-        lines.append(f"  - {object_name}: " + "; ".join(values + [f"match: {match_text}"]))
+        lines.append(
+            f"  - {object_name}: "
+            + "; ".join(values + [f"box_center: {box_center}", f"match: {match_text}"])
+        )
     if len(annotated) > 30:
         lines.append(f"  ... {len(annotated) - 30} annotations not shown.")
     return "\n".join(lines)
@@ -1657,6 +1687,20 @@ def _clean_optional(value: Optional[str]) -> Optional[str]:
     return value
 
 
+def _canonical_semantic_label(value: Optional[str]) -> Optional[str]:
+    value = _clean_optional(value)
+    if value is None:
+        return None
+    normalized = _normalize_text(value)
+    valid_labels = set(_all_semantic_classes())
+    if normalized in valid_labels:
+        return normalized
+    for alias, label in _SEMANTIC_ALIASES:
+        if _normalize_text(alias) == normalized:
+            return label
+    return value
+
+
 def _resolve_target_names(ctx, object_name: Optional[str], semantic_label: Optional[str]):
     """Resolve object_name/semantic_label into a list of exact object names.
 
@@ -1664,13 +1708,21 @@ def _resolve_target_names(ctx, object_name: Optional[str], semantic_label: Optio
     callers should check `isinstance(result, str)` and return it as-is.
     """
     object_name = _clean_optional(object_name)
-    semantic_label = _clean_optional(semantic_label)
+    semantic_label = _canonical_semantic_label(semantic_label)
     if not object_name and not semantic_label:
         return "Provide either object_name or semantic_label."
     if object_name and semantic_label:
         return "Provide only one of object_name or semantic_label, not both."
     if object_name:
         if object_name not in ctx.objects:
+            object_as_label = _canonical_semantic_label(object_name)
+            if object_as_label:
+                names = sorted(
+                    name for name, obj in ctx.objects.items()
+                    if obj["semantic_label"] == object_as_label
+                )
+                if names:
+                    return names
             return _object_not_found_message(object_name, ctx.objects)
         return [object_name]
     names = sorted(

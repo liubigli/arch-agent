@@ -73,6 +73,14 @@ pixi run view-graph "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_ar
 pixi run view-graph "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --level L1 --classes wall --include-neighbors
 
 
+#visualizzare solo relazioni sopra/sotto tra wall, floor e vicini
+pixi run view-graph "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --level L1 --classes wall floor --include-neighbors --relation-types above below --edge-labels --directed --layout spatial
+
+
+#salvare il grafo sopra/sotto tra wall e floor come PNG
+pixi run view-graph "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --level L1 --classes wall floor --include-neighbors --relation-types above below --edge-labels --directed --layout spatial --output "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/scena4_VAL_wall_floor_above_below.png" --no-show
+
+
 #visualizzare solo alcune relazioni L1
 pixi run view-graph "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" --level L1 --relation-types near adjacent_to --edge-labels
 
