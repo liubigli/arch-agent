@@ -81,9 +81,9 @@ def _points_to_arrays(
         )
 
     arrays = {
-        "x": np.asarray(points.x, dtype=np.float32),
-        "y": np.asarray(points.y, dtype=np.float32),
-        "z": np.asarray(points.z, dtype=np.float32),
+        "x": np.asarray(points.x, dtype=np.float64),
+        "y": np.asarray(points.y, dtype=np.float64),
+        "z": np.asarray(points.z, dtype=np.float64),
         "semantic_label": np.asarray(raw_labels),
     }
 
