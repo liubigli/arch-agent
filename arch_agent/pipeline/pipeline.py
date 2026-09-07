@@ -54,7 +54,7 @@ def run_pipeline(params: PipelineParams) -> SceneContext:
     objects = extract_semantic_objects(df, eps=params.eps, min_samples=params.min_samples)
     print(f"      -> {len(objects)} objects found")
 
-    print(f"[3/5] Computing features and L2 CSV details  (use_normals={params.use_normals})")
+    print(f"[3/5] Computing features and CSV details  (use_normals={params.use_normals})")
     features = compute_object_features(objects, use_normals=params.use_normals)
     scene_features = compute_scene_features(objects)
 
@@ -72,25 +72,26 @@ def run_pipeline(params: PipelineParams) -> SceneContext:
         )
         matched_count = sum(len(entries) for entries in object_annotations.values())
         print(
-            "      -> L2 CSV detail: "
+            "      -> CSV detail: "
             f"{matched_count} matched, {len(unmatched_annotations)} unmatched "
             f"({annotation_csv})"
         )
     else:
-        print("      -> L2 CSV detail: no annotation CSV found")
+        print("      -> CSV detail: no annotation CSV found")
 
     print(
-        "[4/5] Computing L1 geometric relationships "
+        "[4/5] Computing spatial graph "
         f"(threshold={params.distance_threshold} m)"
     )
     relationship_layers = compute_all_relations_stratified(
         objects,
         distance_threshold=params.distance_threshold,
+        object_annotations=object_annotations,
     )
     relationships = relationship_layers["all"]
     print(f"      -> {len(relationships)} relationships found")
 
-    print("[5/5] Building scene graphs (L1 now; L3 CIDOC/KG is built from CSV when requested)")
+    print("[5/5] Building spatial graph (CIDOC/KG is built from CSV when requested)")
     scene_graphs = build_scene_graphs(objects, relationship_layers, features, object_annotations)
     scene_graph = scene_graphs.get("L1")
     graph_summary = " | ".join(

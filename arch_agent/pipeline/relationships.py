@@ -1,96 +1,26 @@
+import re
+
 import numpy as np
+
+from ..semantic_schema import (
+    ARCHITECTURAL_CLASS_RULES,
+    SEMANTIC_CLASS_REGISTRY,
+    canonical_semantic_label,
+)
 
 Relationship = tuple[str, str, str, str]
 
 GEOMETRIC_LEVEL = "geometric"
+ARCHITECTURAL_RULE_LEVEL = "architectural_rule"
+CSV_METADATA_LEVEL = "csv_metadata"
 STRUCTURAL_EVIDENCE_LEVEL = "csv_structural_evidence"
 CIDOC_KG_LEVEL = "cidoc_knowledge_graph"
 
 RELATIONSHIP_LAYER_ORDER = ("L1",)
 RELATIONSHIP_LAYER_NAMES = {
-    "L1": GEOMETRIC_LEVEL,
+    "L1": "spatial_graph",
     "L2": "csv_detail",
     "L3": CIDOC_KG_LEVEL,
-}
-
-ARCHITECTURAL_CLASS_RULES = {
-    "arch": {
-        "role": "structural",
-        "can_support": {"vault", "roof"},
-        "can_rest_on": {"column", "wall"},
-        "part_of": {
-            "wall": "is_attached_to",
-            "vault": "is_rib_of",
-        },
-    },
-    "column": {
-        "role": "structural",
-        "can_support": {"arch", "vault", "roof"},
-        "can_rest_on": {"floor"},
-        "part_of": {},
-    },
-    "wall": {
-        "role": "structural",
-        "can_support": {"arch", "vault", "roof"},
-        "can_rest_on": {"floor"},
-        "part_of": {},
-    },
-    "vault": {
-        "role": "structural",
-        "can_support": {"roof"},
-        "can_rest_on": {"arch", "column", "wall"},
-        "part_of": {},
-    },
-    "roof": {
-        "role": "structural",
-        "can_support": set(),
-        "can_rest_on": {"arch", "column", "wall", "vault"},
-        "part_of": {},
-    },
-    "floor": {
-        "role": "support_surface",
-        "can_support": {"column", "wall", "stairs"},
-        "can_rest_on": set(),
-        "part_of": {},
-    },
-    "stairs": {
-        "role": "circulation",
-        "can_support": set(),
-        "can_rest_on": {"floor"},
-        "part_of": {
-            "floor": "is_placed_on",
-            "wall": "is_connected_to",
-        },
-    },
-    "moldings": {
-        "role": "ornamental",
-        "can_support": set(),
-        "can_rest_on": set(),
-        "part_of": {
-            "wall": "is_ornament_of",
-            "arch": "is_ornament_of",
-            "column": "is_ornament_of",
-        },
-    },
-    "door_window": {
-        "role": "opening",
-        "can_support": set(),
-        "can_rest_on": set(),
-        "part_of": {
-            "wall": "is_opening_in",
-        },
-    },
-    "other": {
-        "role": "unknown",
-        "can_support": set(),
-        "can_rest_on": set(),
-        "part_of": {
-            "wall": "part_of",
-            "floor": "part_of",
-            "column": "part_of",
-            "arch": "part_of",
-        },
-    },
 }
 
 SUPPORTING_LABELS = {
@@ -224,6 +154,10 @@ def architectural_role(label: str | None) -> str:
     return rules.get("role", "unknown")
 
 
+def semantic_class_definition(label: str | None) -> dict:
+    return dict(SEMANTIC_CLASS_REGISTRY.get(label or "", {}))
+
+
 def _rests_on(upper: dict, lower: dict) -> bool:
     upper_label = upper.get("semantic_label")
     lower_label = lower.get("semantic_label")
@@ -240,6 +174,21 @@ def _rests_on(upper: dict, lower: dict) -> bool:
         upper["centroid"][2] > lower["centroid"][2]
         and -0.15 <= z_gap <= 0.35
         and _overlap_xy_ratio(upper_bounds, lower_bounds) >= 0.10
+    )
+
+
+def _has_relationship_contact(child: dict, parent: dict, max_gap: float) -> bool:
+    child_bounds = child["bounds"]
+    parent_bounds = parent["bounds"]
+    if _bounds_gap(child_bounds, parent_bounds) <= max_gap:
+        return True
+    if _is_adjacent_laterally(child, parent, max_gap):
+        return True
+    if _is_above(child, parent) or _is_above(parent, child):
+        return True
+    return (
+        _overlap_xy_ratio(child_bounds, parent_bounds) >= 0.05
+        and _axis_overlap_ratio(child_bounds, parent_bounds, axis=2) >= 0.05
     )
 
 
@@ -318,15 +267,204 @@ def auto_threshold(objects: dict, scale: float = 2.5, fallback: float = 3.0) -> 
     return max(float(np.median(distances) / scale), 0.5)
 
 
+def compute_csv_annotation_relationships(
+    objects: dict,
+    object_annotations: dict | None = None,
+) -> list[Relationship]:
+    if not object_annotations:
+        return []
+
+    relationships: list[Relationship] = []
+    seen = set()
+
+    def add(src: str, tgt: str, rel_type: str, level: str = CSV_METADATA_LEVEL) -> None:
+        item = (src, tgt, rel_type, level)
+        if item not in seen:
+            relationships.append(item)
+            seen.add(item)
+
+    for object_name, annotations in object_annotations.items():
+        source_label = objects.get(object_name, {}).get("semantic_label")
+        if not source_label:
+            continue
+
+        for annotation in annotations:
+            for target_label in _csv_support_target_labels(annotation, source_label):
+                for target_name in _objects_with_semantic_label(objects, target_label):
+                    add(object_name, target_name, "supports", STRUCTURAL_EVIDENCE_LEVEL)
+                    add(target_name, object_name, "rests_on", STRUCTURAL_EVIDENCE_LEVEL)
+
+            for source_support_label in _csv_supported_by_labels(annotation, source_label):
+                for source_name in _objects_with_semantic_label(objects, source_support_label):
+                    add(source_name, object_name, "supports", STRUCTURAL_EVIDENCE_LEVEL)
+                    add(object_name, source_name, "rests_on", STRUCTURAL_EVIDENCE_LEVEL)
+
+            for parent_label, relation_type in _csv_part_of_targets(annotation, source_label):
+                for parent_name in _objects_with_semantic_label(objects, parent_label):
+                    add(object_name, parent_name, relation_type)
+                    add(parent_name, object_name, "has_part")
+
+            for child_label in _csv_has_part_targets(annotation, source_label):
+                for child_name in _objects_with_semantic_label(objects, child_label):
+                    relation_type = mereological_relation_type(child_label, source_label) or "part_of"
+                    add(child_name, object_name, relation_type)
+                    add(object_name, child_name, "has_part")
+
+    return relationships
+
+
+def _objects_with_semantic_label(objects: dict, semantic_label: str) -> list[str]:
+    return [
+        name
+        for name, obj in objects.items()
+        if obj.get("semantic_label") == semantic_label
+    ]
+
+
+def _csv_support_target_labels(annotation: dict, source_label: str) -> list[str]:
+    explicit_text = _annotation_first_value(
+        annotation,
+        (
+            "supports",
+            "supporta",
+            "sostiene",
+            "sorregge",
+            "support_target",
+            "supported_object",
+            "supported_class",
+            "structural_supports",
+        ),
+    )
+    labels = _labels_mentioned_in_annotation_value(explicit_text, exclude={source_label})
+    if labels:
+        return labels
+
+    descriptive_text = " ".join(
+        str(annotation.get(key, "") or "")
+        for key in (
+            "function",
+            "funzione",
+            "description",
+            "descrizione",
+            "historical_description",
+            "descrizione_storica",
+            "notes",
+            "note",
+            "structural_evidence",
+            "evidenza_strutturale",
+        )
+    )
+    normalized = _normalize_annotation_text(descriptive_text)
+    support_terms = (
+        "support",
+        "sostegn",
+        "sosten",
+        "sorregg",
+        "regge",
+        "portante",
+        "load_bearing",
+    )
+    if not any(term in normalized for term in support_terms):
+        return []
+    return _labels_mentioned_in_annotation_value(descriptive_text, exclude={source_label})
+
+
+def _csv_supported_by_labels(annotation: dict, source_label: str) -> list[str]:
+    explicit_text = _annotation_first_value(
+        annotation,
+        (
+            "supported_by",
+            "supportato_da",
+            "sostenuto_da",
+            "sorretta_da",
+            "sorretto_da",
+            "rests_on",
+            "resting_on",
+            "appoggia_su",
+            "appoggiato_su",
+            "structural_supported_by",
+        ),
+    )
+    return _labels_mentioned_in_annotation_value(explicit_text, exclude={source_label})
+
+
+def _csv_part_of_targets(annotation: dict, source_label: str) -> list[tuple[str, str]]:
+    labels = _labels_mentioned_in_annotation_value(
+        _annotation_first_value(
+            annotation,
+            (
+                "part_of",
+                "parte_di",
+                "belongs_to",
+                "appartiene_a",
+                "parent_class",
+                "parent_object",
+            ),
+        ),
+        exclude={source_label},
+    )
+    return [
+        (label, mereological_relation_type(source_label, label) or "part_of")
+        for label in labels
+    ]
+
+
+def _csv_has_part_targets(annotation: dict, source_label: str) -> list[str]:
+    return _labels_mentioned_in_annotation_value(
+        _annotation_first_value(
+            annotation,
+            (
+                "has_part",
+                "contains_part",
+                "contiene",
+                "comprende",
+                "child_class",
+                "child_object",
+            ),
+        ),
+        exclude={source_label},
+    )
+
+
+def _annotation_first_value(annotation: dict, keys: tuple[str, ...]) -> object | None:
+    for key in keys:
+        value = annotation.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _labels_mentioned_in_annotation_value(
+    value: object | None,
+    exclude: set[str] | None = None,
+) -> list[str]:
+    if value is None:
+        return []
+    normalized = _normalize_annotation_text(str(value))
+    exclude = exclude or set()
+    labels = []
+    for token in re.split(r"[^a-z0-9_]+", normalized):
+        label = canonical_semantic_label(token)
+        if label and label not in exclude and label not in labels:
+            labels.append(label)
+    return labels
+
+
+def _normalize_annotation_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9_]+", " ", value.lower().replace("-", "_")).strip()
+
+
 def compute_all_relations(
     objects: dict,
     distance_threshold: float | None = None,
     surface_contact_thresh: float = 0.10,
+    object_annotations: dict | None = None,
 ) -> list[Relationship]:
     relationship_layers = compute_all_relations_stratified(
         objects,
         distance_threshold=distance_threshold,
         surface_contact_thresh=surface_contact_thresh,
+        object_annotations=object_annotations,
     )
     return relationship_layers["all"]
 
@@ -335,18 +473,34 @@ def compute_all_relations_stratified(
     objects: dict,
     distance_threshold: float | None = None,
     surface_contact_thresh: float = 0.10,
+    object_annotations: dict | None = None,
 ) -> dict[str, list[Relationship]]:
     threshold = distance_threshold or auto_threshold(objects)
 
     geometric = compute_spatial_relationships(objects, threshold)
+    structural = compute_structural_relations(objects)
+    composition = compute_mereological_relations(
+        objects,
+        surface_contact_thresh=max(surface_contact_thresh, min(threshold * 0.25, 0.75)),
+    )
+    csv_relationships = compute_csv_annotation_relationships(objects, object_annotations)
+    l1_relationships = _deduplicate(
+        geometric
+        + structural
+        + composition
+        + csv_relationships
+    )
     relationship_layers = {
-        "L1": geometric,
+        "L1": l1_relationships,
     }
     all_relationships = flatten_relationship_layers(relationship_layers)
 
-    print(f"L1 geometric : {len(geometric):>4} relationships")
-    print("L2 CSV detail: loaded from annotation CSV, not a graph")
-    print("L3 CIDOC/KG  : built from CSV detail when requested, not a mereological layer")
+    print(f"Spatial graph : {len(l1_relationships):>4} relationships")
+    print(f"  - geometric/spatial      : {len(geometric):>4}")
+    print(f"  - spatial architectural  : {len(structural) + len(composition):>4}")
+    print(f"  - CSV/user metadata      : {len(csv_relationships):>4}")
+    print("CSV detail    : descriptive metadata, not a graph")
+    print("CIDOC/KG      : built from CSV detail when requested")
 
     return {**relationship_layers, "all": all_relationships}
 
@@ -408,24 +562,47 @@ def _determine_geometric_relationships(
 
 
 def compute_structural_relations(objects: dict) -> list[Relationship]:
-    """Deprecated compatibility hook.
+    relationships: list[Relationship] = []
+    names = list(objects.keys())
 
-    Structural evidence is no longer inferred from geometry/class rules here.
-    It must come from scene CSV annotations or explicit user-provided metadata.
-    """
-    return []
+    for i, name1 in enumerate(names):
+        for name2 in names[i + 1:]:
+            obj1 = objects[name1]
+            obj2 = objects[name2]
+            if _rests_on(obj1, obj2):
+                relationships.append((name2, name1, "supports", ARCHITECTURAL_RULE_LEVEL))
+                relationships.append((name1, name2, "rests_on", ARCHITECTURAL_RULE_LEVEL))
+            if _rests_on(obj2, obj1):
+                relationships.append((name1, name2, "supports", ARCHITECTURAL_RULE_LEVEL))
+                relationships.append((name2, name1, "rests_on", ARCHITECTURAL_RULE_LEVEL))
+
+    return _deduplicate(relationships)
 
 
 def compute_mereological_relations(
     objects: dict,
     surface_contact_thresh: float = 0.10,
 ) -> list[Relationship]:
-    """Deprecated compatibility hook.
+    relationships: list[Relationship] = []
+    names = list(objects.keys())
 
-    L3 is now a CIDOC/knowledge-graph layer built from CSV/user metadata and
-    supported geometric context, not a mereological edge set inferred here.
-    """
-    return []
+    for child_name in names:
+        child = objects[child_name]
+        child_label = child.get("semantic_label")
+        for parent_name in names:
+            if child_name == parent_name:
+                continue
+            parent = objects[parent_name]
+            parent_label = parent.get("semantic_label")
+            relation_type = mereological_relation_type(child_label, parent_label)
+            if not relation_type:
+                continue
+            if not _has_relationship_contact(child, parent, surface_contact_thresh):
+                continue
+            relationships.append((child_name, parent_name, relation_type, ARCHITECTURAL_RULE_LEVEL))
+            relationships.append((parent_name, child_name, "has_part", ARCHITECTURAL_RULE_LEVEL))
+
+    return _deduplicate(relationships)
 
 
 def _mereological_relation(child_label: str, parent_label: str) -> str:

@@ -1,34 +1,13 @@
 from functools import lru_cache
 from copy import deepcopy
 
+from .semantic_schema import SEMANTIC_CLASS_NAMES, semantic_labels_by_category
+
 DEFAULT_CONFIG = {
     "semantic_classes": {
-        "names": [
-            "arch",
-            "column",
-            "moldings",
-            "floor",
-            "door_window",
-            "wall",
-            "stairs",
-            "vault",
-            "roof",
-            "other",
-        ],
-        "structural": [
-            "arch",
-            "column",
-            "wall",
-            "vault",
-            "roof",
-        ],
-        "finishing": [
-            "moldings",
-            "floor",
-            "door_window",
-            "stairs",
-            "other",
-        ],
+        "names": list(SEMANTIC_CLASS_NAMES),
+        "structural": semantic_labels_by_category("structural"),
+        "finishing": semantic_labels_by_category("finishing"),
         "colors": {
             "arch": [0.85, 0.37, 0.01],
             "column": [0.20, 0.63, 0.17],
