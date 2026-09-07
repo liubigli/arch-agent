@@ -185,7 +185,7 @@ def _vertical_gap(upper_bounds: dict, lower_bounds: dict) -> float:
     return float(upper_bounds["min"][2] - lower_bounds["max"][2])
 
 
-def _is_above(upper: dict, lower: dict, max_gap: float = 0.75) -> bool:
+def _is_above(upper: dict, lower: dict, max_gap: float = 0.35) -> bool:
     upper_label = upper.get("semantic_label")
     lower_label = lower.get("semantic_label")
 
@@ -197,8 +197,8 @@ def _is_above(upper: dict, lower: dict, max_gap: float = 0.75) -> bool:
     z_gap = _vertical_gap(upper_bounds, lower_bounds)
     return (
         upper["centroid"][2] > lower["centroid"][2]
-        and -0.15 <= z_gap <= max_gap
-        and _overlap_xy_ratio(upper_bounds, lower_bounds) >= 0.05
+        and 0.0 <= z_gap <= max_gap
+        and _overlap_xy_ratio(upper_bounds, lower_bounds) >= 0.15
     )
 
 
@@ -267,7 +267,7 @@ def _is_adjacent_laterally(
 
     # Lateral adjacency requires the two elements to share a comparable
     # vertical range. This avoids treating stacked elements as adjacent.
-    if _axis_overlap_ratio(b1, b2, axis=2) < 0.10:
+    if _axis_overlap_ratio(b1, b2, axis=2) < 0.30:
         return False
 
     x_overlap = _axis_overlap_ratio(b1, b2, axis=0)
@@ -276,8 +276,8 @@ def _is_adjacent_laterally(
     y_gap = _axis_gap(float(b1["min"][1]), float(b1["max"][1]), float(b2["min"][1]), float(b2["max"][1]))
 
     return (
-        (x_gap <= max_gap and y_overlap >= 0.05)
-        or (y_gap <= max_gap and x_overlap >= 0.05)
+        (x_gap <= max_gap and y_overlap >= 0.15)
+        or (y_gap <= max_gap and x_overlap >= 0.15)
     )
 
 
@@ -353,7 +353,7 @@ def compute_all_relations_stratified(
 
 def compute_spatial_relationships(
     objects: dict,
-    distance_threshold: float = 3.0,
+    distance_threshold: float = 2.0,
 ) -> list[Relationship]:
     relationships: list[Relationship] = []
     names = list(objects.keys())
@@ -385,10 +385,6 @@ def _determine_geometric_relationships(
     c2 = np.asarray(obj2["centroid"], dtype=float)
     centroid_distance = float(np.linalg.norm(c1 - c2))
 
-    if centroid_distance <= distance_threshold:
-        relationships.append((name1, name2, "near", GEOMETRIC_LEVEL))
-        relationships.append((name2, name1, "near", GEOMETRIC_LEVEL))
-
     obj1_above_obj2 = _is_above(obj1, obj2)
     obj2_above_obj1 = _is_above(obj2, obj1)
 
@@ -399,10 +395,20 @@ def _determine_geometric_relationships(
         relationships.append((name2, name1, "above", GEOMETRIC_LEVEL))
         relationships.append((name1, name2, "below", GEOMETRIC_LEVEL))
 
-    adjacent_gap = min(distance_threshold * 0.25, 0.75)
-    if _is_adjacent_laterally(obj1, obj2, adjacent_gap):
+    adjacent_gap = min(distance_threshold * 0.15, 0.35)
+    is_adjacent = _is_adjacent_laterally(obj1, obj2, adjacent_gap)
+    if is_adjacent:
         relationships.append((name1, name2, "adjacent_to", GEOMETRIC_LEVEL))
         relationships.append((name2, name1, "adjacent_to", GEOMETRIC_LEVEL))
+
+    if (
+        centroid_distance <= distance_threshold
+        and not obj1_above_obj2
+        and not obj2_above_obj1
+        and not is_adjacent
+    ):
+        relationships.append((name1, name2, "near", GEOMETRIC_LEVEL))
+        relationships.append((name2, name1, "near", GEOMETRIC_LEVEL))
 
     return relationships
 

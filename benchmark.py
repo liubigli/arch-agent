@@ -44,7 +44,7 @@ def parse_args() -> argparse.Namespace:
     group = parser.add_argument_group("pipeline parameters")
     group.add_argument("--eps", type=float, default=0.5)
     group.add_argument("--min-samples", type=int, default=15)
-    group.add_argument("--distance-threshold", type=float, default=3.0)
+    group.add_argument("--distance-threshold", type=float, default=2.0)
     group.add_argument("--sample-n", type=int, default=150_000)
     group.add_argument("--use-normals", action="store_true")
     group.add_argument("--annotation-csv", default=None)

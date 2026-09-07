@@ -348,7 +348,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample-n", type=int, default=150_000, help="Max points to load; use 0 for all points.")
     parser.add_argument("--eps", type=float, default=0.5, help="DBSCAN epsilon.")
     parser.add_argument("--min-samples", type=int, default=15, help="DBSCAN min_samples.")
-    parser.add_argument("--distance-threshold", type=float, default=3.0, help="Relationship distance threshold.")
+    parser.add_argument("--distance-threshold", type=float, default=2.0, help="Relationship distance threshold.")
     parser.add_argument("--annotation-csv", default=None, help="Optional annotation CSV.")
     parser.add_argument(
         "--annotation-match-threshold",

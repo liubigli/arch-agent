@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
         help="DBSCAN min_samples (reduce to 10 for sparse clouds)",
     )
     group.add_argument(
-        "--distance-threshold", type=float, default=3.0,
+        "--distance-threshold", type=float, default=2.0,
         help="Max centroid distance (m) to consider two objects spatially related",
     )
     group.add_argument(

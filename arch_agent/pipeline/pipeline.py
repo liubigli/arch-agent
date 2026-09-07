@@ -17,7 +17,7 @@ class PipelineParams:
     sample_n: int = 150_000
     eps: float = 0.5
     min_samples: int = 15
-    distance_threshold: float = 3.0
+    distance_threshold: float = 2.0
     use_normals: bool = False
     annotation_csv_path: str | None = None
     annotation_match_threshold: float = 2.0
