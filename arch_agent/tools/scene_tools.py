@@ -11,7 +11,8 @@ from ..pipeline.graph import ANNOTATION_NODE_FIELDS, analyze_scene_graph
 from ..pipeline.relationships import (
     RELATIONSHIP_LAYER_NAMES,
     RELATIONSHIP_LAYER_ORDER,
-    architectural_role
+    architectural_role,
+    compute_csv_annotation_relationships,
 )
 from ..settings import get_config
 
@@ -99,39 +100,22 @@ def _classify_area(label_set: set) -> str:
 
 
 def _structural_evidence_relationships(ctx: SceneContext) -> list[tuple[str, str, str, str]]:
-    """Return supports/rests_on evidence stated in matched CSV annotations."""
-    object_annotations = getattr(ctx, "object_annotations", {})
-    if not object_annotations:
-        return []
-
+    """Return supports/rests_on relations from the spatial graph."""
     relationships: list[tuple[str, str, str, str]] = []
     seen = set()
-    for object_name, annotations in object_annotations.items():
-        source_label = ctx.objects.get(object_name, {}).get("semantic_label")
-        if not source_label:
-            continue
-        for annotation in annotations:
-            for target_label in _csv_support_target_labels(annotation, source_label):
-                for target_name in _objects_with_semantic_label(ctx, target_label):
-                    item = (object_name, target_name, "supports", "csv_structural_evidence")
-                    if item not in seen:
-                        relationships.append(item)
-                        seen.add(item)
-                    inverse = (target_name, object_name, "rests_on", "csv_structural_evidence")
-                    if inverse not in seen:
-                        relationships.append(inverse)
-                        seen.add(inverse)
 
-            for source_support_label in _csv_supported_by_labels(annotation, source_label):
-                for source_name in _objects_with_semantic_label(ctx, source_support_label):
-                    item = (source_name, object_name, "supports", "csv_structural_evidence")
-                    if item not in seen:
-                        relationships.append(item)
-                        seen.add(item)
-                    inverse = (object_name, source_name, "rests_on", "csv_structural_evidence")
-                    if inverse not in seen:
-                        relationships.append(inverse)
-                        seen.add(inverse)
+    for rel in ctx.relationship_layers.get("L1", []) + list(ctx.relationships or []):
+        if len(rel) >= 3 and rel[2] in {"supports", "rests_on"} and rel not in seen:
+            relationships.append(rel)
+            seen.add(rel)
+
+    for rel in compute_csv_annotation_relationships(
+        ctx.objects,
+        getattr(ctx, "object_annotations", {}),
+    ):
+        if len(rel) >= 3 and rel[2] in {"supports", "rests_on"} and rel not in seen:
+            relationships.append(rel)
+            seen.add(rel)
 
     return relationships
 
@@ -459,7 +443,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
           relationships of every instance of that class.
 
         Results are paginated to avoid flooding the chat with a large scene's
-        full relationship graph. If the response says rows were not shown,
+        full spatial graph. If the response says rows were not shown,
         call again with the suggested offset to see the next batch; rows are
         always returned in the same order for the same object(s), so no row
         is skipped or repeated across calls.
@@ -483,7 +467,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
 
         lines = [
             f"Relationships/evidence for {len(target_names)} object(s): {', '.join(target_names)}",
-            "Cascade: L1/geometric -> L2 CSV/user metadata -> L3 CIDOC/KG. L2 is not a graph.",
+            "Cascade: spatial graph -> CSV/user metadata -> CIDOC/KG. CSV detail is not a graph.",
         ]
         total = 0
         shown = 0
@@ -497,8 +481,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
                     seen.add(rel)
                     filtered.append(rel)
             total += len(filtered)
-            layer_name = RELATIONSHIP_LAYER_NAMES.get(level, level)
-            lines.append(f"  {level}/{layer_name}: {len(filtered)}")
+            lines.append(f"  {_relationship_layer_display_name(level)}: {len(filtered)}")
             for src, tgt, rel_type, rel_level in filtered:
                 if skip > 0:
                     skip -= 1
@@ -858,10 +841,12 @@ def create_scene_tools(ctx: SceneContext) -> list:
         skipped or repeated across calls.
 
         Args:
-            level: Relationship/evidence level to list: 'L1', 'geometric',
-                'structural_evidence', 'structural', 'csv', 'L2', 'L3',
-                'cidoc', 'kg', or 'all'. 'L2' returns CSV detail metadata.
-                'L3' returns CIDOC/KG metadata summary, not old mereological edges.
+            level: Relationship/evidence selector to list: 'spatial',
+                'geometric', 'structural_evidence', 'structural', 'csv',
+                'cidoc', 'kg', or 'all'. Legacy aliases are still accepted
+                for compatibility. 'structural' filters support/appoggio
+                relations. 'csv' returns CSV detail metadata. 'cidoc' returns
+                CIDOC/KG metadata summary.
             relationship_type: Optional relationship type, e.g. 'above',
                 'supports', 'is_opening_in'.
             object_name: Optional exact object id. If provided, only
@@ -876,7 +861,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
         """
         layer_key = _relationship_layer_key(level)
         if layer_key is None:
-            valid = "all, L1/geometric, structural_evidence from CSV, L2/CSV detail, L3/CIDOC-KG"
+            valid = "all, spatial graph, structural support filter, CSV detail, CIDOC/KG"
             return f"Unknown relationship level '{level}'. Valid values: {valid}."
         object_name = _clean_optional(object_name)
         semantic_label = _canonical_semantic_label(semantic_label)
@@ -924,9 +909,9 @@ def create_scene_tools(ctx: SceneContext) -> list:
             for rel in layer_relationships
         ]
 
-        title = f"Relationships ({level}): {len(filtered)}"
+        title = f"Relationships ({_relationship_layer_display_name(layer_key)}): {len(filtered)}"
         if layer_key == "all":
-            title += " | cascade=L1/geometric->L2 CSV/user metadata->L3 CIDOC/KG"
+            title += " | cascade=spatial graph->CSV/user metadata->CIDOC/KG"
         if relationship_type:
             title += f" | type={relationship_type}"
         if object_name:
@@ -946,8 +931,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
         remaining = max_rows
         shown = 0
         for layer, layer_relationships in filtered_by_layer:
-            layer_name = RELATIONSHIP_LAYER_NAMES.get(layer, layer)
-            lines.append(f"  {layer}/{layer_name}: {len(layer_relationships)}")
+            lines.append(f"  {_relationship_layer_display_name(layer)}: {len(layer_relationships)}")
             for src, tgt, rel_type, rel_level in layer_relationships:
                 if skip > 0:
                     skip -= 1
@@ -979,7 +963,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
 
     @tool
     def find_relationship_anomalies(limit: int = 200) -> str:
-        """Find direct logical or semantic anomalies in the computed relationship graph.
+        """Find direct logical or semantic anomalies in the computed spatial graph.
 
         Args:
             limit: Maximum number of anomaly rows to return.
@@ -1689,11 +1673,21 @@ def _relationship_layers_in_order(ctx: SceneContext) -> list[tuple[str, list]]:
 
 
 def _relationship_layers_with_csv_evidence(ctx: SceneContext) -> list[tuple[str, list]]:
-    layers = _relationship_layers_in_order(ctx)
-    structural = _structural_evidence_relationships(ctx)
-    if structural:
-        layers.append(("structural_evidence", structural))
-    return layers
+    return _relationship_layers_in_order(ctx)
+
+
+def _relationship_layer_display_name(layer_key: str) -> str:
+    if layer_key == "all":
+        return "spatial graph"
+    if layer_key == "L1":
+        return "spatial graph"
+    if layer_key == "structural_evidence":
+        return "support view"
+    if layer_key == "L2_DETAIL":
+        return "CSV detail"
+    if layer_key == "L3_KG_DETAIL":
+        return "CIDOC/KG"
+    return RELATIONSHIP_LAYER_NAMES.get(layer_key, layer_key)
 
 
 def _relationships_for_layer(ctx: SceneContext, layer_key: str) -> list:
@@ -1709,6 +1703,8 @@ def _relationship_layer_key(level: str) -> str | None:
     aliases = {
         "all": "all",
         "l1": "L1",
+        "spatial": "L1",
+        "spatial_graph": "L1",
         "geometric": "L1",
         "geometry": "L1",
         "l2": "L2_DETAIL",
@@ -1738,7 +1734,7 @@ def _l2_detail_tool_summary(ctx: SceneContext) -> str:
     annotated_objects = len(getattr(ctx, "object_annotations", {}))
     unmatched = len(getattr(ctx, "unmatched_annotations", []))
     return (
-        "L2 is CSV descriptive detail, not a relationship graph. "
+        "CSV detail is descriptive metadata, not a graph. "
         f"Matched annotations: {matched} on {annotated_objects} objects; "
         f"unmatched CSV rows: {unmatched}. "
         "Use get_object_annotation for scene/object descriptions, material, "
@@ -1753,9 +1749,9 @@ def _l3_kg_tool_summary(ctx: SceneContext) -> str:
     )
     annotated_objects = len(getattr(ctx, "object_annotations", {}))
     return (
-        "L3 is CIDOC/knowledge graph, not the old mereological relationship graph. "
+        "CIDOC/KG is the semantic knowledge graph. "
         f"It can be built from CSV/user metadata: {matched} matched annotations "
-        f"on {annotated_objects} objects. Use the L3 graph viewer/export tools for CIDOC/KG edges."
+        f"on {annotated_objects} objects. Use the CIDOC/KG viewer/export tools for semantic edges."
     )
 
 
@@ -1953,6 +1949,7 @@ def _relationship_anomalies(ctx: SceneContext) -> list[str]:
             continue
         a, b = list(pair)
         rel_set = {(src, tgt, rel_type, rel_level) for src, tgt, rel_type, rel_level in rels}
+        rel_type_set = {(src, tgt, rel_type) for src, tgt, rel_type, _ in rels}
 
         if (
             (a, b, "above", "geometric") in rel_set
@@ -1965,13 +1962,13 @@ def _relationship_anomalies(ctx: SceneContext) -> list[str]:
         ):
             issues.append(f"{a} and {b}: reciprocal 'below' relation.")
         if (
-            (a, b, "supports", "structural_evidence") in rel_set
-            and (b, a, "supports", "structural_evidence") in rel_set
+            (a, b, "supports") in rel_type_set
+            and (b, a, "supports") in rel_type_set
         ):
             issues.append(f"{a} and {b}: reciprocal 'supports' relation.")
         if (
-            (a, b, "rests_on", "structural_evidence") in rel_set
-            and (b, a, "rests_on", "structural_evidence") in rel_set
+            (a, b, "rests_on") in rel_type_set
+            and (b, a, "rests_on") in rel_type_set
         ):
             issues.append(f"{a} and {b}: reciprocal 'rests_on' relation.")
 

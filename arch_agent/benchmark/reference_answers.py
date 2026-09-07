@@ -267,13 +267,13 @@ def _answer_scene_summary(ctx: "SceneContext") -> str:
             _top_metric_line(ctx, "point_count", "Oggetto più campionato"),
         ]),
         relations=(
-            "Cascata L1->evidenza strutturale->L3 usata solo come sintesi quantitativa; "
+            "Cascata spatial graph->CSV detail->CIDOC/KG usata solo come sintesi quantitativa; "
             "la descrizione degli elementi deriva dalle classi semantiche."
         ),
         inference=_scene_type_inference(ctx),
         confidence=(
             "media-alta se le classi principali sono ben rappresentate; "
-            "media se pochi oggetti dominano la scena o mancano evidenza strutturale/L3."
+            "media se pochi oggetti dominano la scena o mancano relazioni spaziali/CIDOC."
         ),
     )
 
@@ -306,7 +306,7 @@ def _answer_dominant_element(ctx: "SceneContext") -> str:
 
     return _grounded(
         observed="\n\n".join(observed_lines),
-        relations="L1/evidenza strutturale/L3 usate solo per il grado relazionale; punti e volume non usano relazioni.",
+        relations="Spatial graph e CIDOC/KG usati solo per il grado relazionale; punti e volume non usano relazioni.",
         inference=inference,
         confidence=confidence,
     )
@@ -364,8 +364,7 @@ def _answer_inside_outside(ctx: "SceneContext") -> str:
     return _grounded(
         observed="Indizi presenti: " + (", ".join(cues) if cues else "nessun indizio forte."),
         relations=(
-            "Relazioni considerate in cascata: L1 per sopra/sotto e adiacenze, "
-            "evidenza strutturale solo se esistono supporti coerenti."
+            "Relazioni considerate in cascata: spatial graph, dettagli CSV, CIDOC/KG se disponibile."
         ),
         inference=inference,
         confidence=confidence,
@@ -379,7 +378,7 @@ def _answer_boundaries(ctx: "SceneContext") -> str:
     return _grounded(
         observed=_format_grouped_objects(groups, "Possibili confini rilevati"),
         relations=(
-            "L1/geometric sopra-sotto e adiacenze possono indicare posizione dei confini; "
+            "Le relazioni geometriche sopra-sotto e adiacenze possono indicare posizione dei confini; "
             "nessuna relazione di contenimento è definita nel grafo corrente."
         ),
         inference=(
@@ -410,9 +409,9 @@ def _answer_organizing_elements(ctx: "SceneContext") -> str:
             _role_summary(labels),
         ]),
         relations=(
-            "L1/geometric per posizione planimetrica, adiacenza e sopra/sotto; "
+            "Spatial graph per posizione planimetrica, adiacenza e sopra/sotto; "
             "colonne perimetrali stimate dal convex hull XY dei centroidi; "
-            "evidenza strutturale solo per eventuali supporti."
+            "relazioni `supports/rests_on` per eventuali supporti."
         ),
         inference=(
             "Floor, wall e roof/vault definiscono i limiti principali; le colonne "
@@ -433,12 +432,12 @@ def _answer_adjacencies(ctx: "SceneContext") -> str:
 
     return _grounded(
         observed=examples,
-        relations="L1/geometric: adjacent_to. Le relazioni reciproche sono deduplicate nella lista.",
+        relations="Relazione geometrica: adjacent_to. Le relazioni reciproche sono deduplicate nella lista.",
         inference=(
             "L'adiacenza indica vicinanza/contatto geometrico tra bounding box; "
             "non implica da sola supporto, appartenenza o funzione."
         ),
-        confidence="alta per l'elenco L1; media per il significato architettonico.",
+        confidence="alta per l'elenco spaziale; media per il significato architettonico.",
     )
 
 
@@ -448,7 +447,7 @@ def _answer_above_below(ctx: "SceneContext") -> str:
 
     return _grounded(
         observed=examples,
-        relations="L1/geometric: above/below. La direzione below è l'inverso di above.",
+        relations="Relazioni geometriche: above/below. La direzione below è l'inverso di above.",
         inference=(
             "Le relazioni sopra/sotto descrivono ordine verticale. Non sono una prova "
             "di supporto strutturale se non compaiono anche evidenze strutturali coerenti."
@@ -470,7 +469,7 @@ def _answer_intersections(ctx: "SceneContext") -> str:
 
     return _grounded(
         observed=observed,
-        relations="Controllo geometrico indiretto su bounding box; nessuna relazione L1 dedicata all'intersezione.",
+        relations="Controllo geometrico indiretto su bounding box; nessuna relazione dedicata all'intersezione nello spatial graph.",
         inference=(
             "Si possono segnalare contatti o sovrapposizioni di bounding box, ma non "
             "affermare una vera intersezione fisica senza una relazione o un test geometrico più fine."
@@ -480,20 +479,20 @@ def _answer_intersections(ctx: "SceneContext") -> str:
 
 
 def _answer_supports(ctx: "SceneContext") -> str:
-    supports = _relationships(ctx, level="structural_evidence", rel_type="supports")
-    rests_on = _relationships(ctx, level="structural_evidence", rel_type="rests_on")
+    supports = _relationships(ctx, level="L1", rel_type="supports")
+    rests_on = _relationships(ctx, level="L1", rel_type="rests_on")
 
     return _grounded(
         observed="\n\n".join([
-            _format_relationship_examples(supports, title="Supporti da evidenza strutturale", limit=20),
-            _format_relationship_examples(rests_on, title="Appoggi da evidenza strutturale", limit=20),
+            _format_relationship_examples(supports, title="Supporti nello spatial graph", limit=20),
+            _format_relationship_examples(rests_on, title="Appoggi nello spatial graph", limit=20),
         ]),
-        relations="evidenza strutturale: supports e rests_on, già filtrate da regole architettoniche di classe.",
+        relations="Spatial graph: supports e rests_on, filtrate da regole architettoniche e/o CSV.",
         inference=(
             "Gli elementi che supportano sono solo quelli presenti come sorgente di 'supports'. "
-            "Le relazioni L1 'above' non vengono trasformate automaticamente in supporto."
+            "Le relazioni 'above' non vengono trasformate automaticamente in supporto."
         ),
-        confidence="media-alta se evidenza strutturale non è vuoto; media se il supporto dipende da soglie di contatto.",
+        confidence="media-alta se le relazioni `supports/rests_on` sono presenti; media se il supporto dipende da soglie di contatto.",
     )
 
 
@@ -502,7 +501,7 @@ def _answer_construction_systems(ctx: "SceneContext") -> str:
     support_surface = _objects_by_role(ctx, "support_surface")
     ornamental = _objects_by_role(ctx, "ornamental")
     openings = _objects_by_role(ctx, "opening")
-    supports = _relationships(ctx, level="structural_evidence", rel_type="supports")
+    supports = _relationships(ctx, level="L1", rel_type="supports")
 
     observed = "\n".join([
         _format_object_list("Sistema strutturale potenziale", structural),
@@ -514,10 +513,10 @@ def _answer_construction_systems(ctx: "SceneContext") -> str:
 
     return _grounded(
         observed=observed,
-        relations="Evidenza strutturale per sistema resistente; L3 per elementi parte-di/decorativi se presenti.",
+        relations="Evidenza strutturale per sistema resistente; CIDOC/KG per elementi parte-di/decorativi se presenti.",
         inference=(
             "Gli oggetti dello stesso sistema costruttivo sono raggruppati per ruolo "
-            "architettonico e, quando disponibile, per evidenze strutturali/L3. Le ripetizioni "
+            "architettonico e, quando disponibile, per evidenze strutturali/CIDOC. Le ripetizioni "
             "di columns indicano un possibile sistema modulare."
         ),
         confidence="media: il sistema costruttivo è una sintesi, non una label osservata direttamente.",
@@ -543,7 +542,7 @@ def _answer_bearing_vs_non_bearing(ctx: "SceneContext") -> str:
             _format_object_list("Non portanti o non determinati", non_bearing),
         ]),
         relations=(
-            "evidenza strutturale rafforza la lettura portante quando compaiono supports/rests_on; "
+            "lo spatial graph rafforza la lettura portante quando compaiono supports/rests_on; "
             "la classificazione base deriva dall'ontologia delle classi."
         ),
         inference=(
@@ -557,19 +556,19 @@ def _answer_bearing_vs_non_bearing(ctx: "SceneContext") -> str:
 
 def _answer_structural_function(ctx: "SceneContext") -> str:
     structural = _objects_by_role(ctx, "structural")
-    supports = _relationships(ctx, level="structural_evidence", rel_type="supports")
+    supports = _relationships(ctx, level="L1", rel_type="supports")
 
     return _grounded(
         observed="\n".join([
             _format_object_list("Elementi con ruolo strutturale", structural),
             _format_relationship_examples(supports, title="Supporti strutturali rilevati", limit=20),
         ]),
-        relations="evidenza strutturale per supporti; ruoli architettonici per la lista degli elementi strutturali.",
+        relations="Relazioni `supports/rests_on` per supporti; ruoli architettonici per la lista degli elementi strutturali.",
         inference=(
             "Gli elementi con funzione strutturale sono quelli dell'ontologia strutturale; "
-            "una funzione portante effettiva è più solida quando compare una evidenza strutturale."
+            "una funzione portante effettiva è più solida quando compare una relazione `supports`."
         ),
-        confidence="media-alta per i ruoli; media per la funzione effettiva se evidenza strutturale è scarso.",
+        confidence="media-alta per i ruoli; media per la funzione effettiva se le relazioni di supporto sono scarse.",
     )
 
 
@@ -584,7 +583,7 @@ def _answer_circulation_access(ctx: "SceneContext") -> str:
             _format_object_list("Aperture / accessi potenziali", openings),
             _format_object_list("Floor / piano percorribile potenziale", floors),
         ]),
-        relations="L3 se stairs is_placed_on floor o door_window is_opening_in wall; altrimenti solo ruoli semantici.",
+        relations="CIDOC/KG se stairs is_placed_on floor o door_window is_opening_in wall; altrimenti solo ruoli semantici.",
         inference=(
             "Stairs indicano distribuzione verticale; door_window indica possibile accesso o apertura; "
             "floor può essere piano di percorrenza ma non definisce da solo un percorso."
@@ -604,7 +603,7 @@ def _answer_hierarchy(ctx: "SceneContext") -> str:
         + _objects_by_role(ctx, "opening")
         + _objects_by_role(ctx, "unknown")
     )
-    supports = _relationships(ctx, level="structural_evidence", rel_type="supports")
+    supports = _relationships(ctx, level="L1", rel_type="supports")
 
     observed = "\n".join([
         "Elementi principali candidati: " + (", ".join(main) if main else "non univoci"),
@@ -624,7 +623,7 @@ def _answer_hierarchy(ctx: "SceneContext") -> str:
 
     return _grounded(
         observed=observed,
-        relations="Metriche oggetto + evidenza strutturale; L1 sopra/sotto non basta per definire gerarchia.",
+        relations="Metriche oggetto + relazioni spaziali; sopra/sotto da solo non basta per definire gerarchia.",
         inference=inference,
         confidence=confidence,
     )
@@ -635,11 +634,11 @@ def _answer_evident_spatial_relations(ctx: "SceneContext") -> str:
     type_counts = Counter(rel_type for _, _, rel_type, _ in geometric)
     top_types = ", ".join(
         f"{rel_type}={count}" for rel_type, count in type_counts.most_common()
-    ) or "nessuna relazione L1"
+    ) or "nessuna relazione spaziale"
 
     return _grounded(
-        observed=f"Distribuzione L1/geometric: {top_types}.",
-        relations="L1/geometric: near, adjacent_to, above, below.",
+        observed=f"Distribuzione relazioni geometriche nello spatial graph: {top_types}.",
+        relations="Relazioni geometriche: near, adjacent_to, above, below.",
         inference=(
             "Le relazioni spaziali più evidenti sono quelle con conteggio maggiore. "
             "Sono evidenze geometriche e non vanno lette automaticamente come struttura o funzione."
@@ -652,7 +651,7 @@ def _answer_ambiguities(ctx: "SceneContext") -> str:
     low_point_objects = _low_point_objects(ctx, limit=8)
     unknown = _objects_by_role(ctx, "unknown")
     l1_count = len(ctx.relationship_layers.get("L1", []))
-    l2_count = len(ctx.relationship_layers.get("structural_evidence", []))
+    l2_count = sum(1 for rel in ctx.relationship_layers.get("L1", []) if rel[2] in {"supports", "rests_on"})
     l3_count = len(ctx.relationship_layers.get("L3", []))
     notes = []
     if unknown:
@@ -660,19 +659,19 @@ def _answer_ambiguities(ctx: "SceneContext") -> str:
     if low_point_objects:
         notes.append("oggetti con pochi punti rispetto alla scena")
     if l1_count and not l2_count:
-        notes.append("molte relazioni geometriche senza conferma strutturale L2")
+        notes.append("molte relazioni geometriche senza relazioni di supporto")
     if not l3_count:
-        notes.append("assenza di relazioni mereologiche L3")
+        notes.append("assenza di CIDOC/KG")
 
     observed = "\n".join([
         _format_object_list("Oggetti unknown", unknown),
         _format_rank("Oggetti meno campionati", low_point_objects, value_suffix=" punti"),
-        f"Relazioni per livello: L1={l1_count}, L2={l2_count}, L3={l3_count}.",
+        f"Relazioni disponibili: spatial_graph={l1_count}, supporti={l2_count}, CIDOC/KG={l3_count}.",
     ])
 
     return _grounded(
         observed=observed,
-        relations="Confronto tra L1, evidenza strutturale e L3 per individuare dove l'interpretazione è più debole.",
+        relations="Confronto tra spatial graph, dettagli CSV e CIDOC/KG per individuare dove l'interpretazione è più debole.",
         inference=(
             "Ambiguità principali: "
             + (", ".join(notes) if notes else "nessuna ambiguità forte rilevata dai criteri automatici.")
@@ -689,7 +688,7 @@ def _answer_observation_inference_check(ctx: "SceneContext") -> str:
         ),
         relations="Nessuna relazione di scena usata direttamente.",
         inference=(
-            "La risposta corretta deve separare dati osservati, relazioni L1/evidenza strutturale/L3, "
+            "La risposta corretta deve separare dati osservati, relazioni spaziali/CIDOC, "
             "interpretazioni architettoniche e confidenza. Il formato attuale dell'agente "
             "impone proprio queste quattro sezioni."
         ),
@@ -699,15 +698,15 @@ def _answer_observation_inference_check(ctx: "SceneContext") -> str:
 
 def _answer_relation_quality_check(ctx: "SceneContext") -> str:
     l1 = len(ctx.relationship_layers.get("L1", []))
-    l2 = len(ctx.relationship_layers.get("structural_evidence", []))
+    l2 = sum(1 for rel in ctx.relationship_layers.get("L1", []) if rel[2] in {"supports", "rests_on"})
     l3 = len(ctx.relationship_layers.get("L3", []))
 
     return _grounded(
-        observed=f"Relazioni disponibili: L1={l1}, L2={l2}, L3={l3}.",
-        relations="Controllo del bilanciamento L1/evidenza strutturale/L3, non di una risposta testuale precedente.",
+        observed=f"Relazioni disponibili: spatial_graph={l1}, supporti={l2}, CIDOC/KG={l3}.",
+        relations="Controllo del bilanciamento spatial graph/CIDOC, non di una risposta testuale precedente.",
         inference=(
             "Senza una risposta del modello da confrontare non posso dire se quella risposta "
-            "sia troppo generica. Posso però segnalare il rischio: se evidenza strutturale/L3 sono pochi o assenti, "
+            "sia troppo generica. Posso però segnalare il rischio: se supporti/CIDOC sono pochi o assenti, "
             "le conclusioni strutturali e tipologiche devono restare caute."
         ),
         confidence="alta sul criterio; non valutabile sulla qualità di una risposta assente.",
@@ -721,7 +720,7 @@ def _answer_typology(ctx: "SceneContext") -> str:
             _inventory_summary(ctx),
             _relationship_layer_summary(ctx),
         ]),
-        relations="Cascata L1->evidenza strutturale->L3 usata come supporto; la tipologia resta una inferenza.",
+        relations="Cascata spatial graph->CSV detail->CIDOC/KG usata come supporto; la tipologia resta una inferenza.",
         inference=f"Etichetta tipologica sintetica: {label}. Motivo: {reason}",
         confidence=confidence,
     )
@@ -1037,7 +1036,7 @@ def _typology_label(ctx: "SceneContext") -> tuple[str, str, str]:
         return (
             "spazio voltato o sistema ad archi",
             "arch/vault sono elementi tipologicamente caratterizzanti.",
-            "media: servono continuità geometrica e evidenze strutturali/L3 per maggiore certezza.",
+            "media: servono continuità geometrica ed evidenze strutturali/CIDOC per maggiore certezza.",
         )
     if has_stairs:
         return (
