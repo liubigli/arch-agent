@@ -13,12 +13,15 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import zipfile
 from collections import Counter
 from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from typing import Iterable
+from xml.sax.saxutils import escape
 
 import numpy as np
+from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score
 
 from arch_agent.pipeline.pipeline import PipelineParams, run_pipeline
 from arch_agent.pipeline.l3_cidoc_graph_builder import (
@@ -66,6 +69,9 @@ COMPOSITION_RELATIONSHIPS = {
     "is_connected_to",
     "is_placed_on",
     "is_rib_of",
+}
+UNSUPPORTED_ABOVE_PAIRS = {
+    ("column", "arch"),
 }
 
 INVERSE_RELATIONSHIP = {
@@ -149,6 +155,12 @@ CIDOC_VALIDATION_FIELDS = CIDOC_RAW_FIELDS + [
     "status",
     "invalid_issues",
     "review_issues",
+]
+
+MANUAL_REVIEW_FIELDS = [
+    "manual_label",
+    "manual_issue",
+    "manual_note",
 ]
 
 
@@ -326,6 +338,7 @@ def write_spatial_outputs(
     raw_csv = output_dir / f"spatial_triples_raw_{stem}.csv"
     validation_json = output_dir / f"spatial_triples_validation_{stem}.json"
     validation_csv = output_dir / f"spatial_triples_validation_{stem}.csv"
+    manual_xlsx = output_dir / f"spatial_triples_manual_review_{stem}.xlsx"
     summary_csv = output_dir / f"spatial_triples_summary_by_relation_{stem}.csv"
     report_txt = output_dir / f"spatial_triples_report_{stem}.txt"
 
@@ -333,6 +346,12 @@ def write_spatial_outputs(
     write_csv(raw_csv, raw_records, RAW_FIELDS)
     write_json(validation_json, {"summary": summary, "records": validation_records})
     write_csv(validation_csv, validation_records, VALIDATION_FIELDS)
+    write_xlsx(
+        manual_xlsx,
+        add_blank_manual_fields(validation_records),
+        VALIDATION_FIELDS + MANUAL_REVIEW_FIELDS,
+        sheet_name="spatial_triples",
+    )
     write_csv(summary_csv, relation_summary_rows(raw_records), ["relationship", "count"])
     write_report(report_txt, summary)
 
@@ -341,6 +360,7 @@ def write_spatial_outputs(
         f"Spatial raw CSV        : {raw_csv}",
         f"Spatial validation JSON: {validation_json}",
         f"Spatial validation CSV : {validation_csv}",
+        f"Spatial manual XLSX    : {manual_xlsx}",
         f"Spatial summary CSV    : {summary_csv}",
         f"Spatial report TXT     : {report_txt}",
     ]
@@ -380,6 +400,7 @@ def write_cidoc_outputs(
     raw_csv = output_dir / f"cidoc_triples_raw_{stem}.csv"
     validation_json = output_dir / f"cidoc_triples_validation_{stem}.json"
     validation_csv = output_dir / f"cidoc_triples_validation_{stem}.csv"
+    manual_xlsx = output_dir / f"cidoc_triples_manual_review_{stem}.xlsx"
     summary_csv = output_dir / f"cidoc_triples_summary_by_relation_{stem}.csv"
     report_txt = output_dir / f"cidoc_triples_report_{stem}.txt"
 
@@ -387,6 +408,12 @@ def write_cidoc_outputs(
     write_csv(raw_csv, raw_records, CIDOC_RAW_FIELDS)
     write_json(validation_json, {"summary": summary, "records": validation_records})
     write_csv(validation_csv, validation_records, CIDOC_VALIDATION_FIELDS)
+    write_xlsx(
+        manual_xlsx,
+        add_blank_manual_fields(validation_records),
+        CIDOC_VALIDATION_FIELDS + MANUAL_REVIEW_FIELDS,
+        sheet_name="cidoc_triples",
+    )
     write_csv(summary_csv, relation_summary_rows(raw_records), ["relationship", "count"])
     write_report(report_txt, summary)
 
@@ -395,6 +422,7 @@ def write_cidoc_outputs(
         f"CIDOC raw CSV          : {raw_csv}",
         f"CIDOC validation JSON  : {validation_json}",
         f"CIDOC validation CSV   : {validation_csv}",
+        f"CIDOC manual XLSX      : {manual_xlsx}",
         f"CIDOC summary CSV      : {summary_csv}",
         f"CIDOC report TXT       : {report_txt}",
     ]
@@ -428,13 +456,16 @@ def write_gold_comparison_outputs(
     comparison_records, comparison_summary = compare_with_gold(raw_records, gold_csv)
     comparison_json = output_dir / f"triples_gold_comparison_{stem}.json"
     comparison_csv = output_dir / f"triples_gold_comparison_{stem}.csv"
+    comparison_xlsx = output_dir / f"triples_gold_comparison_{stem}.xlsx"
     comparison_report = output_dir / f"triples_gold_report_{stem}.txt"
     write_json(comparison_json, {"summary": comparison_summary, "records": comparison_records})
     write_csv(comparison_csv, comparison_records, COMPARISON_FIELDS)
+    write_xlsx(comparison_xlsx, comparison_records, COMPARISON_FIELDS, sheet_name="gold_comparison")
     write_report(comparison_report, comparison_summary)
     return [
         f"Gold comparison JSON   : {comparison_json}",
         f"Gold comparison CSV    : {comparison_csv}",
+        f"Gold comparison XLSX   : {comparison_xlsx}",
         f"Gold comparison TXT    : {comparison_report}",
     ]
 
@@ -601,6 +632,20 @@ def geometry_check(
             distance_threshold,
         )
         ok = any((s, t, r) == (src, tgt, rel) for s, t, r, *_ in pair_geometry)
+        if not ok and rel in {"above", "below"}:
+            ok = vertical_relation_plausible(
+                source,
+                rel,
+                target,
+                distance_threshold=distance_threshold,
+            )
+        if not ok and rel in {"near", "adjacent_to"}:
+            ok = local_spatial_relation_plausible(
+                source,
+                rel,
+                target,
+                distance_threshold=distance_threshold,
+            )
         return ok, None if ok else "geometry_check_failed"
 
     if rel == "supports":
@@ -695,14 +740,19 @@ def vertical_gap(upper_bounds: dict, lower_bounds: dict) -> float:
     return float(upper_bounds["min"][2] - lower_bounds["max"][2])
 
 
-def local_is_above(upper: dict, lower: dict, max_gap: float = 0.35) -> bool:
+def local_is_above(upper: dict, lower: dict, max_gap: float = 0.75) -> bool:
+    upper_label = upper.get("semantic_label")
+    lower_label = lower.get("semantic_label")
+    if (upper_label, lower_label) in UNSUPPORTED_ABOVE_PAIRS:
+        return False
+
     upper_bounds = upper["bounds"]
     lower_bounds = lower["bounds"]
     z_gap = vertical_gap(upper_bounds, lower_bounds)
     return (
         float(upper["centroid"][2]) > float(lower["centroid"][2])
-        and 0.0 <= z_gap <= max_gap
-        and overlap_xy_ratio(upper_bounds, lower_bounds) >= 0.15
+        and -0.15 <= z_gap <= max_gap
+        and overlap_xy_ratio(upper_bounds, lower_bounds) >= 0.05
     )
 
 
@@ -812,6 +862,85 @@ def horizontal_gap(left: dict, right: dict) -> float:
         for axis in range(2)
     ]
     return float(np.linalg.norm(gaps))
+
+
+def vertical_relation_plausible(
+    source: dict,
+    relationship: str,
+    target: dict,
+    *,
+    distance_threshold: float,
+) -> bool:
+    if relationship == "above":
+        upper = source
+        lower = target
+    elif relationship == "below":
+        upper = target
+        lower = source
+    else:
+        return False
+
+    if float(upper["centroid"][2]) <= float(lower["centroid"][2]):
+        return False
+
+    upper_label = upper.get("semantic_label")
+    lower_label = lower.get("semantic_label")
+    if not supports_label_pair(lower_label, upper_label):
+        return False
+
+    upper_bounds = upper["bounds"]
+    lower_bounds = lower["bounds"]
+    return (
+        horizontal_gap(upper_bounds, lower_bounds) <= max(distance_threshold, 0.75)
+        or overlap_xy_ratio(upper_bounds, lower_bounds) >= 0.01
+    )
+
+
+def local_spatial_relation_plausible(
+    source: dict,
+    relationship: str,
+    target: dict,
+    *,
+    distance_threshold: float,
+) -> bool:
+    if not architecturally_related_pair(source, target):
+        return False
+
+    source_bounds = source["bounds"]
+    target_bounds = target["bounds"]
+    contact_gap = max(distance_threshold * 0.25, 0.75)
+
+    if relationship == "adjacent_to":
+        return (
+            relationship_contact_confirmed(source, target, contact_gap)
+            or (
+                horizontal_gap(source_bounds, target_bounds) <= max(distance_threshold, 0.75)
+                and axis_overlap_ratio(source_bounds, target_bounds, axis=2) >= 0.05
+            )
+        )
+
+    if relationship == "near":
+        source_centroid = np.asarray(source["centroid"], dtype=float)
+        target_centroid = np.asarray(target["centroid"], dtype=float)
+        centroid_distance = float(np.linalg.norm(source_centroid - target_centroid))
+        return (
+            centroid_distance <= distance_threshold * 1.25
+            or bounds_gap(source_bounds, target_bounds) <= max(distance_threshold, 0.75)
+            or relationship_contact_confirmed(source, target, contact_gap)
+        )
+
+    return False
+
+
+def architecturally_related_pair(source: dict, target: dict) -> bool:
+    source_label = source.get("semantic_label")
+    target_label = target.get("semantic_label")
+    return (
+        supports_label_pair(source_label, target_label)
+        or supports_label_pair(target_label, source_label)
+        or mereological_relation_type(source_label, target_label) is not None
+        or mereological_relation_type(target_label, source_label) is not None
+    )
 
 
 def build_cidoc_graph_from_context(ctx):
@@ -1086,22 +1215,33 @@ def compare_with_gold(raw_records: list[dict], gold_csv: Path) -> tuple[list[dic
             }
         )
 
-    tp = sum(1 for row in rows if row["status"] == "true_positive")
-    fp = sum(1 for row in rows if row["status"] == "false_positive")
-    fn = sum(1 for row in rows if row["status"] == "false_negative")
-    precision = tp / (tp + fp) if tp + fp else 0.0
-    recall = tp / (tp + fn) if tp + fn else 0.0
-    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    y_true = [1 if row["in_gold"] else 0 for row in rows]
+    y_pred = [1 if row["in_generated"] else 0 for row in rows]
+
+    precision = float(precision_score(y_true, y_pred, zero_division=0))
+    recall = float(recall_score(y_true, y_pred, zero_division=0))
+    f1 = float(f1_score(y_true, y_pred, zero_division=0))
+    matrix = confusion_matrix(y_true, y_pred, labels=[0, 1])
+    tn, fp, fn, tp = [int(value) for value in matrix.ravel()]
+
     summary = {
         "gold_csv": str(gold_csv),
         "generated_triples": len(generated_keys),
         "gold_triples": len(gold_keys),
+        "evaluated_candidate_triples": len(rows),
         "true_positive": tp,
+        "true_negative": tn,
         "false_positive": fp,
         "false_negative": fn,
-        "precision": round(precision, 4),
-        "recall": round(recall, 4),
-        "f1": round(f1, 4),
+        "precision_score": round(precision, 4),
+        "recall_score": round(recall, 4),
+        "f1_score": round(f1, 4),
+        "confusion_matrix": matrix.astype(int).tolist(),
+        "confusion_matrix_format": "rows=y_true [0,1], columns=y_pred [0,1]",
+        "metric_note": (
+            "Metrics are computed on the union of generated and gold triples. "
+            "True negatives outside this candidate universe are not enumerated."
+        ),
     }
     return rows, summary
 
@@ -1235,6 +1375,179 @@ def write_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
         writer.writeheader()
         for row in rows:
             writer.writerow(row)
+
+
+def add_blank_manual_fields(rows: list[dict]) -> list[dict]:
+    enriched = []
+    for row in rows:
+        item = dict(row)
+        for field in MANUAL_REVIEW_FIELDS:
+            item.setdefault(field, "")
+        enriched.append(item)
+    return enriched
+
+
+def write_xlsx(path: Path, rows: list[dict], fieldnames: list[str], sheet_name: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    safe_sheet_name = sanitize_sheet_name(sheet_name)
+    row_count = len(rows) + 1
+    col_count = len(fieldnames)
+    last_cell = f"{excel_col(col_count)}{max(row_count, 1)}"
+
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", xlsx_content_types())
+        archive.writestr("_rels/.rels", xlsx_root_rels())
+        archive.writestr("docProps/app.xml", xlsx_app_props(safe_sheet_name))
+        archive.writestr("docProps/core.xml", xlsx_core_props())
+        archive.writestr("xl/workbook.xml", xlsx_workbook(safe_sheet_name))
+        archive.writestr("xl/_rels/workbook.xml.rels", xlsx_workbook_rels())
+        archive.writestr("xl/styles.xml", xlsx_styles())
+        archive.writestr(
+            "xl/worksheets/sheet1.xml",
+            xlsx_sheet_xml(rows, fieldnames, ref=f"A1:{last_cell}"),
+        )
+
+
+def sanitize_sheet_name(value: str) -> str:
+    invalid_chars = set("[]:*?/\\")
+    cleaned = "".join("_" if char in invalid_chars else char for char in value)
+    return (cleaned[:31] or "Sheet1").strip("'") or "Sheet1"
+
+
+def excel_col(index: int) -> str:
+    letters = ""
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        letters = chr(65 + remainder) + letters
+    return letters or "A"
+
+
+def xlsx_cell(row_index: int, col_index: int, value: object, style: int = 0) -> str:
+    cell_ref = f"{excel_col(col_index)}{row_index}"
+    text = "" if value is None else str(value)
+    escaped = escape(text, {'"': "&quot;"})
+    style_attr = f' s="{style}"' if style else ""
+    return f'<c r="{cell_ref}" t="inlineStr"{style_attr}><is><t>{escaped}</t></is></c>'
+
+
+def xlsx_sheet_xml(rows: list[dict], fieldnames: list[str], ref: str) -> str:
+    column_xml = "".join(
+        f'<col min="{index}" max="{index}" width="{xlsx_column_width(field)}" customWidth="1"/>'
+        for index, field in enumerate(fieldnames, start=1)
+    )
+    row_xml = []
+    header_cells = "".join(
+        xlsx_cell(1, col_index, field, style=1)
+        for col_index, field in enumerate(fieldnames, start=1)
+    )
+    row_xml.append(f'<row r="1">{header_cells}</row>')
+
+    for row_index, row in enumerate(rows, start=2):
+        cells = "".join(
+            xlsx_cell(row_index, col_index, row.get(field, ""))
+            for col_index, field in enumerate(fieldnames, start=1)
+        )
+        row_xml.append(f'<row r="{row_index}">{cells}</row>')
+
+    return f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheetViews>
+    <sheetView tabSelected="1" workbookViewId="0">
+      <pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>
+      <selection pane="bottomLeft" activeCell="A2" sqref="A2"/>
+    </sheetView>
+  </sheetViews>
+  <cols>{column_xml}</cols>
+  <sheetData>{''.join(row_xml)}</sheetData>
+  <autoFilter ref="{ref}"/>
+</worksheet>'''
+
+
+def xlsx_column_width(field: str) -> int:
+    if field in {"source", "target", "relationship", "status", "manual_label", "manual_issue"}:
+        return 24
+    if field.endswith("_issues") or field.endswith("_note") or field in {"manual_note"}:
+        return 42
+    if field in {"source_label", "target_label", "derivation_level"}:
+        return 22
+    return min(max(len(field) + 2, 12), 28)
+
+
+def xlsx_content_types() -> str:
+    return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>'''
+
+
+def xlsx_root_rels() -> str:
+    return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>'''
+
+
+def xlsx_workbook(sheet_name: str) -> str:
+    escaped_sheet = escape(sheet_name, {'"': "&quot;"})
+    return f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="{escaped_sheet}" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>'''
+
+
+def xlsx_workbook_rels() -> str:
+    return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>'''
+
+
+def xlsx_styles() -> str:
+    return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="2">
+    <font><sz val="11"/><name val="Calibri"/></font>
+    <font><b/><sz val="11"/><name val="Calibri"/></font>
+  </fonts>
+  <fills count="2">
+    <fill><patternFill patternType="none"/></fill>
+    <fill><patternFill patternType="gray125"/></fill>
+  </fills>
+  <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="2">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+    <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+  </cellXfs>
+</styleSheet>'''
+
+
+def xlsx_app_props(sheet_name: str) -> str:
+    escaped_sheet = escape(sheet_name)
+    return f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
+  <Application>arch-agent</Application>
+  <TitlesOfParts><vt:vector size="1" baseType="lpstr"><vt:lpstr>{escaped_sheet}</vt:lpstr></vt:vector></TitlesOfParts>
+</Properties>'''
+
+
+def xlsx_core_props() -> str:
+    return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:creator>arch-agent</dc:creator>
+  <cp:lastModifiedBy>arch-agent</cp:lastModifiedBy>
+</cp:coreProperties>'''
 
 
 def write_markdown_table(path: Path, rows: list[dict], fields: list[str], title: str) -> None:
