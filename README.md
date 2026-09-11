@@ -16,21 +16,21 @@ Load and sample points
 DBSCAN segmentation -> individual objects
       |
       v
-L1 spatial graph
+Spatial graph
       - object geometry
       - centroids and bounding boxes
       - near / adjacent_to / above / below
-      - distances and local spatial support
+      - supports / rests_on and composition links when validated
       |
       v
-L2 annotation and enrichment step
+CSV / metadata enrichment
       - CSV element metadata
       - material, typology, function, descriptions
       - aggregate evidence from geometric tools or validation
       - colonnade, portico, loggia, nave, pavilion, etc.
       |
       v
-L3 CIDOC ontology graph
+CIDOC / knowledge graph
       - CIDOC element nodes
       - type/material/function satellites
       - measurements and dimensions
@@ -43,7 +43,7 @@ LangGraph Agent
 Interactive chat
 ```
 
-The key distinction is that L1 and L3 are graphs, while L2 is an intermediate information layer. L2 collects the metadata and validated aggregate evidence required to build the final CIDOC interpretation.
+The key distinction is that the spatial graph is the operational scene graph, CSV metadata is an enrichment layer, and CIDOC/KG is the cultural-heritage knowledge graph built from the available evidence.
 
 ## Input format
 
@@ -109,17 +109,17 @@ Each detected object stores the segmentation method used:
 
 ## Scene Understanding Layers
 
-The scene is no longer described as three equivalent graphs. The current model separates geometry, annotation, and ontology:
+The scene is not described as three equivalent graphs. The current model separates spatial relations, user/researcher annotations, and ontology:
 
-| Level | Role | Output | Meaning |
+| Layer | Internal key | Output | Meaning |
 |---|---|---|---|
-| L1 | Spatial graph | `networkx.DiGraph` / scenegraph | Geometric and spatial relations between segmented objects: `near`, `adjacent_to`, `above`, `below`, distances, bounding boxes, centroids. |
-| L2 | Information/enrichment step | CSV/JSON annotations linked to objects and aggregate evidence | User/researcher metadata: material, typology, function, descriptions, historical notes, plus validated aggregate labels such as colonnade, portico, loggia, nave, pavilion. |
-| L3 | CIDOC ontology graph | CIDOC-oriented knowledge graph | Cultural-heritage interpretation built from L1 + L2: elements, types, materials, functions, measurements, and aggregate architectural entities. |
+| Spatial graph | `L1` | `networkx.DiGraph` / scenegraph | Spatial and locally validated architectural relations between segmented objects: `near`, `adjacent_to`, `above`, `below`, `supports`, `rests_on`, `is_opening_in`, `is_ornament_of`, `part_of`, plus object geometry, distances, bounding boxes and centroids. |
+| CSV/detail enrichment | `L2_DETAIL` | CSV/JSON annotations linked to objects and aggregate evidence | User/researcher metadata: material, typology, function, descriptions, historical notes, plus validated aggregate labels such as colonnade, portico, loggia, nave, pavilion. This is not a graph. |
+| CIDOC/KG | `L3` | CIDOC-oriented knowledge graph | Cultural-heritage interpretation built from the spatial graph and CSV/detail enrichment: elements, types, materials, functions, measurements, and aggregate architectural entities. |
 
-### L1: Spatial Graph
+### Spatial Graph
 
-L1 is the fixed geometric/spatial scenegraph derived from the point cloud and spatial tools. It contains object geometry and local spatial relations. It does not assign material, historical interpretation, or architectural aggregate identity by itself.
+The spatial graph is derived from the point cloud, object geometry, spatial tools and architectural rules. It gives priority to geometric/spatial evidence, then records locally validated architectural relations. It does not assign material, historical interpretation, or architectural aggregate identity by itself.
 
 Examples:
 
@@ -127,11 +127,14 @@ Examples:
 column_1 near column_2
 vault_1 above floor_1
 door_window_1 adjacent_to wall_1
+floor_1 supports column_1
+door_window_1 is_opening_in wall_1
+moldings_1 is_ornament_of wall_1
 ```
 
-### L2: Annotation And Enrichment Step
+### CSV/detail Enrichment
 
-L2 is not a graph. It is the intermediate information layer that collects and links external knowledge to the scene.
+CSV/detail enrichment is not a graph. It collects and links external knowledge to the scene.
 
 Element-level annotations from the scene CSV:
    - material
@@ -140,15 +143,15 @@ Element-level annotations from the scene CSV:
    - description
    - historical/material notes
 
-Material type is determined only from the CSV attached to the scene. It is not inferred from the point cloud, geometry, semantic class, or L1 relations.
+Material type is determined only from the CSV attached to the scene. It is not inferred from the point cloud, geometry, semantic class, RGB, roughness, or spatial graph relations.
 
 Aggregate annotations can be derived from geometric tools or validation and then added to the scene annotation data. They are used to support the final scene-level description.
 
-### L3: CIDOC Ontology Graph
+### CIDOC/KG
 
-L3 is the ontological layer. It uses CIDOC-CRM patterns to formalize the information from L1 and L2.
+CIDOC/KG is the ontological layer. It uses CIDOC-CRM patterns to formalize the information from the spatial graph and CSV/detail enrichment.
 
-The L3 graph contains:
+The CIDOC/KG graph contains:
 
 ```text
 Element_N crm:P2_has_type Tipo_*
@@ -157,9 +160,9 @@ Element_N crm:P103_was_intended_for Funzione_*
 Aggregate_N crm:P46_is_composed_of Element_N
 ```
 
-CIDOC element-to-element or aggregate-to-element relations are created only when they are supported by local spatial evidence from L1 or explicit aggregate evidence from L2. The system must not connect distant elements only because they are semantically compatible.
+CIDOC element-to-element or aggregate-to-element relations are created only when they are supported by local spatial evidence from the spatial graph or explicit aggregate evidence from CSV/detail enrichment. The system must not connect distant elements only because they are semantically compatible.
 
-For relationship queries, `list_relationships` is the primary tool for inspecting L1 spatial relations and existing graph relations. CIDOC aggregate interpretation is handled by the L3 builder and documented in `docs/cidoc_l3_scene_graph_builder.md`.
+For relationship queries, `list_relationships` is the primary tool for inspecting spatial graph relations and existing graph relations. CIDOC aggregate interpretation is handled by the CIDOC/KG builder and documented in `docs/cidoc_l3_scene_graph_builder.md`.
 
 ## Requirements
 
@@ -225,7 +228,7 @@ pixi run view-dbscan path/to/scene.laz --classes column wall --with-boxes
 |------|---------|-------------|
 | `--eps` | `0.5` | DBSCAN epsilon for object segmentation |
 | `--min-samples` | `15` | DBSCAN min_samples (lower for sparse clouds) |
-| `--distance-threshold` | `3.0` | Max centroid distance (m) for spatial relationships |
+| `--distance-threshold` | `2.0` | Max centroid distance (m) for spatial relationships |
 | `--sample-n` | `150000` | Max points to load (0 = no limit) |
 | `--use-normals` | `False` | Poisson-based surface area (slower, more accurate) |
 | `--model` | `llama3` | Ollama model to use |
@@ -245,52 +248,45 @@ Agent: [calls reload_scene] Scene reloaded. Objects: 24 | Relationships: 41 ...
 
 ## Configuration
 
-Two files can be customized without touching Python code:
+The main project configuration is split between Python schema/rules, CSV scene metadata, and the agent prompt:
 
-**`config.yaml`** — semantic class definitions:
-```yaml
-semantic_classes:
-  names: [arch, column, moldings, ...]   # label id → class name
-  structural: [arch, column, wall, ...]  # used for element type classification
-  finishing: [moldings, floor, ...]
-  colors:                                # RGB in [0, 1], used for visualization
-    arch: [0.85, 0.37, 0.01]
-    ...
-```
+**`arch_agent/semantic_schema.py`** - semantic class registry, roles, aliases and architectural rule hints. This is where class IDs, structural/finishing categories, support/resting pairs and part/ornament/opening relationships are defined.
 
-**`prompts/system.md`** — system prompt for the agent, edit freely to change its tone or instructions.
+**Scene annotation CSV** - optional per-scene metadata linked through `--annotation-csv`. Use it for material, typology, function, historical notes and object descriptions. Matching is based on `semantic_label` plus `global_box_center_x/y/z`.
+
+**`prompts/system.md`** - system prompt for the agent, edit freely to change its tone or instructions.
 
 ## Project structure
 
 ```
-config.yaml                # semantic class definitions (editable)
+arch_agent/semantic_schema.py  # semantic class registry and architectural rule hints
 prompts/
-│   └── system.md          # agent system prompt (editable)
+    system.md              # agent system prompt (editable)
 arch_agent/
-├── settings.py            # YAML config loader (lru_cache)
-├── pipeline/
-│   ├── loader.py          # LAZ → DataFrame
-│   ├── segmentation.py    # DBSCAN object extraction
-│   ├── features.py        # geometric feature computation
-│   ├── relationships.py   # spatial relationship detection L1/L2/L3
-│   ├── graph.py           # NetworkX DiGraph builders
-│   └── pipeline.py        # PipelineParams, SceneContext, run_pipeline()
-├── tools/
-│   └── scene_tools.py     # LangChain tools wrapping the scene graph
-├── agent.py               # LangGraph agent + conversation loop
-└── __init__.py
+    settings.py            # cached runtime config derived from semantic_schema.py
+    pipeline/
+        loader.py          # LAZ -> DataFrame
+        segmentation.py    # DBSCAN object extraction
+        features.py        # geometric feature computation
+        relationships.py   # spatial graph relationship detection
+        graph.py           # NetworkX DiGraph builders
+        pipeline.py        # PipelineParams, SceneContext, run_pipeline()
+    tools/
+        scene_tools.py     # LangChain tools wrapping the scene graph and CSV detail
+    agent.py               # LangGraph agent + conversation loop
+    __init__.py
 main.py                    # CLI entry point
 ```
 
-## CIDOC L3 ontology layer
+## CIDOC/KG ontology layer
 
-The L3 layer is a CIDOC-CRM based knowledge graph for cultural heritage interpretation.
+The CIDOC/KG layer is a CIDOC-CRM based knowledge graph for cultural heritage interpretation.
 
-- L1 remains the fixed geometric/spatial scenegraph derived from the point cloud.
-- L2 is an information/enrichment step, not a graph: it links CSV element metadata and validated aggregate evidence to the scene.
-- Material, typology and function values in L2/L3 come only from the scene annotation CSV.
-- L3 builds a CIDOC-oriented ontology graph from L1 + L2 without inventing missing values.
-- Element-to-element CIDOC relations are created only when supported by local spatial evidence from L1 or explicit scene evidence.
+- The spatial graph remains the main scene graph derived from the point cloud and validated architectural rules.
+- CSV/detail enrichment is not a graph: it links CSV element metadata and validated aggregate evidence to the scene.
+- Material, typology and function values in CSV/detail enrichment and CIDOC/KG come only from the scene annotation CSV.
+- CIDOC/KG builds a CIDOC-oriented ontology graph from the spatial graph and CSV/detail enrichment without inventing missing values.
+- Element-to-element CIDOC relations are created only when supported by local spatial evidence from the spatial graph or explicit scene evidence.
 
 Implemented CIDOC patterns include element nodes connected to type, material and function satellites:
 
@@ -300,7 +296,7 @@ Elemento_N crm:P45_consists_of Materiale_*
 Elemento_N crm:P103_was_intended_for Funzione_*
 ```
 
-Additional L3 rules currently documented/implemented:
+Additional CIDOC/KG rules currently documented/implemented:
 
 - `colonnade`: inferred from at least 4 aligned, approximately equispaced structural-support columns.
 - `portico`: inferred only with aligned arches or columns+architraves, continuous cover, covered walkable ground-floor space, open external side and opposite side attached to/closed by the building.
