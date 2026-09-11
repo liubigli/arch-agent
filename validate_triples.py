@@ -28,13 +28,10 @@ from arch_agent.pipeline.l3_cidoc_graph_builder import (
     _normalize_class,
     _slug,
 )
-from arch_agent.pipeline.relationships import (
-    _determine_geometric_relationships,
-    _has_relationship_contact,
-    _rests_on,
-    mereological_relation_type,
-    supports_label_pair,
-)
+try:
+    from arch_agent.semantic_schema import ARCHITECTURAL_CLASS_RULES
+except ImportError:  # compatibility with older WSL copies
+    from arch_agent.pipeline.relationships import ARCHITECTURAL_CLASS_RULES
 
 
 ARCHITECTURAL_RULE_LEVEL = "architectural_rule"
@@ -616,12 +613,205 @@ def geometry_check(
     if rel in COMPOSITION_RELATIONSHIPS:
         max_gap = max(surface_contact_threshold, min(distance_threshold * 0.25, 0.75))
         if rel == "has_part":
-            ok = _has_relationship_contact(target, source, max_gap)
+            ok = relationship_contact_confirmed(target, source, max_gap)
         else:
-            ok = _has_relationship_contact(source, target, max_gap)
+            ok = relationship_contact_confirmed(source, target, max_gap)
         return ok, None if ok else "contact_geometry_not_confirmed"
 
     return False, "unknown_relationship_type"
+
+
+def relationship_contact_confirmed(child: dict, parent: dict, max_gap: float) -> bool:
+    child_bounds = child["bounds"]
+    parent_bounds = parent["bounds"]
+    if bounds_gap(child_bounds, parent_bounds) <= max_gap:
+        return True
+    if local_is_above(child, parent) or local_is_above(parent, child):
+        return True
+    return (
+        overlap_xy_ratio(child_bounds, parent_bounds) >= 0.05
+        and axis_overlap_ratio(child_bounds, parent_bounds, axis=2) >= 0.05
+    )
+
+
+def axis_gap(min1: float, max1: float, min2: float, max2: float) -> float:
+    if max1 < min2:
+        return float(min2 - max1)
+    if max2 < min1:
+        return float(min1 - max2)
+    return 0.0
+
+
+def bounds_gap(left: dict, right: dict) -> float:
+    gaps = [
+        axis_gap(
+            float(left["min"][axis]),
+            float(left["max"][axis]),
+            float(right["min"][axis]),
+            float(right["max"][axis]),
+        )
+        for axis in range(3)
+    ]
+    return float(np.linalg.norm(gaps))
+
+
+def xy_area(bounds: dict) -> float:
+    dims = np.asarray(bounds["max"][:2], dtype=float) - np.asarray(bounds["min"][:2], dtype=float)
+    return float(max(dims[0], 0.0) * max(dims[1], 0.0))
+
+
+def overlap_xy_ratio(left: dict, right: dict) -> float:
+    x_overlap = max(
+        0.0,
+        min(float(left["max"][0]), float(right["max"][0]))
+        - max(float(left["min"][0]), float(right["min"][0])),
+    )
+    y_overlap = max(
+        0.0,
+        min(float(left["max"][1]), float(right["max"][1]))
+        - max(float(left["min"][1]), float(right["min"][1])),
+    )
+    reference_area = min(xy_area(left), xy_area(right))
+    if reference_area <= 0:
+        return 0.0
+    return float((x_overlap * y_overlap) / reference_area)
+
+
+def axis_overlap_ratio(left: dict, right: dict, axis: int) -> float:
+    overlap = max(
+        0.0,
+        min(float(left["max"][axis]), float(right["max"][axis]))
+        - max(float(left["min"][axis]), float(right["min"][axis])),
+    )
+    size_left = max(float(left["max"][axis]) - float(left["min"][axis]), 0.0)
+    size_right = max(float(right["max"][axis]) - float(right["min"][axis]), 0.0)
+    reference = min(size_left, size_right)
+    if reference <= 0:
+        return 0.0
+    return float(overlap / reference)
+
+
+def vertical_gap(upper_bounds: dict, lower_bounds: dict) -> float:
+    return float(upper_bounds["min"][2] - lower_bounds["max"][2])
+
+
+def local_is_above(upper: dict, lower: dict, max_gap: float = 0.35) -> bool:
+    upper_bounds = upper["bounds"]
+    lower_bounds = lower["bounds"]
+    z_gap = vertical_gap(upper_bounds, lower_bounds)
+    return (
+        float(upper["centroid"][2]) > float(lower["centroid"][2])
+        and 0.0 <= z_gap <= max_gap
+        and overlap_xy_ratio(upper_bounds, lower_bounds) >= 0.15
+    )
+
+
+def supports_label_pair(lower_label: str | None, upper_label: str | None) -> bool:
+    lower_rules = ARCHITECTURAL_CLASS_RULES.get(lower_label or "", {})
+    upper_rules = ARCHITECTURAL_CLASS_RULES.get(upper_label or "", {})
+    return (
+        upper_label in lower_rules.get("can_support", set())
+        and lower_label in upper_rules.get("can_rest_on", set())
+    )
+
+
+def mereological_relation_type(child_label: str | None, parent_label: str | None) -> str | None:
+    rules = ARCHITECTURAL_CLASS_RULES.get(child_label or "", {})
+    return rules.get("part_of", {}).get(parent_label)
+
+
+def _rests_on(upper: dict, lower: dict) -> bool:
+    upper_label = upper.get("semantic_label")
+    lower_label = lower.get("semantic_label")
+    if not supports_label_pair(lower_label, upper_label):
+        return False
+
+    upper_bounds = upper["bounds"]
+    lower_bounds = lower["bounds"]
+    z_gap = vertical_gap(upper_bounds, lower_bounds)
+    return (
+        float(upper["centroid"][2]) > float(lower["centroid"][2])
+        and -0.15 <= z_gap <= 0.35
+        and overlap_xy_ratio(upper_bounds, lower_bounds) >= 0.10
+    )
+
+
+def _determine_geometric_relationships(
+    name1: str,
+    obj1: dict,
+    name2: str,
+    obj2: dict,
+    distance_threshold: float,
+) -> list[tuple[str, str, str, str]]:
+    relationships = []
+    c1 = np.asarray(obj1["centroid"], dtype=float)
+    c2 = np.asarray(obj2["centroid"], dtype=float)
+    centroid_distance = float(np.linalg.norm(c1 - c2))
+
+    obj1_above_obj2 = local_is_above(obj1, obj2)
+    obj2_above_obj1 = local_is_above(obj2, obj1)
+
+    if obj1_above_obj2:
+        relationships.append((name1, name2, "above", "geometric"))
+        relationships.append((name2, name1, "below", "geometric"))
+    elif obj2_above_obj1:
+        relationships.append((name2, name1, "above", "geometric"))
+        relationships.append((name1, name2, "below", "geometric"))
+
+    adjacent_gap = min(distance_threshold * 0.15, 0.35)
+    is_adjacent = local_is_adjacent_laterally(obj1, obj2, adjacent_gap)
+    if is_adjacent:
+        relationships.append((name1, name2, "adjacent_to", "geometric"))
+        relationships.append((name2, name1, "adjacent_to", "geometric"))
+
+    if (
+        centroid_distance <= distance_threshold
+        and not obj1_above_obj2
+        and not obj2_above_obj1
+        and not is_adjacent
+    ):
+        relationships.append((name1, name2, "near", "geometric"))
+        relationships.append((name2, name1, "near", "geometric"))
+
+    return relationships
+
+
+def local_is_adjacent_laterally(obj1: dict, obj2: dict, max_gap: float) -> bool:
+    label1 = obj1.get("semantic_label")
+    label2 = obj2.get("semantic_label")
+    if "floor" in {label1, label2} and label1 != label2:
+        return False
+    if local_is_above(obj1, obj2) or local_is_above(obj2, obj1):
+        return False
+
+    b1 = obj1["bounds"]
+    b2 = obj2["bounds"]
+    if horizontal_gap(b1, b2) > max_gap:
+        return False
+    if axis_overlap_ratio(b1, b2, axis=2) < 0.30:
+        return False
+
+    x_overlap = axis_overlap_ratio(b1, b2, axis=0)
+    y_overlap = axis_overlap_ratio(b1, b2, axis=1)
+    x_gap = axis_gap(float(b1["min"][0]), float(b1["max"][0]), float(b2["min"][0]), float(b2["max"][0]))
+    y_gap = axis_gap(float(b1["min"][1]), float(b1["max"][1]), float(b2["min"][1]), float(b2["max"][1]))
+    return (
+        (x_gap <= max_gap and y_overlap >= 0.15)
+        or (y_gap <= max_gap and x_overlap >= 0.15)
+    )
+
+
+def horizontal_gap(left: dict, right: dict) -> float:
+    gaps = [
+        axis_gap(
+            float(left["min"][axis]),
+            float(left["max"][axis]),
+            float(right["min"][axis]),
+            float(right["max"][axis]),
+        )
+        for axis in range(2)
+    ]
+    return float(np.linalg.norm(gaps))
 
 
 def build_cidoc_graph_from_context(ctx):
