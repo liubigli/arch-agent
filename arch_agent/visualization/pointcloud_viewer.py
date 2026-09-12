@@ -98,6 +98,69 @@ def _show_geometries(
     vis.destroy_window()
 
 
+def _show_geometries_with_labels(
+    geometries: list,
+    labels: list[tuple[np.ndarray, str]],
+    window_name: str,
+    point_size: float,
+    background_color: tuple[float, float, float],
+) -> None:
+    _require_open3d()
+    if not labels:
+        _show_geometries(geometries, window_name, point_size, background_color)
+        return
+
+    try:
+        gui = o3d.visualization.gui
+        rendering = o3d.visualization.rendering
+        app = gui.Application.instance
+        app.initialize()
+
+        vis = o3d.visualization.O3DVisualizer(window_name, 1200, 800)
+        vis.show_settings = False
+
+        point_material = rendering.MaterialRecord()
+        point_material.shader = "defaultUnlit"
+        point_material.point_size = float(point_size)
+
+        for index, geometry in enumerate(geometries):
+            name = f"geometry_{index}"
+            if isinstance(geometry, o3d.geometry.PointCloud):
+                vis.add_geometry(name, geometry, point_material)
+            else:
+                vis.add_geometry(name, geometry)
+
+        for position, text in labels:
+            vis.add_3d_label(np.asarray(position, dtype=float), str(text))
+
+        try:
+            vis.set_background(np.array([*background_color, 1.0], dtype=float))
+        except Exception:
+            pass
+
+        app.add_window(vis)
+        app.run()
+    except Exception as exc:
+        print(
+            "Open3D label viewer is not available in this environment; "
+            f"falling back to point cloud without 3D text labels. Detail: {exc}"
+        )
+        print("Requested labels:")
+        for position, text in labels:
+            x, y, z = np.asarray(position, dtype=float)
+            print(f"  - {text}: ({x:.3f}, {y:.3f}, {z:.3f})")
+        _show_geometries(geometries, window_name, point_size, background_color)
+
+
+def _object_label_position(object_data: dict, scene_scale: float) -> np.ndarray:
+    bounds = object_data["bounds"]
+    lower = np.asarray(bounds["min"], dtype=float)
+    upper = np.asarray(bounds["max"], dtype=float)
+    position = (lower + upper) / 2.0
+    position[2] = upper[2] + max(scene_scale * 0.015, 0.20)
+    return position
+
+
 def visualize_semantic_pointcloud(
     df,
     point_size: float = 3.0,
@@ -142,6 +205,7 @@ def visualize_clustered_objects(
     point_size: float = 3.0,
     classes: list[str] | None = None,
     with_boxes: bool = False,
+    with_labels: bool = False,
     add_axes: bool = False,
 ) -> None:
     """Visualize DBSCAN objects with a different color for each cluster."""
@@ -160,6 +224,7 @@ def visualize_clustered_objects(
     all_points = []
     all_colors = []
     geometries = []
+    label_entries: list[tuple[np.ndarray, str]] = []
 
     for object_name in object_names:
         object_data = selected_objects[object_name]
@@ -188,9 +253,16 @@ def visualize_clustered_objects(
     points = np.vstack(all_points)
     colors = np.vstack(all_colors)
     geometries.insert(0, _make_point_cloud(points, colors))
+    scene_scale = _scene_diagonal(points)
+
+    if with_labels:
+        for object_name in object_names:
+            label_entries.append(
+                (_object_label_position(selected_objects[object_name], scene_scale), object_name)
+            )
 
     if add_axes:
-        axis_size = max(0.5, _scene_diagonal(points) * 0.08)
+        axis_size = max(0.5, scene_scale * 0.08)
         geometries.append(o3d.geometry.TriangleMesh.create_coordinate_frame(size=axis_size))
 
     print(f"Visualizing {len(object_names)} DBSCAN objects and {len(points):,} points.")
@@ -200,12 +272,21 @@ def visualize_clustered_objects(
         count = object_data["point_count"]
         print(f"  - {object_name} ({label}): {count:,} points")
 
-    _show_geometries(
-        geometries,
-        window_name="DBSCAN Clustered Point Cloud Objects",
-        point_size=point_size,
-        background_color=(0.1, 0.1, 0.1),
-    )
+    if with_labels:
+        _show_geometries_with_labels(
+            geometries,
+            label_entries,
+            window_name="DBSCAN Clustered Point Cloud Objects",
+            point_size=point_size,
+            background_color=(0.1, 0.1, 0.1),
+        )
+    else:
+        _show_geometries(
+            geometries,
+            window_name="DBSCAN Clustered Point Cloud Objects",
+            point_size=point_size,
+            background_color=(0.1, 0.1, 0.1),
+        )
 
 
 def parse_args() -> argparse.Namespace:
@@ -231,6 +312,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-samples", type=int, default=15, help="DBSCAN min_samples.")
     parser.add_argument("--point-size", type=float, default=1.5, help="Open3D point size.")
     parser.add_argument("--with-boxes", action="store_true", help="Show DBSCAN AABB boxes in cluster mode.")
+    parser.add_argument("--labels", action="store_true", help="Show DBSCAN object names as 3D labels in cluster mode.")
     parser.add_argument("--axes", action="store_true", help="Show a coordinate frame.")
     return parser.parse_args()
 
@@ -264,6 +346,7 @@ def main() -> None:
             point_size=args.point_size,
             classes=args.classes,
             with_boxes=args.with_boxes,
+            with_labels=args.labels,
             add_axes=args.axes,
         )
 

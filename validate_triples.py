@@ -13,11 +13,14 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import posixpath
+import unicodedata
 import zipfile
 from collections import Counter
 from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from typing import Iterable
+import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
 import numpy as np
@@ -171,7 +174,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("point_cloud_path", help="Input LAZ scene.")
     parser.add_argument("--annotation-csv", default=None, help="Optional scene annotation CSV.")
-    parser.add_argument("--gold-csv", default=None, help="Optional manual/gold triples CSV.")
+    parser.add_argument(
+        "--gold-csv",
+        "--gold-file",
+        dest="gold_csv",
+        default=None,
+        help="Optional manual/gold triples file (.csv, .tsv, or .xlsx).",
+    )
     parser.add_argument("--output-dir", default="triple_validation_outputs")
     parser.add_argument("--scene-name", default=None)
     parser.add_argument(
@@ -1225,6 +1234,7 @@ def compare_with_gold(raw_records: list[dict], gold_csv: Path) -> tuple[list[dic
     tn, fp, fn, tp = [int(value) for value in matrix.ravel()]
 
     summary = {
+        "gold_file": str(gold_csv),
         "gold_csv": str(gold_csv),
         "generated_triples": len(generated_keys),
         "gold_triples": len(gold_keys),
@@ -1247,6 +1257,12 @@ def compare_with_gold(raw_records: list[dict], gold_csv: Path) -> tuple[list[dic
 
 
 def read_gold_triples(path: Path) -> set[tuple[str, str, str]]:
+    if path.suffix.lower() == ".xlsx":
+        return read_gold_triples_xlsx(path)
+    return read_gold_triples_csv(path)
+
+
+def read_gold_triples_csv(path: Path) -> set[tuple[str, str, str]]:
     text = read_text_fallback(path)
     sample = text[:4096]
     try:
@@ -1254,27 +1270,173 @@ def read_gold_triples(path: Path) -> set[tuple[str, str, str]]:
     except csv.Error:
         dialect = csv.excel
     rows = list(csv.DictReader(text.splitlines(), dialect=dialect))
+    return triples_from_gold_rows(rows, source_name="Gold CSV")
+
+
+def read_gold_triples_xlsx(path: Path) -> set[tuple[str, str, str]]:
+    rows = read_xlsx_rows(path)
+    return triples_from_gold_rows(rows, source_name="Gold XLSX")
+
+
+def triples_from_gold_rows(rows: list[dict], *, source_name: str) -> set[tuple[str, str, str]]:
     if not rows:
         return set()
-
     field_map = {field.lower().strip(): field for field in rows[0].keys() if field}
     source_col = first_existing(field_map, ("source", "src", "subject", "from"))
     rel_col = first_existing(field_map, ("relationship", "relation", "predicate", "rel"))
     target_col = first_existing(field_map, ("target", "tgt", "object", "to"))
+    manual_label_col = first_existing(
+        field_map,
+        ("manual_label", "gold", "label", "correct", "is_correct", "manual", "valid"),
+    )
     if not source_col or not rel_col or not target_col:
         raise ValueError(
-            "Gold CSV must contain source/relationship/target columns "
+            f"{source_name} must contain source/relationship/target columns "
             "(or aliases: src, relation, target)."
         )
 
     triples = set()
     for row in rows:
+        if manual_label_col and not is_gold_positive_label(row.get(manual_label_col, "")):
+            continue
         source = str(row.get(source_col, "")).strip()
         relationship = str(row.get(rel_col, "")).strip()
         target = str(row.get(target_col, "")).strip()
         if source and relationship and target:
             triples.add((source, relationship, target))
     return triples
+
+
+def is_gold_positive_label(value: object) -> bool:
+    normalized = normalize_manual_label(value)
+    return normalized in {
+        "1",
+        "true",
+        "yes",
+        "y",
+        "si",
+        "s",
+        "ok",
+        "correct",
+        "corretto",
+        "corretta",
+        "valid",
+        "valida",
+        "valido",
+    }
+
+
+def normalize_manual_label(value: object) -> str:
+    text = str(value or "").strip().lower()
+    text = unicodedata.normalize("NFKD", text)
+    return "".join(char for char in text if not unicodedata.combining(char))
+
+
+def read_xlsx_rows(path: Path) -> list[dict]:
+    main_ns = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    with zipfile.ZipFile(path) as archive:
+        worksheet_path = first_xlsx_worksheet_path(archive)
+        shared_strings = read_xlsx_shared_strings(archive, main_ns)
+        root = ET.fromstring(archive.read(worksheet_path))
+
+    table_rows: list[list[str]] = []
+    for row in root.findall(".//m:sheetData/m:row", main_ns):
+        values: list[str] = []
+        for cell in row.findall("m:c", main_ns):
+            cell_ref = cell.attrib.get("r", "")
+            cell_index = xlsx_cell_column_index(cell_ref)
+            if cell_index is None:
+                cell_index = len(values)
+            while len(values) <= cell_index:
+                values.append("")
+            values[cell_index] = xlsx_cell_value(cell, shared_strings, main_ns)
+        table_rows.append(values)
+
+    header_index = next(
+        (index for index, values in enumerate(table_rows) if any(str(value).strip() for value in values)),
+        None,
+    )
+    if header_index is None:
+        return []
+
+    headers = [str(value).strip() for value in table_rows[header_index]]
+    rows = []
+    for values in table_rows[header_index + 1 :]:
+        if not any(str(value).strip() for value in values):
+            continue
+        row = {
+            header: values[index] if index < len(values) else ""
+            for index, header in enumerate(headers)
+            if header
+        }
+        rows.append(row)
+    return rows
+
+
+def first_xlsx_worksheet_path(archive: zipfile.ZipFile) -> str:
+    names = set(archive.namelist())
+    fallback = "xl/worksheets/sheet1.xml"
+    if "xl/workbook.xml" not in names or "xl/_rels/workbook.xml.rels" not in names:
+        return fallback
+
+    main_ns = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    office_rel_ns = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+    package_rel_ns = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+
+    workbook_root = ET.fromstring(archive.read("xl/workbook.xml"))
+    first_sheet = workbook_root.find(".//m:sheet", main_ns)
+    if first_sheet is None:
+        return fallback
+    relationship_id = first_sheet.attrib.get(office_rel_ns)
+    if not relationship_id:
+        return fallback
+
+    rels_root = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+    for relationship in rels_root.findall(f"{package_rel_ns}Relationship"):
+        if relationship.attrib.get("Id") != relationship_id:
+            continue
+        target = relationship.attrib.get("Target", "")
+        if not target:
+            return fallback
+        if target.startswith("/"):
+            return target.lstrip("/")
+        return posixpath.normpath(posixpath.join("xl", target))
+    return fallback
+
+
+def read_xlsx_shared_strings(archive: zipfile.ZipFile, main_ns: dict[str, str]) -> list[str]:
+    if "xl/sharedStrings.xml" not in archive.namelist():
+        return []
+    root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
+    strings = []
+    for item in root.findall("m:si", main_ns):
+        strings.append("".join(text_node.text or "" for text_node in item.findall(".//m:t", main_ns)))
+    return strings
+
+
+def xlsx_cell_value(cell: ET.Element, shared_strings: list[str], main_ns: dict[str, str]) -> str:
+    cell_type = cell.attrib.get("t", "")
+    if cell_type == "inlineStr":
+        return "".join(text_node.text or "" for text_node in cell.findall(".//m:t", main_ns))
+
+    value_node = cell.find("m:v", main_ns)
+    value = value_node.text if value_node is not None and value_node.text is not None else ""
+    if cell_type == "s":
+        try:
+            return shared_strings[int(value)]
+        except (ValueError, IndexError):
+            return ""
+    return value
+
+
+def xlsx_cell_column_index(cell_ref: str) -> int | None:
+    letters = "".join(char for char in cell_ref if char.isalpha()).upper()
+    if not letters:
+        return None
+    index = 0
+    for char in letters:
+        index = index * 26 + (ord(char) - ord("A") + 1)
+    return index - 1
 
 
 def first_existing(field_map: dict[str, str], candidates: tuple[str, ...]) -> str | None:
