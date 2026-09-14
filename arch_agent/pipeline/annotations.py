@@ -4,56 +4,12 @@ import csv
 from io import StringIO
 from pathlib import Path
 import math
-import unicodedata
 
 import numpy as np
 import pandas as pd
 
+from ..semantic_schema import canonical_semantic_label, normalize_text
 
-LABEL_ALIASES = {
-    "arch": "arch",
-    "arco": "arch",
-    "archi": "arch",
-    "column": "column",
-    "columns": "column",
-    "colonna": "column",
-    "colonne": "column",
-    "door_window": "door_window",
-    "door": "door_window",
-    "doors": "door_window",
-    "window": "door_window",
-    "windows": "door_window",
-    "apertura": "door_window",
-    "aperture": "door_window",
-    "floor": "floor",
-    "floors": "floor",
-    "pavimento": "floor",
-    "pavimenti": "floor",
-    "molding": "moldings",
-    "moldings": "moldings",
-    "modanatura": "moldings",
-    "modanature": "moldings",
-    "roof": "roof",
-    "roofs": "roof",
-    "tetto": "roof",
-    "tetti": "roof",
-    "stairs": "stairs",
-    "stair": "stairs",
-    "scala": "stairs",
-    "scale": "stairs",
-    "vault": "vault",
-    "vaults": "vault",
-    "volta": "vault",
-    "volte": "vault",
-    "wall": "wall",
-    "walls": "wall",
-    "muro": "wall",
-    "muri": "wall",
-    "parete": "wall",
-    "pareti": "wall",
-    "other": "other",
-    "altro": "other",
-}
 
 LABEL_COLUMNS = (
     "semantic_label",
@@ -240,7 +196,9 @@ def _semantic_label_from_row(row: pd.Series) -> str | None:
     raw_label = _first_value(row, LABEL_COLUMNS)
     if raw_label is None:
         return None
-    return LABEL_ALIASES.get(_normalize_text(str(raw_label)), _normalize_text(str(raw_label)))
+    # An unrecognised CSV label is kept as written, only normalized:
+    # dropping the row here would silently lose user metadata.
+    return canonical_semantic_label(raw_label) or normalize_text(raw_label)
 
 
 def _global_box_center_from_row(row: pd.Series) -> np.ndarray | None:
@@ -319,8 +277,7 @@ def _normalize_column(value: object) -> str:
 
 
 def _normalize_text(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", _sanitize_text(value).strip().lower())
-    return "".join(char for char in normalized if not unicodedata.combining(char))
+    return normalize_text(_sanitize_text(str(value)))
 
 
 def re_sub_non_word(value: str) -> str:

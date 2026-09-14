@@ -1,11 +1,10 @@
-import re
-
 import numpy as np
 
 from ..semantic_schema import (
     ARCHITECTURAL_CLASS_RULES,
     SEMANTIC_CLASS_REGISTRY,
-    canonical_semantic_label,
+    labels_mentioned_in_text,
+    normalize_lexicon_text,
 )
 
 Relationship = tuple[str, str, str, str]
@@ -289,12 +288,12 @@ def compute_csv_annotation_relationships(
             continue
 
         for annotation in annotations:
-            for target_label in _csv_support_target_labels(annotation, source_label):
+            for target_label in csv_support_target_labels(annotation, source_label):
                 for target_name in _objects_with_semantic_label(objects, target_label):
                     add(object_name, target_name, "supports", STRUCTURAL_EVIDENCE_LEVEL)
                     add(target_name, object_name, "rests_on", STRUCTURAL_EVIDENCE_LEVEL)
 
-            for source_support_label in _csv_supported_by_labels(annotation, source_label):
+            for source_support_label in csv_supported_by_labels(annotation, source_label):
                 for source_name in _objects_with_semantic_label(objects, source_support_label):
                     add(source_name, object_name, "supports", STRUCTURAL_EVIDENCE_LEVEL)
                     add(object_name, source_name, "rests_on", STRUCTURAL_EVIDENCE_LEVEL)
@@ -321,8 +320,8 @@ def _objects_with_semantic_label(objects: dict, semantic_label: str) -> list[str
     ]
 
 
-def _csv_support_target_labels(annotation: dict, source_label: str) -> list[str]:
-    explicit_text = _annotation_first_value(
+def csv_support_target_labels(annotation: dict, source_label: str) -> list[str]:
+    explicit_text = annotation_first_value(
         annotation,
         (
             "supports",
@@ -335,7 +334,7 @@ def _csv_support_target_labels(annotation: dict, source_label: str) -> list[str]
             "structural_supports",
         ),
     )
-    labels = _labels_mentioned_in_annotation_value(explicit_text, exclude={source_label})
+    labels = labels_mentioned_in_text(explicit_text, exclude={source_label})
     if labels:
         return labels
 
@@ -354,7 +353,7 @@ def _csv_support_target_labels(annotation: dict, source_label: str) -> list[str]
             "evidenza_strutturale",
         )
     )
-    normalized = _normalize_annotation_text(descriptive_text)
+    normalized = normalize_lexicon_text(descriptive_text)
     support_terms = (
         "support",
         "sostegn",
@@ -362,15 +361,15 @@ def _csv_support_target_labels(annotation: dict, source_label: str) -> list[str]
         "sorregg",
         "regge",
         "portante",
-        "load_bearing",
+        "load bearing",
     )
     if not any(term in normalized for term in support_terms):
         return []
-    return _labels_mentioned_in_annotation_value(descriptive_text, exclude={source_label})
+    return labels_mentioned_in_text(descriptive_text, exclude={source_label})
 
 
-def _csv_supported_by_labels(annotation: dict, source_label: str) -> list[str]:
-    explicit_text = _annotation_first_value(
+def csv_supported_by_labels(annotation: dict, source_label: str) -> list[str]:
+    explicit_text = annotation_first_value(
         annotation,
         (
             "supported_by",
@@ -385,12 +384,12 @@ def _csv_supported_by_labels(annotation: dict, source_label: str) -> list[str]:
             "structural_supported_by",
         ),
     )
-    return _labels_mentioned_in_annotation_value(explicit_text, exclude={source_label})
+    return labels_mentioned_in_text(explicit_text, exclude={source_label})
 
 
 def _csv_part_of_targets(annotation: dict, source_label: str) -> list[tuple[str, str]]:
-    labels = _labels_mentioned_in_annotation_value(
-        _annotation_first_value(
+    labels = labels_mentioned_in_text(
+        annotation_first_value(
             annotation,
             (
                 "part_of",
@@ -410,8 +409,8 @@ def _csv_part_of_targets(annotation: dict, source_label: str) -> list[tuple[str,
 
 
 def _csv_has_part_targets(annotation: dict, source_label: str) -> list[str]:
-    return _labels_mentioned_in_annotation_value(
-        _annotation_first_value(
+    return labels_mentioned_in_text(
+        annotation_first_value(
             annotation,
             (
                 "has_part",
@@ -426,32 +425,12 @@ def _csv_has_part_targets(annotation: dict, source_label: str) -> list[str]:
     )
 
 
-def _annotation_first_value(annotation: dict, keys: tuple[str, ...]) -> object | None:
+def annotation_first_value(annotation: dict, keys: tuple[str, ...]) -> object | None:
     for key in keys:
         value = annotation.get(key)
         if value not in (None, ""):
             return value
     return None
-
-
-def _labels_mentioned_in_annotation_value(
-    value: object | None,
-    exclude: set[str] | None = None,
-) -> list[str]:
-    if value is None:
-        return []
-    normalized = _normalize_annotation_text(str(value))
-    exclude = exclude or set()
-    labels = []
-    for token in re.split(r"[^a-z0-9_]+", normalized):
-        label = canonical_semantic_label(token)
-        if label and label not in exclude and label not in labels:
-            labels.append(label)
-    return labels
-
-
-def _normalize_annotation_text(value: str) -> str:
-    return re.sub(r"[^a-z0-9_]+", " ", value.lower().replace("-", "_")).strip()
 
 
 def compute_all_relations(

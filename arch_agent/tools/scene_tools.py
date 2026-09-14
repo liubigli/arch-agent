@@ -1,7 +1,5 @@
 ﻿from collections import Counter
-import re
 from typing import Annotated, Literal, Optional
-import unicodedata
 
 import networkx as nx
 from langchain_core.tools import tool
@@ -12,9 +10,11 @@ from ..pipeline.graph import ANNOTATION_NODE_FIELDS, analyze_scene_graph
 from ..pipeline.relationships import (
     RELATIONSHIP_LAYER_NAMES,
     RELATIONSHIP_LAYER_ORDER,
+    annotation_first_value,
     architectural_role,
     compute_csv_annotation_relationships,
 )
+from ..semantic_schema import normalize_text
 from ..settings import get_config
 
 
@@ -24,65 +24,6 @@ def _structural_elements() -> set[str]:
 
 def _all_semantic_classes() -> list[str]:
     return list(get_config()["semantic_classes"]["names"])
-
-
-_SEMANTIC_ALIASES = (
-    ("porta finestra", "door_window"),
-    ("porta-finestra", "door_window"),
-    ("porte finestre", "door_window"),
-    ("porte-finestre", "door_window"),
-    ("openings", "door_window"),
-    ("opening", "door_window"),
-    ("aperture", "door_window"),
-    ("apertura", "door_window"),
-    ("porte", "door_window"),
-    ("porta", "door_window"),
-    ("finestre", "door_window"),
-    ("finestra", "door_window"),
-    ("doors", "door_window"),
-    ("door", "door_window"),
-    ("windows", "door_window"),
-    ("window", "door_window"),
-    ("archi", "arch"),
-    ("arco", "arch"),
-    ("arches", "arch"),
-    ("arch", "arch"),
-    ("colonne", "column"),
-    ("colonna", "column"),
-    ("columns", "column"),
-    ("column", "column"),
-    ("muri", "wall"),
-    ("muro", "wall"),
-    ("pareti", "wall"),
-    ("parete", "wall"),
-    ("walls", "wall"),
-    ("wall", "wall"),
-    ("pavimenti", "floor"),
-    ("pavimento", "floor"),
-    ("floors", "floor"),
-    ("floor", "floor"),
-    ("tetti", "roof"),
-    ("tetto", "roof"),
-    ("coperture", "roof"),
-    ("copertura", "roof"),
-    ("roofs", "roof"),
-    ("roof", "roof"),
-    ("volte", "vault"),
-    ("volta", "vault"),
-    ("vaults", "vault"),
-    ("vault", "vault"),
-    ("scale", "stairs"),
-    ("scala", "stairs"),
-    ("stairs", "stairs"),
-    ("stair", "stairs"),
-    ("modanatur", "moldings"),
-    ("modanature", "moldings"),
-    ("modanatura", "moldings"),
-    ("moldings", "moldings"),
-    ("molding", "moldings"),
-    ("altro", "other"),
-    ("other", "other"),
-)
 
 
 def _classify_area(label_set: set) -> str:
@@ -121,99 +62,6 @@ def _structural_evidence_relationships(ctx: SceneContext) -> list[tuple[str, str
     return relationships
 
 
-def _csv_support_target_labels(annotation: dict, source_label: str) -> list[str]:
-    explicit_text = _annotation_first_value(
-        annotation,
-        (
-            "supports",
-            "supporta",
-            "sostiene",
-            "sorregge",
-            "support_target",
-            "supported_object",
-            "supported_class",
-            "structural_supports",
-        ),
-    )
-    labels = _labels_mentioned_in_annotation_value(explicit_text, exclude={source_label})
-    if labels:
-        return labels
-
-    descriptive_text = " ".join(
-        str(annotation.get(key, "") or "")
-        for key in (
-            "function",
-            "funzione",
-            "description",
-            "descrizione",
-            "historical_description",
-            "descrizione_storica",
-            "notes",
-            "note",
-            "structural_evidence",
-            "evidenza_strutturale",
-        )
-    )
-    normalized = _normalize_text(descriptive_text)
-    support_terms = (
-        "support",
-        "sostegn",
-        "sosten",
-        "sorregg",
-        "regge",
-        "portante",
-        "load-bearing",
-        "load bearing",
-    )
-    if not any(term in normalized for term in support_terms):
-        return []
-    return _labels_mentioned_in_annotation_value(descriptive_text, exclude={source_label})
-
-
-def _csv_supported_by_labels(annotation: dict, source_label: str) -> list[str]:
-    explicit_text = _annotation_first_value(
-        annotation,
-        (
-            "supported_by",
-            "supportato_da",
-            "sostenuto_da",
-            "sorretta_da",
-            "sorretto_da",
-            "rests_on",
-            "resting_on",
-            "appoggia_su",
-            "appoggiato_su",
-            "structural_supported_by",
-        ),
-    )
-    return _labels_mentioned_in_annotation_value(explicit_text, exclude={source_label})
-
-
-def _annotation_first_value(annotation: dict, keys: tuple[str, ...]) -> object | None:
-    for key in keys:
-        value = annotation.get(key)
-        if value:
-            return value
-    return None
-
-
-def _labels_mentioned_in_annotation_value(
-    value: object | None,
-    exclude: set[str] | None = None,
-) -> list[str]:
-    if value is None:
-        return []
-    normalized = _normalize_text(str(value))
-    exclude = exclude or set()
-    labels: list[str] = []
-    for alias, label in _SEMANTIC_ALIASES:
-        if label in exclude or label in labels:
-            continue
-        if re.search(rf"\b{re.escape(alias)}\b", normalized):
-            labels.append(label)
-    return labels
-
-
 def _objects_with_semantic_label(ctx: SceneContext, label: str) -> list[str]:
     return sorted(
         name
@@ -240,11 +88,6 @@ def _unset_label(value: object) -> object:
 
 def _strip_label(value: object) -> object:
     return value.strip() if isinstance(value, str) else value
-
-
-def _normalize_text(text: str) -> str:
-    normalized = unicodedata.normalize("NFKD", str(text).strip().lower())
-    return "".join(char for char in normalized if not unicodedata.combining(char))
 
 
 def create_scene_tools(ctx: SceneContext) -> list:
@@ -1594,7 +1437,7 @@ def _annotation_summary_text(annotation: dict) -> str:
 
 
 def _annotation_material_value(annotation: dict) -> object | None:
-    return _annotation_first_value(
+    return annotation_first_value(
         annotation,
         (
             "material_description",
@@ -1607,7 +1450,7 @@ def _annotation_material_value(annotation: dict) -> object | None:
 
 
 def _material_aliases_for_query(material: str) -> tuple[str, ...]:
-    normalized = _normalize_text(material)
+    normalized = normalize_text(material)
     groups = (
         ("marmo", "marble"),
         ("calcare", "limestone"),
@@ -1621,14 +1464,14 @@ def _material_aliases_for_query(material: str) -> tuple[str, ...]:
         ("terracotta", "cotto", "tile"),
     )
     for aliases in groups:
-        if any(_normalize_text(alias) in normalized for alias in aliases):
+        if any(normalize_text(alias) in normalized for alias in aliases):
             return aliases
     return (normalized,)
 
 
 def _text_contains_any(value: object, aliases: tuple[str, ...]) -> bool:
-    normalized_value = _normalize_text(str(value))
-    return any(_normalize_text(alias) in normalized_value for alias in aliases)
+    normalized_value = normalize_text(str(value))
+    return any(normalize_text(alias) in normalized_value for alias in aliases)
 
 
 def _resolve_annotation_object(
@@ -1677,7 +1520,7 @@ def _annotation_resolution_error(ctx: SceneContext, semantic_label: Optional[str
 
 
 def _select_annotation_candidate_by_position(ctx: SceneContext, candidates: list[str], position: str) -> str | None:
-    normalized = _normalize_position_text(position)
+    normalized = normalize_text(position)
     centroids = {name: ctx.objects[name]["centroid"] for name in candidates}
     if any(term in normalized for term in ("central", "center", "centro", "centrale", "middle")):
         mean = sum((centroids[name] for name in candidates)) / len(candidates)
@@ -1695,13 +1538,6 @@ def _select_annotation_candidate_by_position(ctx: SceneContext, candidates: list
     if any(term in normalized for term in ("top", "upper", "alto", "alta", "superiore")):
         return max(candidates, key=lambda name: float(centroids[name][2]))
     return None
-
-
-def _normalize_position_text(text: str) -> str:
-    import unicodedata
-
-    normalized = unicodedata.normalize("NFKD", str(text).strip().lower())
-    return "".join(char for char in normalized if not unicodedata.combining(char))
 
 
 def _combined_graph(ctx: SceneContext) -> nx.DiGraph:

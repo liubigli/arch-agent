@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from collections import Counter
 from typing import TYPE_CHECKING, Callable
-import unicodedata
 
 from ..pipeline.relationships import (
     RELATIONSHIP_LAYER_NAMES,
     RELATIONSHIP_LAYER_ORDER,
     architectural_role,
 )
+from ..semantic_schema import normalize_text
 from .reference_prompts import PROMPT_EXAMPLES
 
 if TYPE_CHECKING:
@@ -19,23 +19,16 @@ AnswerBuilder = Callable[["SceneContext"], str]
 Relationship = tuple[str, str, str, str]
 
 
-def _normalize_text(text: str) -> str:
-    normalized = unicodedata.normalize("NFKD", text.strip().lower())
-    without_accents = "".join(
-        char for char in normalized
-        if not unicodedata.combining(char)
-    )
-    return " ".join(without_accents.split())
 
 
 _PROMPT_ID_BY_TEXT = {
-    _normalize_text(example["prompt"]): example["id"]
+    normalize_text(example["prompt"]): example["id"]
     for example in PROMPT_EXAMPLES
 }
 
 
 def answer_evaluation_prompt(ctx: "SceneContext", user_input: str) -> str | None:
-    text = _normalize_text(user_input)
+    text = normalize_text(user_input)
     language = _response_language(user_input)
     prompt_id = _PROMPT_ID_BY_TEXT.get(text) or _infer_prompt_id(text)
     if prompt_id is None:
@@ -158,7 +151,7 @@ def _has_any(text: str, *patterns: str) -> bool:
 
 
 def _response_language(text: str) -> str:
-    normalized = _normalize_text(text)
+    normalized = normalize_text(text)
     english_markers = (
         "what",
         "which",

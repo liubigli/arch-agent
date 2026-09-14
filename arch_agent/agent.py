@@ -2,7 +2,6 @@
 import os
 import re
 from typing import Annotated
-import unicodedata
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_ollama import ChatOllama
@@ -20,75 +19,23 @@ from .pipeline.relationships import (
     Relationship,
     RELATIONSHIP_LAYER_NAMES,
     RELATIONSHIP_LAYER_ORDER,
+    annotation_first_value,
     architectural_role,
     compute_csv_annotation_relationships,
     mereological_relation_type,
     supports_label_pair,
+)
+from .semantic_schema import (
+    SEMANTIC_LABEL_LEXICON,
+    SEMANTIC_LEXICON_TERMS,
+    labels_mentioned_in_text,
+    normalize_text,
 )
 from .tools.scene_tools import create_scene_tools
 from .settings import get_config
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "system.md"
 _OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-
-_SEMANTIC_ALIASES = (
-    ("porta finestra", "door_window"),
-    ("porta-finestra", "door_window"),
-    ("porte finestre", "door_window"),
-    ("porte-finestre", "door_window"),
-    ("openings", "door_window"),
-    ("opening", "door_window"),
-    ("archi", "arch"),
-    ("arco", "arch"),
-    ("arches", "arch"),
-    ("arch", "arch"),
-    ("colonne", "column"),
-    ("colonna", "column"),
-    ("columns", "column"),
-    ("column", "column"),
-    ("aperture", "door_window"),
-    ("apertura", "door_window"),
-    ("muri", "wall"),
-    ("muro", "wall"),
-    ("pareti", "wall"),
-    ("parete", "wall"),
-    ("walls", "wall"),
-    ("wall", "wall"),
-    ("pavimenti", "floor"),
-    ("pavimento", "floor"),
-    ("floors", "floor"),
-    ("floor", "floor"),
-    ("tetti", "roof"),
-    ("tetto", "roof"),
-    ("coperture", "roof"),
-    ("copertura", "roof"),
-    ("roofs", "roof"),
-    ("roof", "roof"),
-    ("volte", "vault"),
-    ("volta", "vault"),
-    ("vaults", "vault"),
-    ("vault", "vault"),
-    ("scale", "stairs"),
-    ("scala", "stairs"),
-    ("stairs", "stairs"),
-    ("stair", "stairs"),
-    ("modanatur", "moldings"),
-    ("modanature", "moldings"),
-    ("modanatura", "moldings"),
-    ("moldings", "moldings"),
-    ("molding", "moldings"),
-    ("porte", "door_window"),
-    ("porta", "door_window"),
-    ("finestre", "door_window"),
-    ("finestra", "door_window"),
-    ("doors", "door_window"),
-    ("door", "door_window"),
-    ("windows", "door_window"),
-    ("window", "door_window"),
-    ("altro", "other"),
-    ("other", "other"),
-)
-
 
 def _load_system_prompt() -> str:
     return _PROMPT_PATH.read_text(encoding="utf-8")
@@ -312,7 +259,7 @@ def _try_answer_deterministic(
     default_label: str | None = None,
 ) -> str | None:
     language = _response_language(user_input)
-    text = _normalize_text(user_input)
+    text = normalize_text(user_input)
 
     if _asks_for_area(text) and "volume" in text:
         requested_facts = _format_requested_facts(ctx, text, language=language)
@@ -582,7 +529,7 @@ def _format_grounded_answer(
 
 
 def _response_language(text: str) -> str:
-    normalized = _normalize_text(text)
+    normalized = normalize_text(text)
     english_markers = (
         "how many",
         "what",
@@ -677,7 +624,7 @@ def _csv_tool_fallback_if_needed(
     language: str,
 ) -> AIMessage:
     content = response.content.strip() if isinstance(response.content, str) else ""
-    normalized = _normalize_text(content)
+    normalized = normalize_text(content)
     needs_fallback = (
         _needs_language_repair(content, language)
         or "rewritten answer" in normalized
@@ -712,7 +659,7 @@ def _is_csv_verbatim_tool_message(message: ToolMessage) -> bool:
     if getattr(message, "name", None) in _CSV_VERBATIM_TOOLS:
         return True
     content = _tool_content_to_text(message.content)
-    normalized = _normalize_text(content)
+    normalized = normalize_text(content)
     return (
         normalized.startswith("csv annotations for ")
         or normalized.startswith("csv annotation match status")
@@ -843,7 +790,7 @@ def _repair_final_answer_language(
 
 
 def _needs_language_repair(text: str, language: str) -> bool:
-    normalized = _normalize_text(text)
+    normalized = normalize_text(text)
     if language == "en":
         hard_italian_markers = (
             "osservato dai dati",
@@ -1018,88 +965,6 @@ def _structural_evidence_relationships(ctx: SceneContext) -> list[Relationship]:
             seen.add(rel)
 
     return relationships
-
-
-def _csv_support_target_labels(annotation: dict, source_label: str) -> list[str]:
-    explicit_text = _annotation_first_value(
-        annotation,
-        (
-            "supports",
-            "supporta",
-            "sostiene",
-            "sorregge",
-            "support_target",
-            "supported_object",
-            "supported_class",
-            "structural_supports",
-        ),
-    )
-    labels = _labels_mentioned_in_annotation_value(explicit_text, exclude={source_label})
-    if labels:
-        return labels
-
-    descriptive_text = " ".join(
-        str(annotation.get(key, "") or "")
-        for key in (
-            "function",
-            "funzione",
-            "description",
-            "descrizione",
-            "historical_description",
-            "descrizione_storica",
-            "notes",
-            "note",
-            "structural_evidence",
-            "evidenza_strutturale",
-        )
-    )
-    normalized = _normalize_text(descriptive_text)
-    support_terms = (
-        "support",
-        "sostegn",
-        "sosten",
-        "sorregg",
-        "regge",
-        "portante",
-        "load-bearing",
-        "load bearing",
-    )
-    if not any(term in normalized for term in support_terms):
-        return []
-    return _labels_mentioned_in_annotation_value(descriptive_text, exclude={source_label})
-
-
-def _csv_supported_by_labels(annotation: dict, source_label: str) -> list[str]:
-    explicit_text = _annotation_first_value(
-        annotation,
-        (
-            "supported_by",
-            "supportato_da",
-            "sostenuto_da",
-            "sorretta_da",
-            "sorretto_da",
-            "rests_on",
-            "resting_on",
-            "appoggia_su",
-            "appoggiato_su",
-            "structural_supported_by",
-        ),
-    )
-    return _labels_mentioned_in_annotation_value(explicit_text, exclude={source_label})
-
-
-def _labels_mentioned_in_annotation_value(value: object | None, exclude: set[str] | None = None) -> list[str]:
-    if value is None:
-        return []
-    normalized = _normalize_text(str(value))
-    exclude = exclude or set()
-    labels: list[str] = []
-    for alias, label in _SEMANTIC_ALIASES:
-        if label in exclude or label in labels:
-            continue
-        if re.search(rf"\b{re.escape(alias)}\b", normalized):
-            labels.append(label)
-    return labels
 
 
 def _l2_csv_detail_summary(ctx: SceneContext, language: str = "it") -> str:
@@ -1758,7 +1623,7 @@ def _format_annotation_entries(annotations: list[dict], language: str = "it") ->
         prefix = f"CSV {index}" if len(annotations) > 1 else "CSV"
         lines.append(f"{prefix}:")
         for title, keys in _annotation_display_fields(language):
-            value = _annotation_first_value(annotation, keys)
+            value = annotation_first_value(annotation, keys)
             if value:
                 lines.append(f"  {title}: {value}")
         match = annotation.get("match", {})
@@ -1981,7 +1846,7 @@ def _format_selected_annotation_values(
 ) -> list[str]:
     values = []
     for title, keys in fields:
-        value = _annotation_first_value(annotation, keys)
+        value = annotation_first_value(annotation, keys)
         if value:
             values.append(f"{title}: {value}")
     return values
@@ -2071,15 +1936,15 @@ def _material_hits_from_csv(
     )
     hits = []
     for object_name, annotation in entries:
-        value = _annotation_first_value(annotation, material_fields)
+        value = annotation_first_value(annotation, material_fields)
         if value and _annotation_value_contains_alias(value, aliases):
             hits.append((object_name, value))
     return hits
 
 
 def _annotation_value_contains_alias(value: object, aliases: tuple[str, ...]) -> bool:
-    normalized_value = _normalize_text(str(value))
-    return any(_normalize_text(alias) in normalized_value for alias in aliases)
+    normalized_value = normalize_text(str(value))
+    return any(normalize_text(alias) in normalized_value for alias in aliases)
 
 
 def _extract_material_aliases(text: str) -> tuple[str, ...] | None:
@@ -2096,7 +1961,7 @@ def _extract_material_aliases(text: str) -> tuple[str, ...] | None:
         ("terracotta", "cotto", "tile"),
     )
     for aliases in material_alias_groups:
-        if any(_normalize_text(alias) in text for alias in aliases):
+        if any(normalize_text(alias) in text for alias in aliases):
             return aliases
     return None
 
@@ -2150,14 +2015,6 @@ def _annotation_display_fields(language: str = "it") -> list[tuple[str, tuple[st
         ("Note", ("notes", "note")),
         ("Posizione", ("position", "posizione", "spatial_position", "location", "localizzazione")),
     ]
-
-
-def _annotation_first_value(annotation: dict, keys: tuple[str, ...]) -> object | None:
-    for key in keys:
-        value = annotation.get(key)
-        if value:
-            return value
-    return None
 
 
 def _try_answer_opening_in_wall_question(
@@ -3587,18 +3444,14 @@ def _extract_object_names(text: str, objects: dict) -> list[str]:
         if name in objects and name not in found:
             found.append(name)
 
-    for alias, label in sorted(_SEMANTIC_ALIASES, key=lambda item: len(item[0]), reverse=True):
-        pattern = rf"\b{re.escape(alias)}\s*[_-]?\s*(\d+)\b"
+    for term in SEMANTIC_LEXICON_TERMS:
+        label = SEMANTIC_LABEL_LEXICON[term]
+        pattern = rf"\b{re.escape(term)}\s*[_-]?\s*(\d+)\b"
         for match in re.finditer(pattern, text):
             name = f"{label}_{int(match.group(1))}"
             if name in objects and name not in found:
                 found.append(name)
     return found
-
-
-def _normalize_text(text: str) -> str:
-    normalized = unicodedata.normalize("NFKD", text.strip().lower())
-    return "".join(char for char in normalized if not unicodedata.combining(char))
 
 
 def _asks_for_relationships(text: str) -> bool:
@@ -4556,21 +4409,7 @@ def _extract_semantic_label(text: str) -> str | None:
 
 
 def _extract_semantic_labels(text: str) -> list[str]:
-    matches: list[tuple[int, int, str]] = []
-    for word, label in _SEMANTIC_ALIASES:
-        for match in re.finditer(rf"\b{re.escape(word)}\b", text):
-            matches.append((match.start(), -(match.end() - match.start()), label))
-
-    labels: list[str] = []
-    occupied: set[int] = set()
-    for start, negative_length, label in sorted(matches):
-        length = -negative_length
-        span = set(range(start, start + length))
-        if occupied & span:
-            continue
-        occupied.update(span)
-        labels.append(label)
-    return labels
+    return labels_mentioned_in_text(text)
 
 
 def _xy_area(bounds: dict) -> float:

@@ -17,11 +17,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from ..semantic_schema import normalize_text
 from ..agent import (
     _asks_for_class_count,
     _asks_for_count,
     _extract_semantic_label,
-    _normalize_text,
 )
 from ..pipeline.pipeline import SceneContext
 from ..settings import get_config
@@ -126,7 +126,7 @@ def _check_absent_class_claimed_present(
     if not absent:
         return []
 
-    normalized_answer = _normalize_text(answer)
+    normalized_answer = normalize_text(answer)
     issues: list[GroundingIssue] = []
     for label in sorted(absent):
         label_pattern = re.compile(rf"\b{re.escape(label)}\b")
@@ -179,7 +179,7 @@ def _check_absent_class_claimed_present(
 
 
 def _check_invalid_relation_types(answer: str) -> list[GroundingIssue]:
-    normalized = _normalize_text(answer)
+    normalized = normalize_text(answer)
     issues = []
     for relation_type in sorted(INVALID_RELATION_TYPES):
         if re.search(rf"\b{re.escape(relation_type)}\b", normalized):
@@ -230,7 +230,7 @@ def _check_class_count_number(
     question: str,
     answer: str,
 ) -> list[GroundingIssue]:
-    text = _normalize_text(question)
+    text = normalize_text(question)
     if not _asks_for_class_count(text):
         return []
     expected = len(_present_classes(ctx))
@@ -250,7 +250,7 @@ def _check_per_class_count_number(
     question: str,
     answer: str,
 ) -> list[GroundingIssue]:
-    text = _normalize_text(question)
+    text = normalize_text(question)
     if not _asks_for_count(text):
         return []
     label = _extract_semantic_label(text)
@@ -276,7 +276,7 @@ def _check_total_object_count(
     question: str,
     answer: str,
 ) -> list[GroundingIssue]:
-    text = _normalize_text(question)
+    text = normalize_text(question)
     if not _asks_for_count(text) or _extract_semantic_label(text) is not None:
         return []
     if not any(term in text for term in ("oggetti", "objects", "elementi", "elements")):
