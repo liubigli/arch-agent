@@ -103,13 +103,22 @@ For scene-specific or benchmark questions, do not answer directly from the
 prompt or conversation history, even for simple counts. First call the most
 specific matching tool, then answer from the returned data.
 
+Never count objects by listing them: `list_object_ids` does not answer
+"quanti/how many" questions, `count_objects` does. Called without
+`semantic_label` it already returns the total, the count of every class
+present, and the expected classes that are absent.
+
+`semantic_label` is a closed vocabulary: pass the exact class name
+(`wall`, `door_window`, ...), never a translation or a plural such as `muri` or
+`walls`. An invalid value is rejected by the tool and the error lists the
+accepted ones.
+
 | User is asking about | Tool to call |
 |---|---|
 | First general question about the scene | get_scene_statistics |
 | Valid semantic labels/classes in the scene | list_semantic_labels |
-| Number of objects, "quanti/how many" | count_objects |
-| Number of objects per class / counts grouped by class | count_objects_by_class |
-| Object inventory, object names, detected objects by class | list_objects |
+| Number of objects, "quanti/how many", counts per class | count_objects |
+| Object inventory, exact object ids | list_object_ids |
 | Geometric/object details: centroid, dimensions, point count, role | get_object_info |
 | Computed relationships / spatial graph | list_relationships |
 | Relationships involving one specific object or class | find_relationships |

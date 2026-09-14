@@ -1,10 +1,11 @@
 ﻿from collections import Counter
 import re
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 import unicodedata
 
 import networkx as nx
 from langchain_core.tools import tool
+from pydantic import BeforeValidator
 
 from ..pipeline.pipeline import SceneContext, run_pipeline
 from ..pipeline.graph import ANNOTATION_NODE_FIELDS, analyze_scene_graph
@@ -221,19 +222,66 @@ def _objects_with_semantic_label(ctx: SceneContext, label: str) -> list[str]:
     )
 
 
+def _unset_label(value: object) -> object:
+    """Map "unset" sentinels to None before the Literal enum is validated.
+
+    Some local models (via Ollama tool-calling) emit the literal string
+    "None"/"null" instead of omitting an optional argument. Anything else is
+    passed through untouched, so an unknown class fails loudly against the enum
+    instead of being silently coerced into a plausible answer.
+    """
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.lower() in ("none", "null", ""):
+            return None
+        return stripped
+    return value
+
+
+def _strip_label(value: object) -> object:
+    return value.strip() if isinstance(value, str) else value
+
+
 def _normalize_text(text: str) -> str:
     normalized = unicodedata.normalize("NFKD", str(text).strip().lower())
     return "".join(char for char in normalized if not unicodedata.combining(char))
 
 
 def create_scene_tools(ctx: SceneContext) -> list:
-    # Scene-specific enum: only classes actually present in this scene are
-    # valid values, so the model cannot pass a semantic class where an exact
-    # object id is expected (or vice versa) without the schema rejecting it.
-    _class_names = tuple(
+    # Two enums, both surfaced to the model as JSON-schema enums so it never
+    # has to guess how a class is spelled, and so it cannot pass a semantic
+    # class where an exact object id is expected (or vice versa).
+    #
+    # ExpectedSemanticLabel is the full expected vocabulary: a counting tool
+    # must be able to ask about a class that is absent, so that "0 stairs" is
+    # expressible without listing the whole scene to notice the absence.
+    #
+    # PresentSemanticLabel is restricted to the classes actually segmented in
+    # this scene: tools that resolve concrete objects can do nothing with a
+    # class that has no instances, so there an absent class is a real error.
+    #
+    # A value outside the enum is rejected by the tool schema and comes back to
+    # the model as a recoverable error listing the valid values. There is no
+    # alias mapping here on purpose: a closed vocabulary is validated, never
+    # guessed, because a wrong guess turns a recoverable error into a wrong
+    # answer that looks right.
+    _expected_classes = tuple(_all_semantic_classes())
+    _present_classes = tuple(
         sorted({obj["semantic_label"] for obj in ctx.objects.values()})
-    ) or tuple(_all_semantic_classes())
-    SemanticLabel = Literal[_class_names]
+    ) or _expected_classes
+
+    ExpectedSemanticLabel = Literal[_expected_classes]
+    PresentSemanticLabel = Literal[_present_classes]
+
+    OptionalExpectedLabel = Annotated[
+        Optional[ExpectedSemanticLabel], BeforeValidator(_unset_label)
+    ]
+    OptionalPresentLabel = Annotated[
+        Optional[PresentSemanticLabel], BeforeValidator(_unset_label)
+    ]
+    RequiredPresentLabel = Annotated[
+        PresentSemanticLabel, BeforeValidator(_strip_label)
+    ]
 
     @tool
     def list_semantic_labels() -> str:
@@ -242,45 +290,42 @@ def create_scene_tools(ctx: SceneContext) -> list:
         Use this to discover the valid semantic_label values for this scene
         before calling other tools that accept a semantic_label parameter.
         """
-        if not _class_names:
+        if not ctx.objects:
             return "No semantic labels found in the scene graph."
         counts = Counter(obj["semantic_label"] for obj in ctx.objects.values())
-        lines = [f"Semantic labels present in the scene graph: {len(_class_names)}"]
+        lines = [f"Semantic labels present in the scene graph: {len(_present_classes)}"]
         lines.extend(
             f"  - {label}: {counts.get(label, 0)} instance(s)"
-            for label in _class_names
+            for label in _present_classes
         )
         return "\n".join(lines)
 
     @tool
-    def count_objects(semantic_label: Optional[str] = None) -> str:
-        """Count detected objects, optionally filtered by semantic class.
+    def count_objects(semantic_label: OptionalExpectedLabel = None) -> str:
+        """Count detected objects, for one semantic class or for the whole scene.
+
+        This is the only counting tool: call it for every "how many" / "quanti"
+        question about objects. Never count by listing objects and tallying the
+        result yourself.
 
         Args:
-            semantic_label: Optional semantic class to count, e.g. 'wall',
-                'column', or 'floor'. If omitted, returns the total object count.
-        """
-        semantic_label = _canonical_semantic_label(semantic_label)
-        if semantic_label:
-            count = sum(
-                1 for obj in ctx.objects.values()
-                if obj["semantic_label"] == semantic_label
-            )
-            return f"Objects with semantic label '{semantic_label}': {count}"
-
-        return f"Total detected objects: {len(ctx.objects)}"
-
-    @tool
-    def count_objects_by_class() -> str:
-        """Count all detected objects grouped by semantic class.
-
-        Use this for questions such as "quanti oggetti ci sono per ogni
-        classe?", "class counts", or "how many objects per class?". It returns
-        every class present in one call, so no class is accidentally omitted.
+            semantic_label: Semantic class to count, e.g. 'wall'. A class that
+                is expected but absent from this scene counts as 0. Omit the
+                argument to get the scene total, the count of every class
+                present, and the expected classes that are absent, all in one
+                call.
         """
         counts = Counter(obj["semantic_label"] for obj in ctx.objects.values())
+
+        if semantic_label is not None:
+            return (
+                f"Objects with semantic label '{semantic_label}': "
+                f"{counts.get(semantic_label, 0)}"
+            )
+
         if not counts:
             return "No objects in the scene."
+
         lines = [
             f"Total detected objects: {len(ctx.objects)}",
             f"Semantic classes present: {len(counts)}",
@@ -290,11 +335,24 @@ def create_scene_tools(ctx: SceneContext) -> list:
             f"  - {label}: {count}"
             for label, count in sorted(counts.items())
         )
+        absent = sorted(set(_expected_classes) - set(counts))
+        lines.append(
+            "Expected classes absent from this scene: "
+            + (", ".join(absent) if absent else "none")
+        )
         return "\n".join(lines)
 
     @tool
-    def list_objects() -> str:
-        """List all objects detected in the scene, grouped by semantic class."""
+    def list_object_ids() -> str:
+        """List the exact object ids detected in the scene, grouped by class.
+
+        Use this only when the user asks which objects exist or needs their
+        exact ids, e.g. before calling a tool that takes an object_name.
+
+        Do NOT use this to answer "how many" / "quanti" questions, and do not
+        count the listed ids: call count_objects instead, which returns the
+        total and the per-class breakdown directly.
+        """
         if not ctx.objects:
             return "No objects in the scene."
         by_class: dict[str, list] = {}
@@ -302,16 +360,16 @@ def create_scene_tools(ctx: SceneContext) -> list:
             by_class.setdefault(obj["semantic_label"], []).append(
                 (name, obj["point_count"])
             )
-        lines = [f"Scene contains {len(ctx.objects)} objects:\n"]
+        lines = ["Object ids by semantic class:"]
         for lbl in sorted(by_class):
-            lines.append(f"  {lbl.upper()} ({len(by_class[lbl])} instances):")
+            lines.append(f"  {lbl.upper()}:")
             for name, count in sorted(by_class[lbl]):
                 lines.append(f"    - {name}: {count:,} points")
         return "\n".join(lines)
 
     @tool
     def list_object_geometry(
-        semantic_label: Optional[str] = None,
+        semantic_label: OptionalPresentLabel = None,
         object_name: Optional[str] = None,
     ) -> str:
         """List global centroid, AABB box center, bounds, and dimensions.
@@ -326,10 +384,9 @@ def create_scene_tools(ctx: SceneContext) -> list:
             semantic_label: Optional semantic class, e.g. 'moldings'.
             object_name: Optional object name, e.g. 'moldings_0'.
         """
-        semantic_label = _canonical_semantic_label(semantic_label)
         if object_name:
             if object_name not in ctx.objects:
-                object_as_label = _canonical_semantic_label(object_name)
+                object_as_label = _exact_semantic_label(object_name)
                 if object_as_label and _objects_with_semantic_label(ctx, object_as_label):
                     semantic_label = object_as_label
                     object_name = None
@@ -376,7 +433,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
     @tool
     def get_object_info(
         object_name: Optional[str] = None,
-        semantic_label: Optional[SemanticLabel] = None,
+        semantic_label: OptionalPresentLabel = None,
     ) -> str:
         """Get geometric and semantic-class information about object(s).
 
@@ -431,7 +488,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
     @tool
     def find_relationships(
         object_name: Optional[str] = None,
-        semantic_label: Optional[SemanticLabel] = None,
+        semantic_label: OptionalPresentLabel = None,
         limit: int = 40,
         offset: int = 0,
     ) -> str:
@@ -456,7 +513,6 @@ def create_scene_tools(ctx: SceneContext) -> list:
                 to `limit` rows, to page through a result already seen.
         """
         object_name = _clean_optional(object_name)
-        semantic_label = _canonical_semantic_label(semantic_label)
         target_names = _resolve_target_names(ctx, object_name, semantic_label)
         if isinstance(target_names, str):
             return target_names
@@ -514,7 +570,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
     @tool
     def get_object_annotation(
         object_name: Optional[str] = None,
-        semantic_label: Optional[str] = None,
+        semantic_label: OptionalPresentLabel = None,
         position: Optional[str] = None,
     ) -> str:
         """Get user-provided CSV annotation/description for a matched object or class.
@@ -531,10 +587,9 @@ def create_scene_tools(ctx: SceneContext) -> list:
             semantic_label: Optional semantic class, e.g. 'column'.
             position: Optional spatial selector, e.g. 'central', 'left', 'north'.
         """
-        semantic_label = _canonical_semantic_label(semantic_label)
         object_name = _clean_optional(object_name)
         if object_name and object_name not in ctx.objects and semantic_label is None:
-            object_as_label = _canonical_semantic_label(object_name)
+            object_as_label = _exact_semantic_label(object_name)
             if object_as_label and _objects_with_semantic_label(ctx, object_as_label):
                 semantic_label = object_as_label
                 object_name = None
@@ -569,7 +624,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
 
     @tool
     def list_csv_annotation_matches(
-        semantic_label: Optional[str] = None,
+        semantic_label: OptionalExpectedLabel = None,
         limit: int = 80,
     ) -> str:
         """List CSV match status for detected objects and unmatched CSV rows.
@@ -583,8 +638,6 @@ def create_scene_tools(ctx: SceneContext) -> list:
             semantic_label: Optional semantic class filter, e.g. 'moldings'.
             limit: Maximum number of rows to show.
         """
-        semantic_label = _clean_optional(semantic_label)
-        semantic_label = _canonical_semantic_label(semantic_label)
         max_rows = max(1, min(int(limit), 300))
         object_annotations = getattr(ctx, "object_annotations", {})
         unmatched_annotations = getattr(ctx, "unmatched_annotations", [])
@@ -699,7 +752,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
     @tool
     def find_objects_by_material(
         material: str,
-        semantic_label: Optional[SemanticLabel] = None,
+        semantic_label: OptionalPresentLabel = None,
         limit: int = 30,
     ) -> str:
         """Find objects whose CSV material fields mention a requested material.
@@ -716,7 +769,6 @@ def create_scene_tools(ctx: SceneContext) -> list:
             limit: Maximum number of matched objects to list.
         """
         material = (material or "").strip()
-        semantic_label = _canonical_semantic_label(semantic_label)
         if not material:
             return "Provide a material to search for, e.g. material='legno'."
 
@@ -772,7 +824,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
 
     @tool
     def get_object_semantic_details(
-        semantic_label: SemanticLabel,
+        semantic_label: RequiredPresentLabel,
         object_name: str,
     ) -> str:
         """Get CSV-derived material, typology, function, and description for one object.
@@ -789,7 +841,6 @@ def create_scene_tools(ctx: SceneContext) -> list:
         """
         if object_name not in ctx.objects:
             return _object_not_found_message(object_name, ctx.objects)
-        semantic_label = _canonical_semantic_label(semantic_label)
         obj = ctx.objects[object_name]
         if obj["semantic_label"] != semantic_label:
             return (
@@ -824,7 +875,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
         level: str = "all",
         relationship_type: Optional[str] = None,
         object_name: Optional[str] = None,
-        semantic_label: Optional[SemanticLabel] = None,
+        semantic_label: OptionalPresentLabel = None,
         limit: int = 30,
         offset: int = 0,
     ) -> str:
@@ -864,11 +915,10 @@ def create_scene_tools(ctx: SceneContext) -> list:
             valid = "all, spatial graph, structural support filter, CSV detail, CIDOC/KG"
             return f"Unknown relationship level '{level}'. Valid values: {valid}."
         object_name = _clean_optional(object_name)
-        semantic_label = _canonical_semantic_label(semantic_label)
         if object_name and semantic_label:
             return "Provide only one of object_name or semantic_label, not both."
         if object_name and object_name not in ctx.objects:
-            object_as_label = _canonical_semantic_label(object_name)
+            object_as_label = _exact_semantic_label(object_name)
             if object_as_label and _objects_with_semantic_label(ctx, object_as_label):
                 semantic_label = object_as_label
                 object_name = None
@@ -1296,7 +1346,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
 
     @tool
     def find_pattern(
-        semantic_label: Optional[str] = None,
+        semantic_label: OptionalPresentLabel = None,
         relationship_type: Optional[str] = None,
     ) -> str:
         """Find objects or relationships matching a semantic label or relationship type.
@@ -1308,7 +1358,6 @@ def create_scene_tools(ctx: SceneContext) -> list:
         lines = []
 
         if semantic_label:
-            semantic_label = _canonical_semantic_label(semantic_label)
             matches = [
                 name for name, obj in ctx.objects.items()
                 if obj["semantic_label"] == semantic_label
@@ -1395,8 +1444,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
     return [
         list_semantic_labels,
         count_objects,
-        count_objects_by_class,
-        list_objects,
+        list_object_ids,
         list_object_geometry,
         get_object_info,
         get_object_annotation,
@@ -1780,18 +1828,18 @@ def _clean_optional(value: Optional[str]) -> Optional[str]:
     return value
 
 
-def _canonical_semantic_label(value: Optional[str]) -> Optional[str]:
+def _exact_semantic_label(value: Optional[str]) -> Optional[str]:
+    """Return `value` when it is exactly a known semantic class name, else None.
+
+    Callers pass a free-form object_name that may in fact name a class. The
+    match is exact: semantic_label arguments are validated by each tool's
+    Literal enum, so nothing here guesses at aliases, plurals, or near-misses.
+    """
     value = _clean_optional(value)
     if value is None:
         return None
-    normalized = _normalize_text(value)
-    valid_labels = set(_all_semantic_classes())
-    if normalized in valid_labels:
-        return normalized
-    for alias, label in _SEMANTIC_ALIASES:
-        if _normalize_text(alias) == normalized:
-            return label
-    return value
+    value = value.strip()
+    return value if value in set(_all_semantic_classes()) else None
 
 
 def _resolve_target_names(ctx, object_name: Optional[str], semantic_label: Optional[str]):
@@ -1801,14 +1849,13 @@ def _resolve_target_names(ctx, object_name: Optional[str], semantic_label: Optio
     callers should check `isinstance(result, str)` and return it as-is.
     """
     object_name = _clean_optional(object_name)
-    semantic_label = _canonical_semantic_label(semantic_label)
     if not object_name and not semantic_label:
         return "Provide either object_name or semantic_label."
     if object_name and semantic_label:
         return "Provide only one of object_name or semantic_label, not both."
     if object_name:
         if object_name not in ctx.objects:
-            object_as_label = _canonical_semantic_label(object_name)
+            object_as_label = _exact_semantic_label(object_name)
             if object_as_label:
                 names = sorted(
                     name for name, obj in ctx.objects.items()
