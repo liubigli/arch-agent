@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import time
 import unicodedata
 from copy import deepcopy
@@ -59,6 +60,10 @@ class BenchmarkResult:
     final_answer: str | None = None
     reference_answer: str | None = None
     grounding_issues: list[GroundingIssue] = field(default_factory=list)
+    expected_tools: list[str] = field(default_factory=list)
+    acceptable_tools: list[str] = field(default_factory=list)
+    tool_selection_status: str | None = None
+    tool_selection_issue: str | None = None
     latency_s: float = 0.0
     error: str | None = None
 
@@ -195,6 +200,229 @@ def _set_language_check(result: BenchmarkResult) -> None:
     result.language_issue = f"Expected final answer in {language_name}."
 
 
+def _set_tool_selection_check(result: BenchmarkResult, ctx: SceneContext) -> None:
+    expected, acceptable = _expected_tools_for_question(
+        result.question,
+        present_labels={obj["semantic_label"] for obj in ctx.objects.values()},
+    )
+    result.expected_tools = expected
+    result.acceptable_tools = acceptable
+
+    if not expected:
+        result.tool_selection_status = "not_applicable"
+        result.tool_selection_issue = None
+        return
+
+    called = [call.name for call in result.tool_calls]
+    if not called:
+        result.tool_selection_status = "no_tool"
+        result.tool_selection_issue = (
+            "Question needs graph data, but the model did not call any tool."
+        )
+        return
+
+    if "count_objects_by_class" in expected and called.count("count_objects") > 1:
+        result.tool_selection_status = "acceptable"
+        result.tool_selection_issue = (
+            "Used repeated count_objects calls; count_objects_by_class is the "
+            "preferred grouped-count tool."
+        )
+        return
+
+    if any(tool in called for tool in expected):
+        result.tool_selection_status = "optimal"
+        result.tool_selection_issue = None
+        return
+
+    if any(tool in called for tool in acceptable):
+        result.tool_selection_status = "acceptable"
+        result.tool_selection_issue = (
+            "Used an acceptable tool, but not the preferred tool for this question."
+        )
+        return
+
+    result.tool_selection_status = "suboptimal"
+    result.tool_selection_issue = (
+        "Tool call does not match the expected routing for this question."
+    )
+
+
+def _expected_tools_for_question(
+    question: str,
+    present_labels: set[str] | None = None,
+) -> tuple[list[str], list[str]]:
+    text = _normalize(question)
+    labels = _mentioned_semantic_labels(text)
+    absent_labels = labels - (present_labels or set())
+    object_ids = re.findall(r"\b[a-z_]+_\d+\b", text)
+
+    material_terms = (
+        "material", "materiale", "materiali", "wood", "wooden", "legno",
+        "typology", "tipologia", "type", "tipo", "function", "funzione",
+        "description", "descrizione",
+    )
+    relationship_terms = (
+        "relationship", "relationships", "relazione", "relazioni",
+        "support", "supports", "supported", "supporta", "supportano",
+        "supportato", "supportata", "sostiene", "sostengono",
+        "above", "below", "sopra", "sotto", "adiacente", "adiacenti",
+        "adjacent", "near", "vicino", "vicini", "interseca",
+        "intersecano", "sovrappone", "sovrappongono",
+    )
+    role_terms = (
+        "strutturale", "strutturali", "structural",
+        "ornamentale", "ornamentali", "ornamental",
+        "superficie di appoggio", "support surface",
+        "elemento strutturale", "elementi strutturali",
+    )
+
+    if any(term in text for term in material_terms):
+        if absent_labels:
+            return ["count_objects"], ["list_semantic_labels", "count_objects_by_class"]
+        if any(term in text for term in ("wood", "wooden", "legno")) and any(
+            term in text for term in ("ci sono", "are there", "quali", "which")
+        ):
+            return ["find_objects_by_material"], [
+                "get_object_annotation",
+                "get_object_semantic_details",
+                "list_objects",
+            ]
+        if object_ids or "ogni" in text or "every" in text:
+            return ["get_object_semantic_details"], [
+                "get_object_annotation",
+                "list_objects",
+            ]
+        return ["get_object_annotation"], [
+            "get_object_semantic_details",
+            "list_objects",
+        ]
+
+    if any(term in text for term in role_terms):
+        if absent_labels:
+            return ["count_objects"], ["list_semantic_labels", "count_objects_by_class"]
+        return ["get_object_info"], ["get_scene_statistics", "list_objects"]
+
+    if any(term in text for term in relationship_terms):
+        if absent_labels:
+            return ["count_objects"], [
+                "list_semantic_labels",
+                "count_objects_by_class",
+                "find_relationships",
+                "list_relationships",
+            ]
+        if labels or object_ids:
+            return ["find_relationships"], ["list_relationships"]
+        return ["list_relationships"], ["find_relationships", "get_scene_statistics"]
+
+    if any(term in text for term in ("area", "footprint", "superficie")):
+        return ["get_scene_statistics"], ["list_objects"]
+
+    if any(term in text for term in ("volume", "volume")):
+        return ["get_scene_statistics"], ["list_objects"]
+
+    if any(term in text for term in ("distance", "distanza")):
+        return ["find_relationships"], ["list_relationships"]
+
+    if any(term in text for term in ("nearest", "closest", "vicino", "vicini")):
+        return ["find_relationships"], ["list_relationships"]
+
+    class_presence_terms = (
+        "classi semantiche", "semantic classes", "presenti", "present",
+        "assenti", "absent",
+    )
+    if any(term in text for term in class_presence_terms) and not any(
+        term in text for term in ("quanti", "how many", "count", "numero")
+    ):
+        return ["list_semantic_labels"], ["count_objects_by_class", "get_scene_statistics"]
+
+    count_terms = ("quanti", "quante", "how many", "count", "numero")
+    if any(term in text for term in count_terms):
+        if _looks_like_multi_class_count(text, labels):
+            return ["count_objects_by_class"], [
+                "list_semantic_labels",
+                "get_scene_statistics",
+                "list_objects",
+                "count_objects",
+            ]
+        return ["count_objects"], [
+            "count_objects_by_class",
+            "list_semantic_labels",
+            "get_scene_statistics",
+            "list_objects",
+        ]
+
+    object_list_terms = (
+        "quali oggetti", "elenca", "lista", "list objects", "which objects",
+        "object inventory", "inventario",
+    )
+    if any(term in text for term in object_list_terms):
+        if absent_labels:
+            return ["count_objects"], ["list_semantic_labels", "count_objects_by_class"]
+        return ["list_objects"], ["get_object_info", "count_objects_by_class"]
+
+    geometry_terms = (
+        "centroid", "centroide", "coordinate", "coordinates",
+        "bounding", "box", "dimension", "dimensioni",
+    )
+    if any(term in text for term in geometry_terms):
+        return ["get_object_info"], ["list_objects"]
+
+    scene_summary_terms = (
+        "descrivi", "describe", "dominante", "dominant", "confidenza",
+        "confidence", "interna", "esterna", "mista", "internal",
+        "external", "mixed", "tipologia", "typology",
+    )
+    if any(term in text for term in scene_summary_terms):
+        return ["get_scene_statistics"], [
+            "list_objects",
+            "list_semantic_labels",
+        ]
+
+    return [], []
+
+
+def _mentioned_semantic_labels(text: str) -> set[str]:
+    aliases = {
+        "arch": ("arch", "archi", "arco", "arches"),
+        "column": ("column", "columns", "colonna", "colonne"),
+        "wall": ("wall", "walls", "muro", "muri", "parete", "pareti"),
+        "floor": ("floor", "floors", "pavimento", "pavimenti"),
+        "roof": ("roof", "roofs", "tetto", "tetti", "copertura", "coperture"),
+        "vault": ("vault", "vaults", "volta", "volte"),
+        "stairs": ("stairs", "stair", "scala", "scale"),
+        "door_window": (
+            "door_window", "door", "doors", "window", "windows",
+            "porta", "porte", "finestra", "finestre",
+            "porta finestra", "porte finestre", "apertura", "aperture",
+        ),
+        "moldings": ("moldings", "molding", "modanatura", "modanature"),
+    }
+    mentioned = set()
+    for label, label_aliases in aliases.items():
+        if any(re.search(rf"\b{re.escape(alias)}\b", text) for alias in label_aliases):
+            mentioned.add(label)
+    return mentioned
+
+
+def _looks_like_multi_class_count(text: str, labels: set[str]) -> bool:
+    if len(labels) > 1:
+        return True
+    return any(
+        term in text
+        for term in (
+            "per classe",
+            "by class",
+            "per ogni classe",
+            "grouped by class",
+            "distribuzione",
+            "distribution",
+            "column,",
+            "wall,",
+            "floor,",
+        )
+    )
+
+
 def build_trace(result: BenchmarkResult) -> list[str]:
     """Reconstruct a step-by-step trace from real execution data only.
 
@@ -248,6 +476,7 @@ def run_benchmark(
         model=model,
         capture_reasoning=capture_reasoning,
         think_override=think_override,
+        tool_mode="benchmark",
     )
     results = []
     for question_id, question in enumerate(questions, start=1):
@@ -267,6 +496,7 @@ def evaluate_benchmark(
         result = deepcopy(raw_result)
         result.reference_answer = _try_answer_deterministic(ctx, result.question)
         _set_language_check(result)
+        _set_tool_selection_check(result, ctx)
         result.grounding_issues = check_groundedness(
             ctx,
             result.question,
@@ -297,6 +527,10 @@ def build_evaluation_summary(results: list[BenchmarkResult]) -> dict:
     language_checked = sum(1 for result in results if result.language_ok is not None)
     language_mismatches = sum(1 for result in results if result.language_ok is False)
     flagged = sum(1 for result in results if result.grounding_issues)
+    tool_selection_counts: dict[str, int] = {}
+    for result in results:
+        status = result.tool_selection_status or "not_checked"
+        tool_selection_counts[status] = tool_selection_counts.get(status, 0) + 1
     reliability_counts: dict[str, int] = {}
     for result in results:
         reliability_counts[result.reliability] = (
@@ -319,6 +553,27 @@ def build_evaluation_summary(results: list[BenchmarkResult]) -> dict:
         if total
         else 0.0
     )
+    tool_selection_checked = sum(
+        1
+        for result in results
+        if result.tool_selection_status
+        and result.tool_selection_status != "not_applicable"
+    )
+    optimal_tool_rate = (
+        tool_selection_counts.get("optimal", 0) / tool_selection_checked * 100
+        if tool_selection_checked
+        else 0.0
+    )
+    acceptable_or_better_tool_rate = (
+        (
+            tool_selection_counts.get("optimal", 0)
+            + tool_selection_counts.get("acceptable", 0)
+        )
+        / tool_selection_checked
+        * 100
+        if tool_selection_checked
+        else 0.0
+    )
     return {
         "errors": errors,
         "answered_with_zero_tool_calls": zero_tool_calls,
@@ -326,6 +581,16 @@ def build_evaluation_summary(results: list[BenchmarkResult]) -> dict:
         "average_tool_calls_per_question": round(avg_calls, 2),
         "average_latency_s": round(avg_latency, 3),
         "answers_flagged_by_groundedness_checks": flagged,
+        "optimal_tool_selection_rate_pct": round(optimal_tool_rate, 1),
+        "acceptable_or_better_tool_selection_rate_pct": round(
+            acceptable_or_better_tool_rate, 1
+        ),
+        "tool_selection_breakdown": dict(
+            sorted(
+                tool_selection_counts.items(),
+                key=lambda item: item[0],
+            )
+        ),
         "grounded_rate_pct": round(grounded_rate, 1),
         "reliability_breakdown": dict(
             sorted(
@@ -380,6 +645,10 @@ def write_evaluation_report(
             "final_answer",
             "reference_answer",
             "reliability",
+            "expected_tools",
+            "acceptable_tools",
+            "tool_selection_status",
+            "tool_selection_issue",
             "grounding_issues",
             "language_ok",
             "language_issue",
@@ -414,6 +683,10 @@ def write_manual_review_report(
             "final_answer",
             "reference_answer",
             "reliability",
+            "expected_tools",
+            "acceptable_tools",
+            "tool_selection_status",
+            "tool_selection_issue",
             "grounding_issues",
             "language_ok",
             "language_issue",
@@ -447,6 +720,10 @@ def _evaluation_record(result: BenchmarkResult) -> dict:
         "final_answer": result.final_answer,
         "reference_answer": result.reference_answer,
         "reliability": result.reliability,
+        "expected_tools": result.expected_tools,
+        "acceptable_tools": result.acceptable_tools,
+        "tool_selection_status": result.tool_selection_status,
+        "tool_selection_issue": result.tool_selection_issue,
         "grounding_issues": [
             {"kind": issue.kind, "detail": issue.detail}
             for issue in result.grounding_issues
@@ -538,6 +815,10 @@ def write_csv_report(results: list[BenchmarkResult], path: str | Path) -> None:
         "num_tool_calls",
         "tool_names",
         "tool_call_reasoning",
+        "expected_tools",
+        "acceptable_tools",
+        "tool_selection_status",
+        "tool_selection_issue",
         "final_answer",
         "reference_answer",
         "grounding_issues",
@@ -567,6 +848,10 @@ def write_csv_report(results: list[BenchmarkResult], path: str | Path) -> None:
                         for call in result.tool_calls
                         if call.reasoning
                     ),
+                    "expected_tools": ", ".join(result.expected_tools),
+                    "acceptable_tools": ", ".join(result.acceptable_tools),
+                    "tool_selection_status": result.tool_selection_status or "",
+                    "tool_selection_issue": result.tool_selection_issue or "",
                     "final_answer": result.final_answer or "",
                     "reference_answer": result.reference_answer or "",
                     "grounding_issues": " | ".join(
@@ -606,6 +891,30 @@ def summarize(results: list[BenchmarkResult]) -> str:
     for result in results:
         for issue in result.grounding_issues:
             issue_kinds[issue.kind] = issue_kinds.get(issue.kind, 0) + 1
+    tool_selection_counts: dict[str, int] = {}
+    for result in results:
+        status = result.tool_selection_status or "not_checked"
+        tool_selection_counts[status] = tool_selection_counts.get(status, 0) + 1
+    tool_selection_checked = sum(
+        1
+        for result in results
+        if result.tool_selection_status
+        and result.tool_selection_status != "not_applicable"
+    )
+    optimal_tool_rate = (
+        tool_selection_counts.get("optimal", 0) / tool_selection_checked
+        if tool_selection_checked
+        else 0.0
+    )
+    acceptable_or_better_tool_rate = (
+        (
+            tool_selection_counts.get("optimal", 0)
+            + tool_selection_counts.get("acceptable", 0)
+        )
+        / tool_selection_checked
+        if tool_selection_checked
+        else 0.0
+    )
     tool_usage: dict[str, int] = {}
     for result in results:
         for call in result.tool_calls:
@@ -629,8 +938,15 @@ def summarize(results: list[BenchmarkResult]) -> str:
         f"Average latency per question: {avg_latency:.2f}s",
         f"Answers flagged by groundedness checks: {flagged}/{total}",
         f"Grounded rate (grounded / (total - errors)): {grounded_rate:.0%}",
-        "Reliability breakdown:",
+        f"Optimal tool selection rate: {optimal_tool_rate:.0%}",
+        f"Acceptable-or-better tool selection rate: {acceptable_or_better_tool_rate:.0%}",
+        "Tool selection breakdown:",
     ]
+    for label, count in sorted(tool_selection_counts.items(), key=lambda item: item[1], reverse=True):
+        lines.append(f"  - {label}: {count}")
+    lines.append(
+        "Reliability breakdown:",
+    )
     for label, count in sorted(reliability_counts.items(), key=lambda item: item[1], reverse=True):
         lines.append(f"  - {label}: {count}")
     lines.append("Tool usage:")

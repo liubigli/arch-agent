@@ -25,7 +25,7 @@ from .pipeline.relationships import (
     mereological_relation_type,
     supports_label_pair,
 )
-from .tools.scene_tools import create_scene_tools
+from .tools.scene_tools import create_benchmark_scene_tools, create_scene_tools
 from .settings import get_config
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "system.md"
@@ -115,8 +115,13 @@ def create_agent(
     capture_reasoning: bool = False,
     force_first_tool_call: bool = True,
     think_override: bool | None = None,
+    tool_mode: str = "full",
 ):
-    tools = create_scene_tools(ctx)
+    tools = (
+        create_benchmark_scene_tools(ctx)
+        if tool_mode == "benchmark"
+        else create_scene_tools(ctx)
+    )
     profile = resolve_model_profile(model)
     llm_kwargs = {
         "model": model,

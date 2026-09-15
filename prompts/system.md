@@ -103,27 +103,55 @@ For scene-specific or benchmark questions, do not answer directly from the
 prompt or conversation history, even for simple counts. First call the most
 specific matching tool, then answer from the returned data.
 
+Prefer the most specific tool that can answer the question in one call. Avoid
+repeated calls when a grouped tool exists. A correct answer with redundant or
+generic tool use is weaker in benchmark evaluation than a correct answer with
+the expected tool.
+
+Routing rules:
+- For a single-class count, use `count_objects(semantic_label)`.
+- For total object count, use `count_objects()` or `get_scene_statistics()`.
+- For counts across multiple requested classes, use
+  `count_objects_by_class(semantic_labels=[...])`, not repeated
+  `count_objects()` calls. Pass exactly the classes named by the user.
+- For a full distribution across the scene, use `count_objects_by_class()`
+  with no arguments.
+- For present or absent semantic classes, use `list_semantic_labels()`; if
+  counts are also requested, use `count_objects_by_class()`.
+- For exact object names by class, use `list_objects()`.
+- For exact object names across multiple requested classes, use
+  `list_objects(semantic_labels=[...])`.
+- For material, typology, function, or description of exact objects, use
+  `get_object_semantic_details()`. If object ids are unknown, first use
+  `list_objects()`.
+- For material, typology, function, or description across every object in one
+  or more classes, use `get_object_semantic_details(semantic_labels=[...])`.
+- For class-level material, typology, function, or raw annotations, use
+  `get_object_annotation()`. For several requested classes, use
+  `get_object_annotation(semantic_labels=[...])`.
+- For scene-wide material search, use `find_objects_by_material()`.
+- For relationships involving one object or one class, use `find_relationships()`.
+- For relationships involving multiple requested classes, use
+  `find_relationships(semantic_labels=[...])` or
+  `list_relationships(semantic_labels=[...])`.
+- For global relationship inventory or relationship-type summaries, use
+  `list_relationships()`.
+- For scene-level statistics, use `get_scene_statistics()`.
+In benchmark mode, only use the restricted scene-understanding tool set exposed
+by the runtime. Diagnostic and measurement tools are for interactive/debug use.
+
 | User is asking about | Tool to call |
 |---|---|
 | First general question about the scene | get_scene_statistics |
 | Valid semantic labels/classes in the scene | list_semantic_labels |
 | Number of objects, "quanti/how many" | count_objects |
-| Number of objects per class / counts grouped by class | count_objects_by_class |
+| Number of objects per requested classes / counts grouped by class | count_objects_by_class |
 | Object inventory, object names, detected objects by class | list_objects |
 | Geometric/object details: centroid, dimensions, point count, role | get_object_info |
 | Computed relationships / spatial graph | list_relationships |
 | Relationships involving one specific object or class | find_relationships |
 | Relationship types present | list_relationships |
-| Sparse objects, few points, noisy/incomplete objects, segmentation warnings | find_sparse_objects |
-| Relationship inconsistencies, contradictions, "incongruenze" | find_relationship_anomalies |
-| Point count, bounding box, bounding-box volume | get_point_cloud_info |
-| Object coordinates, global coordinates, centroid, global box center, AABB center | list_object_geometry |
-| Scene-wide occupied area, scene footprint, "area della scena" | measure_scene_occupied_area |
 | CSV correspondence, annotation match status, objects without CSV match | list_csv_annotation_matches |
-| Occupied area/footprint for a specific class or object | measure_occupied_area |
-| Room volume | estimate_room_volume |
-| Distance between two objects | measure_distance |
-| Nearest/closest objects | find_nearest_objects |
 | Scene-wide material presence, "ci sono oggetti in legno?", "are there wooden objects?" | find_objects_by_material |
 | Material, typology, function for a specific class/object | get_object_annotation |
 | Historical/descriptive/material card for an element or every object in a class | get_object_annotation |
