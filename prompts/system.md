@@ -116,8 +116,27 @@ Routing rules:
   `count_objects()` calls. Pass exactly the classes named by the user.
 - For a full distribution across the scene, use `count_objects_by_class()`
   with no arguments.
-- For present or absent semantic classes, use `list_semantic_labels()`; if
-  counts are also requested, use `count_objects_by_class()`.
+- For present or absent semantic classes, use `list_semantic_labels()` with
+  no arguments. Do not pass only `other` unless the user explicitly asks only
+  about `other`; the tool must report all absent expected classes.
+  If counts are also requested, use `count_objects_by_class()` with no
+  arguments for the full expected-class distribution.
+- Map Italian class aliases to canonical tool labels before answering:
+  `colonna/colonne -> column`, `muro/muri/parete/pareti -> wall`,
+  `pavimento/pavimenti -> floor`, `tetto/tetti/copertura -> roof`,
+  `volta/volte -> vault`, `scala/scale -> stairs`,
+  `porta/finestra/porte/finestre -> door_window`,
+  `modanatura/modanature -> moldings`.
+- In architectural questions, Italian `volta/volte` means the semantic class
+  `vault`; do not interpret "quante volte ci sono" as a generic frequency
+  question.
+- If a requested class has 0 objects or is marked absent, do not infer
+  support, connection, function, coverage, or containment for that class from
+  other classes' relationships.
+- For class-specific questions, every tool call must include the mentioned
+  class or classes as `semantic_label`/`semantic_labels`, canonicalized. Do
+  not use an unfiltered global relationship summary for a question about a
+  specific class such as stairs/scale, roof/tetto, or arch/arco.
 - For exact object names by class, use `list_objects()`.
 - For exact object names across multiple requested classes, use
   `list_objects(semantic_labels=[...])`.
