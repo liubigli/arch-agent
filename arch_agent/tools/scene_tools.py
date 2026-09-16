@@ -251,18 +251,35 @@ def create_scene_tools(ctx: SceneContext) -> list:
         if semantic_labels:
             requested_labels = _canonical_semantic_label_list(semantic_labels)
             lines = [
-                f"Semantic labels present in the scene graph: {len(_class_names)}",
-                "Requested semantic labels:",
+                "REQUESTED CLASS STATUS",
+                f"- Semantic classes present in the scene: {len(_class_names)}",
+                "- Requested classes after alias normalization:",
             ]
             for label in requested_labels:
                 count = counts.get(label, 0)
                 status = "present" if count else "absent"
-                lines.append(f"  - {label}: {status}, {count} instance(s)")
-            if any(counts.get(label, 0) == 0 for label in requested_labels):
-                lines.append(
-                    "Important: absent requested labels are not present in this "
-                    "scene."
-                )
+                lines.append(f"  - {label}: {status} ({count} object(s))")
+            absent_requested = [
+                label for label in requested_labels
+                if counts.get(label, 0) == 0
+            ]
+            if absent_requested:
+                lines.extend([
+                    "",
+                    "SCENE EVIDENCE",
+                    "- These requested classes are absent from the extracted scene objects: "
+                    + ", ".join(absent_requested)
+                    + ".",
+                    "",
+                    "TOOL CONCLUSION",
+                    "- Questions requiring an absent class have no supporting scene evidence for that class.",
+                ])
+            else:
+                lines.extend([
+                    "",
+                    "TOOL CONCLUSION",
+                    "- All requested classes are present in the extracted scene objects.",
+                ])
             return "\n".join(lines)
 
         expected_labels = [
@@ -307,8 +324,14 @@ def create_scene_tools(ctx: SceneContext) -> list:
             )
             if count == 0:
                 return (
-                    f"Objects with semantic label '{semantic_label}': 0\n"
-                    f"Important: '{semantic_label}' is absent in this scene."
+                    f"DIRECT COUNT ANSWER\n"
+                    f"- {semantic_label}: 0 object(s)\n\n"
+                    "REQUESTED CLASS STATUS\n"
+                    f"- {semantic_label}: absent (0 object(s))\n\n"
+                    "SCENE EVIDENCE\n"
+                    f"- No objects with semantic label '{semantic_label}' were extracted from this scene.\n\n"
+                    "TOOL CONCLUSION\n"
+                    f"- Count for '{semantic_label}' is 0."
                 )
             return f"Objects with semantic label '{semantic_label}': {count}"
 
@@ -330,11 +353,15 @@ def create_scene_tools(ctx: SceneContext) -> list:
         Prefer this tool over multiple count_objects calls for multi-class
         count questions. It reports expected semantic classes with count 0
         when they are absent, so absent classes are explicit.
+        If the user asks for all classes, all objects by class, the complete
+        inventory, or the full class distribution without naming specific
+        classes, omit semantic_labels. Do not invent or copy example labels.
 
         Args:
             semantic_labels: Optional list of semantic classes to count. If
                 omitted, returns counts for all expected semantic classes
-                except absent 'other'. Examples: ['column', 'wall', 'roof'].
+                except absent 'other'. Pass this only when the user explicitly
+                names the requested classes.
         """
         counts = Counter(obj["semantic_label"] for obj in ctx.objects.values())
         if not counts:
@@ -360,6 +387,19 @@ def create_scene_tools(ctx: SceneContext) -> list:
             f"  - {label}: {counts.get(label, 0)}"
             for label in expected_labels
         )
+        absent_requested = [
+            label for label in expected_labels
+            if counts.get(label, 0) == 0
+        ]
+        if absent_requested:
+            lines.extend([
+                "",
+                "REQUESTED CLASS STATUS",
+                "- Absent/zero-count classes: " + ", ".join(absent_requested) + ".",
+                "",
+                "TOOL CONCLUSION",
+                "- A zero count means the class is not present among extracted scene objects.",
+            ])
         return "\n".join(lines)
 
     @tool
@@ -371,10 +411,14 @@ def create_scene_tools(ctx: SceneContext) -> list:
         semantic classes, pass them together as semantic_labels to avoid
         repeated tool calls. For counts only, prefer count_objects or
         count_objects_by_class.
+        If the user asks for all objects, every object, or a complete object
+        inventory without naming specific classes, omit semantic_labels. Do
+        not invent or copy example labels.
 
         Args:
             semantic_labels: Optional list of semantic classes to list. If
-                omitted, all detected objects are listed.
+                omitted, all detected objects are listed. Pass this only when
+                the user explicitly names requested classes.
         """
         if not ctx.objects:
             return "No objects in the scene."
@@ -555,16 +599,20 @@ def create_scene_tools(ctx: SceneContext) -> list:
         Use this for relationship questions focused on one object, one
         semantic class, e.g. "che relazioni hanno le colonne?", "what
         relationships involve wall?", or "cosa supportano le colonne?".
-        If the user names multiple semantic classes, pass them together as
-        semantic_labels to avoid repeated tool calls. For global relationship
-        inventories not focused on one class/object,
+        If the user names multiple semantic classes, pass all of them together
+        as semantic_labels, especially for support questions such as
+        "roof supported by columns" -> ['roof', 'column']. Never drop one side
+        of the relation. For global relationship inventories not focused on one
+        class/object,
         use list_relationships.
 
         Provide exactly one of these:
         - object_name: one exact object id (e.g. 'column_2') for a single instance.
         - semantic_label: a semantic class (e.g. 'column') to aggregate the
           relationships of every instance of that class.
-        - semantic_labels: multiple semantic classes to query together.
+        - semantic_labels: multiple semantic classes to query together. Use
+          this whenever the user names two or more classes in the same
+          relationship question.
 
         Results are paginated to avoid flooding the chat with a large scene's
         full spatial graph. If the response says rows were not shown,
@@ -576,7 +624,7 @@ def create_scene_tools(ctx: SceneContext) -> list:
             object_name: Exact object id for a single instance.
             semantic_label: Semantic class to query across all its instances.
             semantic_labels: Optional list of semantic classes to query
-                together.
+                together. Include every class named in the user question.
             limit: Maximum number of relationship rows to return in this call.
             offset: Number of relationship rows to skip before collecting up
                 to `limit` rows, to page through a result already seen.
@@ -602,31 +650,39 @@ def create_scene_tools(ctx: SceneContext) -> list:
         ]
         missing_labels = getattr(target_names, "missing_labels", [])
         if missing_labels:
-            lines = [
-                (
-                    "No objects found for requested semantic_label(s): "
-                    + ", ".join(missing_labels)
-                    + "."
-                ),
-                (
-                    "Important: relationships involving absent classes cannot "
-                    "exist in this scene."
-                ),
-            ]
             present_labels = sorted({
                 ctx.objects[name]["semantic_label"]
                 for name in target_names
             })
+            lines = [
+                "REQUESTED CLASS STATUS",
+            ]
+            for label in missing_labels:
+                lines.append(f"- {label}: absent (0 object(s))")
+            if present_labels:
+                for label in present_labels:
+                    count = sum(
+                        1 for obj in ctx.objects.values()
+                        if obj["semantic_label"] == label
+                    )
+                    lines.append(f"- {label}: present ({count} object(s))")
+            lines.extend([
+                "",
+                "SCENE EVIDENCE",
+                "- No objects found for requested semantic_label(s): "
+                + ", ".join(missing_labels)
+                + ".",
+                "- Relationships involving an absent class cannot be observed in this scene.",
+                "- Relationships of present classes alone are not evidence for an absent class.",
+                "",
+                "TOOL CONCLUSION",
+                "- No scene relationship can be reported for the full requested class set because at least one requested class is absent.",
+            ])
             if present_labels:
                 lines.append(
-                    "Present requested class(es) not expanded to avoid "
-                    "confusing absent-class checks: "
+                    "- To inspect the present class by itself, call the tool again with only: "
                     + ", ".join(present_labels)
                     + "."
-                )
-                lines.append(
-                    "Call the tool again with only the present class(es) if "
-                    "their own relationships are needed."
                 )
             return "\n".join(lines)
         total = 0
@@ -1054,7 +1110,10 @@ def create_scene_tools(ctx: SceneContext) -> list:
         exclusive: use object_name for one exact instance (e.g. 'column_2'),
         or semantic_label to match relationships for every instance of a
         class (e.g. 'column'), or semantic_labels to match multiple classes
-        in one call. Omit all target filters to list all relationships.
+        in one call. For any relationship/support question naming two or more
+        classes, semantic_labels must include every class named by the user,
+        even if one class may be absent. Omit all target filters to list all
+        relationships.
 
         Results are paginated: if the response says rows were not shown,
         call again with the suggested offset to see the next batch; rows are
@@ -1077,7 +1136,8 @@ def create_scene_tools(ctx: SceneContext) -> list:
                 target are listed.
             semantic_labels: Optional list of semantic classes. If provided,
                 only relationships where an instance of any requested class is
-                source or target are listed.
+                source or target are listed. Include every class named in a
+                multi-class relationship question.
             limit: Maximum number of relationship rows to return in this
                 call. Default is intentionally small to avoid flooding the chat.
             offset: Number of relationship rows to skip before collecting up
@@ -1119,27 +1179,34 @@ def create_scene_tools(ctx: SceneContext) -> list:
                 if label not in set(present_requested_labels)
             ]
             if missing_labels:
+                present_counts = Counter(obj["semantic_label"] for obj in ctx.objects.values())
                 lines = [
-                    (
-                        "No objects found for requested semantic_label(s): "
-                        + ", ".join(missing_labels)
-                        + "."
-                    ),
-                    (
-                        "Important: relationships involving absent classes "
-                        "cannot exist in this scene."
-                    ),
+                    "REQUESTED CLASS STATUS",
                 ]
+                for label in missing_labels:
+                    lines.append(f"- {label}: absent (0 object(s))")
+                if present_requested_labels:
+                    for label in present_requested_labels:
+                        lines.append(
+                            f"- {label}: present ({present_counts.get(label, 0)} object(s))"
+                        )
+                lines.extend([
+                    "",
+                    "SCENE EVIDENCE",
+                    "- No objects found for requested semantic_label(s): "
+                    + ", ".join(missing_labels)
+                    + ".",
+                    "- Relationships involving an absent class cannot be observed in this scene.",
+                    "- Relationships of present classes alone are not evidence for an absent class.",
+                    "",
+                    "TOOL CONCLUSION",
+                    "- No scene relationship can be reported for the full requested class set because at least one requested class is absent.",
+                ])
                 if present_requested_labels:
                     lines.append(
-                        "Present requested class(es) not expanded to avoid "
-                        "confusing absent-class checks: "
+                        "- To inspect the present class by itself, call the tool again with only: "
                         + ", ".join(present_requested_labels)
                         + "."
-                    )
-                    lines.append(
-                        "Call the tool again with only the present class(es) "
-                        "if their own relationships are needed."
                     )
                 return "\n".join(lines)
             target_set = {
@@ -2020,6 +2087,23 @@ class _TargetNameList(list):
         self.missing_labels = missing_labels
 
 
+def _absent_semantic_labels_message(labels: list[str]) -> str:
+    label_text = ", ".join(labels)
+    lines = ["REQUESTED CLASS STATUS"]
+    lines.extend(f"- {label}: absent (0 object(s))" for label in labels)
+    lines.extend([
+        "",
+        "SCENE EVIDENCE",
+        f"- No objects found for requested semantic_label(s): {label_text}.",
+        "- Relationships involving absent classes cannot be observed in this scene.",
+        "",
+        "TOOL CONCLUSION",
+        "- Count for the requested absent class set is 0.",
+        "- No scene relationship can be reported for absent class(es).",
+    ])
+    return "\n".join(lines)
+
+
 def _resolve_target_names(
     ctx,
     object_name: Optional[str],
@@ -2066,11 +2150,7 @@ def _resolve_target_names(
             else:
                 missing_labels.append(label)
         if not names:
-            return (
-                "No objects found for requested semantic_labels: "
-                + ", ".join(requested_labels)
-                + "."
-            )
+            return _absent_semantic_labels_message(requested_labels)
         if missing_labels:
             return _TargetNameList(names, missing_labels)
         return names
@@ -2079,7 +2159,7 @@ def _resolve_target_names(
         if obj["semantic_label"] == semantic_label
     )
     if not names:
-        return f"No objects found for semantic_label {semantic_label!r}."
+        return _absent_semantic_labels_message([semantic_label])
     return names
 
 
