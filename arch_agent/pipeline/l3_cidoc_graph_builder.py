@@ -252,7 +252,15 @@ def build_scene_graph(
     id_map = {raw.node_id: namespaced.node_id for raw, namespaced in zip(raw_nodes, nodes)}
     edges = [_namespace_scene_edge(id_map, edge) for edge in edges]
 
-    spatial_index = build_spatial_relation_index(spatial_relations or ())
+    object_node_ids = {
+        node.properties.get("object_name", ""): node.node_id
+        for node in nodes
+        if node.properties.get("object_name")
+    }
+    spatial_index = build_spatial_relation_index(
+        spatial_relations or (),
+        object_node_ids=object_node_ids,
+    )
     if add_door_window_wall_relation:
         nodes, edges = add_door_window_wall_part_of_edges(nodes, edges, spatial_index=spatial_index)
     if add_wall_molding_feature_relation:
@@ -337,6 +345,7 @@ def build_l3_cidoc_graph(annotation_rows: Iterable[dict[str, str]]) -> tuple[lis
                 "global_box_center_x": _first_value(normalized, "global_box_center_x", "x"),
                 "global_box_center_y": _first_value(normalized, "global_box_center_y", "y"),
                 "global_box_center_z": _first_value(normalized, "global_box_center_z", "z"),
+                "object_name": normalized.get("object_name", ""),
                 "position": normalized.get("position", ""),
                 "description": normalized.get("description", ""),
             },
@@ -397,18 +406,24 @@ def add_physical_composition_edges(
 
     node_list = list(nodes)
     edge_list = list(edges)
-    whole = _find_first_element(node_list, whole_local_class)
-    if whole is None:
+    whole_nodes = _find_elements(node_list, whole_local_class)
+    if not whole_nodes:
         return node_list, edge_list
 
-    for part_local_class in part_local_classes:
-        for part in _find_elements(node_list, part_local_class):
-            if not _are_spatially_related(whole.node_id, part.node_id, spatial_index):
-                continue
-            if inverse:
-                edge_list.append(Edge(part.node_id, whole.node_id, P46I_FORMS_PART_OF))
-            else:
-                edge_list.append(Edge(whole.node_id, part.node_id, P46_IS_COMPOSED_OF))
+    existing = {(edge.source, edge.target, edge.predicate) for edge in edge_list}
+    for whole in whole_nodes:
+        for part_local_class in part_local_classes:
+            for part in _find_elements(node_list, part_local_class):
+                if not _are_spatially_related(whole.node_id, part.node_id, spatial_index):
+                    continue
+                if inverse:
+                    item = (part.node_id, whole.node_id, P46I_FORMS_PART_OF)
+                else:
+                    item = (whole.node_id, part.node_id, P46_IS_COMPOSED_OF)
+                if item in existing:
+                    continue
+                edge_list.append(Edge(*item))
+                existing.add(item)
 
     return node_list, edge_list
 
@@ -447,14 +462,20 @@ def add_wall_molding_feature_edges(
 
     node_list = list(nodes)
     edge_list = list(edges)
-    wall = _find_first_element(node_list, "wall")
-    if wall is None:
+    walls = _find_elements(node_list, "wall")
+    if not walls:
         return node_list, edge_list
 
-    for molding in _find_elements(node_list, "molding"):
-        if not _are_spatially_related(wall.node_id, molding.node_id, spatial_index):
-            continue
-        edge_list.append(Edge(wall.node_id, molding.node_id, P56_BEARS_FEATURE))
+    existing = {(edge.source, edge.target, edge.predicate) for edge in edge_list}
+    for wall in walls:
+        for molding in _find_elements(node_list, "molding"):
+            if not _are_spatially_related(wall.node_id, molding.node_id, spatial_index):
+                continue
+            item = (wall.node_id, molding.node_id, P56_BEARS_FEATURE)
+            if item in existing:
+                continue
+            edge_list.append(Edge(*item))
+            existing.add(item)
 
     return node_list, edge_list
 
@@ -803,20 +824,46 @@ def add_contextual_element_relations(
     return node_list, edge_list
 
 
-def build_spatial_relation_index(spatial_relations: Iterable[dict[str, str]]) -> set[tuple[str, str]]:
+def build_spatial_relation_index(
+    spatial_relations: Iterable[dict[str, str]],
+    object_node_ids: dict[str, str] | None = None,
+) -> set[tuple[str, str]]:
     """Build an undirected spatial support index from L1 scenegraph relations.
 
     Expected fields:
-    - source_node_id
-    - target_node_id
-    - relation_type, e.g. near, adjacent, touches, intersects, contains
+    - source_node_id and target_node_id, or
+    - source_object_name and target_object_name when `object_node_ids` is
+      provided.
+    - relation_type, e.g. near, adjacent_to, is_opening_in, is_ornament_of.
 
     CIDOC element-to-element relations should be created only when there is
     spatial support from L1 or when an input relation explicitly marks itself
     as spatially supported.
     """
 
-    supported_relation_types = {"near", "adjacent", "touches", "intersects", "contains", "within", "overlaps"}
+    supported_relation_types = {
+        "near",
+        "adjacent",
+        "adjacent_to",
+        "touches",
+        "intersects",
+        "contains",
+        "within",
+        "overlaps",
+        "above",
+        "below",
+        "supports",
+        "rests_on",
+        "has_part",
+        "part_of",
+        "is_opening_in",
+        "is_ornament_of",
+        "is_attached_to",
+        "is_connected_to",
+        "is_placed_on",
+        "is_rib_of",
+    }
+    object_node_ids = object_node_ids or {}
     index: set[tuple[str, str]] = set()
     for row in spatial_relations:
         normalized = _normalize_row(row)
@@ -825,6 +872,10 @@ def build_spatial_relation_index(spatial_relations: Iterable[dict[str, str]]) ->
             continue
         source = normalized.get("source_node_id", "")
         target = normalized.get("target_node_id", "")
+        if not source:
+            source = object_node_ids.get(normalized.get("source_object_name", ""), "")
+        if not target:
+            target = object_node_ids.get(normalized.get("target_object_name", ""), "")
         if source and target:
             index.add((source, target))
             index.add((target, source))

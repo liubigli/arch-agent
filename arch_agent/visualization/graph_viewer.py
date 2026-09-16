@@ -179,6 +179,27 @@ def _annotation_rows_from_context(ctx) -> list[dict]:
     return rows
 
 
+def _spatial_relation_rows_from_context(ctx) -> list[dict]:
+    rows = []
+    object_names = set(getattr(ctx, "object_annotations", {}))
+    for relationship in getattr(ctx, "relationship_layers", {}).get("L1", []):
+        if len(relationship) < 3:
+            continue
+        source, target, relation_type = relationship[:3]
+        level = relationship[3] if len(relationship) > 3 else ""
+        if source not in object_names or target not in object_names:
+            continue
+        rows.append(
+            {
+                "source_object_name": source,
+                "target_object_name": target,
+                "relation_type": relation_type,
+                "relationship_level": level,
+            }
+        )
+    return rows
+
+
 def _cidoc_scene_graph_to_networkx(scene_graph: CidocSceneGraph) -> nx.DiGraph:
     graph = nx.DiGraph()
     for node in scene_graph.nodes:
@@ -214,7 +235,12 @@ def build_l3_graph_from_context(ctx) -> nx.DiGraph:
         )
 
     scene_id = Path(ctx.params.point_cloud_path).stem
-    cidoc_scene_graph = build_l3_cidoc_scene_graph(scene_id, annotation_rows)
+    spatial_relation_rows = _spatial_relation_rows_from_context(ctx)
+    cidoc_scene_graph = build_l3_cidoc_scene_graph(
+        scene_id,
+        annotation_rows,
+        spatial_relations=spatial_relation_rows,
+    )
     return _cidoc_scene_graph_to_networkx(cidoc_scene_graph)
 
 
