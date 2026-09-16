@@ -1,4 +1,4 @@
-﻿LISTA DI DOMANDE PER OGNI SCENA
+LISTA DI DOMANDE PER OGNI SCENA
 
 Come descriveresti la scena in modo sintetico?
 How many objects are there in the scene?
