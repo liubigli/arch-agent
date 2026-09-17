@@ -96,6 +96,7 @@ def check_groundedness(
     ctx: SceneContext,
     question: str,
     final_answer: str | None,
+    reference_spec: dict | None = None,
 ) -> list[GroundingIssue]:
     if not final_answer:
         return []
@@ -103,10 +104,137 @@ def check_groundedness(
     issues.extend(_check_absent_class_claimed_present(ctx, final_answer))
     issues.extend(_check_invalid_relation_types(final_answer))
     issues.extend(_check_unknown_object_names(ctx, final_answer))
+    if reference_spec is not None:
+        issues.extend(_check_structured_reference(final_answer, reference_spec))
+        return issues
     issues.extend(_check_class_count_number(ctx, question, final_answer))
     issues.extend(_check_per_class_count_number(ctx, question, final_answer))
     issues.extend(_check_total_object_count(ctx, question, final_answer))
     return issues
+
+
+_COUNT_ALIASES = {
+    "arch": ("arch", "archi", "arco", "arches"),
+    "column": ("column", "columns", "colonna", "colonne"),
+    "door_window": ("door_window", "porta", "porte", "finestra", "finestre"),
+    "floor": ("floor", "pavimento", "pavimenti"),
+    "moldings": ("moldings", "molding", "modanature"),
+    "roof": ("roof", "tetto", "tetti"),
+    "stairs": ("stairs", "scala", "scale"),
+    "vault": ("vault", "vaults", "volta", "volte"),
+    "wall": ("wall", "walls", "muro", "muri", "parete", "pareti"),
+}
+
+
+def _check_structured_reference(
+    answer: str,
+    reference_spec: dict,
+) -> list[GroundingIssue]:
+    mode = reference_spec.get("validation_mode")
+    if mode == "manual_assisted":
+        return []
+
+    normalized = _normalize_text(answer)
+    facts = reference_spec.get("resolved_facts") or reference_spec.get("required_facts") or {}
+    issues: list[GroundingIssue] = []
+
+    expected_total = facts.get("object_total")
+    if isinstance(expected_total, int):
+        stated_total = _extract_total_count(normalized)
+        if stated_total is not None and stated_total != expected_total:
+            issues.append(
+                GroundingIssue(
+                    "object_total_count_mismatch",
+                    f"Answer states {stated_total} total objects; expected {expected_total}.",
+                )
+            )
+
+    class_counts = dict(facts.get("class_counts") or {})
+    for key, value in facts.items():
+        if key in _COUNT_ALIASES and isinstance(value, int):
+            class_counts[key] = value
+    for label, expected in class_counts.items():
+        stated = _extract_label_count(normalized, label)
+        if stated is not None and stated != expected:
+            issues.append(
+                GroundingIssue(
+                    "object_count_mismatch",
+                    f"Answer states {stated} objects of class '{label}'; expected {expected}.",
+                )
+            )
+
+    expected_objects = _expected_object_names(facts)
+    if mode in {"set_exact", "per_object_exact"} and expected_objects:
+        mentioned = set(_OBJECT_NAME_RE.findall(normalized))
+        missing = sorted(expected_objects - mentioned)
+        if missing:
+            issues.append(
+                GroundingIssue(
+                    "missing_expected_objects",
+                    f"Answer omits expected objects: {', '.join(missing)}.",
+                )
+            )
+
+    for key, value in facts.items():
+        if not isinstance(value, str):
+            continue
+        if key.endswith("_material") or key.endswith("_function") or key.endswith("_role"):
+            if _normalize_text(value) not in normalized:
+                issues.append(
+                    GroundingIssue(
+                        "missing_expected_fact",
+                        f"Answer does not report expected {key}: {value}.",
+                    )
+                )
+
+    for forbidden in reference_spec.get("forbidden_claims") or []:
+        if isinstance(forbidden, str) and _normalize_text(forbidden) in normalized:
+            issues.append(
+                GroundingIssue(
+                    "forbidden_claim",
+                    f"Answer contains forbidden claim: {forbidden}.",
+                )
+            )
+    return issues
+
+
+def _extract_total_count(text: str) -> int | None:
+    patterns = (
+        r"(?:totale|in tutto|complessivamente|total|in total|overall)[^\d]{0,20}(\d+)",
+        r"(\d+)\s+(?:oggetti|objects|elementi|elements)\s+(?:in totale|totali|total)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _extract_label_count(text: str, label: str) -> int | None:
+    aliases = _COUNT_ALIASES.get(label, (label,))
+    alias_pattern = "|".join(re.escape(alias) for alias in aliases)
+    patterns = (
+        rf"\b(?:{alias_pattern})\b\s*[:=]\s*(\d+)",
+        rf"\b(\d+)\s+(?:oggetti\s+|objects?\s+|istanze\s+|instances?\s+)?(?:{alias_pattern})\b",
+        rf"\b(?:{alias_pattern})\b[^\d\n]{{0,24}}\b(\d+)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _expected_object_names(facts: dict) -> set[str]:
+    names: set[str] = set()
+    for key, value in facts.items():
+        if key == "objects" and isinstance(value, list):
+            names.update(str(item) for item in value)
+        elif key.endswith("_objects") and isinstance(value, list):
+            names.update(str(item) for item in value)
+        elif key in {"column", "wall", "floor", "vault", "door_window", "moldings"} and isinstance(value, list):
+            names.update(str(item) for item in value)
+    return names
 
 
 def _present_classes(ctx: SceneContext) -> set[str]:

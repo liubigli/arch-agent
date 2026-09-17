@@ -1,0 +1,656 @@
+{
+  "status": "approved",
+  "scene": "scena4_VAL",
+  "benchmark_run_basis": "20260916",
+  "questions_expected": 60,
+  "notes": [
+    "Approved for benchmark validator use on 2026-09-17.",
+    "Exact checks apply to counts, identities, materials, roles and explicit relationships.",
+    "Interpretive questions use manual_assisted validation.",
+    "A class mentioned with count 0 or explicit negation must not be treated as present.",
+    "Class counts and total object count are separate facts."
+  ],
+  "scene_facts": {
+    "object_total": 33,
+    "relationship_total": 262,
+    "class_counts": {
+      "arch": 0,
+      "column": 6,
+      "moldings": 6,
+      "floor": 1,
+      "door_window": 8,
+      "wall": 11,
+      "stairs": 0,
+      "vault": 1,
+      "roof": 0,
+      "other": 0
+    },
+    "present_classes": [
+      "column",
+      "door_window",
+      "floor",
+      "moldings",
+      "vault",
+      "wall"
+    ],
+    "absent_classes": [
+      "arch",
+      "other",
+      "roof",
+      "stairs"
+    ],
+    "objects": {
+      "column": ["column_0", "column_1", "column_2", "column_3", "column_4", "column_5"],
+      "door_window": ["door_window_0", "door_window_1", "door_window_2", "door_window_3", "door_window_4", "door_window_5", "door_window_6", "door_window_7"],
+      "floor": ["floor_0"],
+      "moldings": ["moldings_0", "moldings_1", "moldings_2", "moldings_3", "moldings_4", "moldings_5"],
+      "vault": ["vault_0"],
+      "wall": ["wall_0", "wall_1", "wall_2", "wall_3", "wall_4", "wall_5", "wall_6", "wall_7", "wall_8", "wall_9", "wall_10"]
+    },
+    "roles": {
+      "column": "structural",
+      "door_window": "opening",
+      "floor": "support_surface",
+      "moldings": "ornamental",
+      "vault": "structural",
+      "wall": "structural"
+    },
+    "annotations": {
+      "column": {
+        "matched_objects": ["column_0", "column_1", "column_2", "column_3", "column_4", "column_5"],
+        "material": "Breccia policroma",
+        "typology": "Colonna dorica",
+        "function": "Sostegno delle volte"
+      },
+      "wall": {
+        "matched_objects": ["wall_0", "wall_1", "wall_3", "wall_4", "wall_5", "wall_6", "wall_7", "wall_8", "wall_9", "wall_10"],
+        "unmatched_objects": ["wall_2"],
+        "material": "Muratura laterizia intonacata",
+        "typology": "Parete perimetrale portante",
+        "function": "Delimitazione, sostegno delle volte e trasferimento dei carichi"
+      },
+      "floor": {
+        "matched_objects": ["floor_0"],
+        "material": "Ciottoli in pietra ",
+        "typology": "Pavimento continuo",
+        "function": "Piano di calpestio"
+      },
+      "vault": {
+        "matched_objects": ["vault_0"],
+        "material": "Muratura intonacata",
+        "typology": "Volta a crociera",
+        "function": "Copertura e trasferimento dei carichi"
+      },
+      "moldings": {
+        "matched_objects": ["moldings_0", "moldings_1", "moldings_2", "moldings_3", "moldings_4", "moldings_5"],
+        "materials_by_object": {
+          "moldings_0": "Stucco o intonaco sagomato",
+          "moldings_1": "Muratura intonacata con elementi modanati in stucco",
+          "moldings_2": "Stucco o intonaco sagomato",
+          "moldings_3": "Stucco o intonaco sagomato",
+          "moldings_4": "Muratura intonacata con elementi modanati in stucco",
+          "moldings_5": "Stucco o intonaco sagomato"
+        }
+      },
+      "door_window": {
+        "wood_objects": ["door_window_3", "door_window_7"],
+        "wood_material": "Legno",
+        "wood_typology": "Porta d’ingresso a due battenti",
+        "wood_function": "Accesso e separazione tra ambienti",
+        "wood_centroids": {
+          "door_window_3": [635.53, 811.65, 230.11],
+          "door_window_7": [630.87, 801.82, 230.16]
+        },
+        "glass_metal_objects": ["door_window_0", "door_window_1", "door_window_2", "door_window_4", "door_window_5", "door_window_6"],
+        "glass_metal_material": "Vetro e metallo"
+      }
+    },
+    "required_relationships": [
+      {"source_class": "floor", "relationship": "supports", "target_class": "column", "instance_count": 6},
+      {"source_class": "column", "relationship": "rests_on", "target_class": "floor", "instance_count": 6},
+      {"source_class": "column", "relationship": "supports", "target_class": "vault", "instance_count": 6},
+      {"source_class": "vault", "relationship": "rests_on", "target_class": "column", "instance_count": 6}
+    ],
+    "impossible_relationships_due_to_absence": [
+      {"involving_class": "roof"},
+      {"involving_class": "arch"},
+      {"involving_class": "stairs"}
+    ]
+  },
+  "validation_policy": {
+    "negation_markers_it": ["non è presente", "non e presente", "non ci sono", "nessuno", "nessuna", "assente", "0 oggetti", "0 istanze"],
+    "negation_markers_en": ["is not present", "are not present", "no objects", "none", "absent", "0 objects", "0 instances"],
+    "total_markers_it": ["totale", "in tutto", "complessivamente"],
+    "total_markers_en": ["total", "in total", "overall"],
+    "class_name_requires_semantic_context": true,
+    "ordinary_word_other_is_not_class_other": true,
+    "geometric_relations_do_not_imply_support": true,
+    "unsupported_material_inference_is_error": true,
+    "numeric_tolerance_coordinates_m": 0.02,
+    "allowed_result_states": [
+      "grounded",
+      "partially_grounded",
+      "unsupported",
+      "contradicted",
+      "unanswered",
+      "tool_error",
+      "unverified_no_tool",
+      "validator_uncertain"
+    ]
+  },
+  "references": [
+    {
+      "question_id": 1,
+      "intent": "scene_summary",
+      "validation_mode": "semantic",
+      "preferred_tools": ["get_scene_statistics"],
+      "acceptable_tools": ["list_objects", "list_semantic_labels", "count_objects_by_class"],
+      "required_facts": {"object_total": 33, "present_classes": ["column", "door_window", "floor", "moldings", "vault", "wall"]},
+      "forbidden_claims": ["invented_class", "invented_object", "area_reported_as_volume", "volume_reported_as_area"]
+    },
+    {
+      "question_id": 2,
+      "intent": "object_total_count",
+      "validation_mode": "exact",
+      "preferred_tools": ["count_objects"],
+      "acceptable_tools": ["get_scene_statistics", "count_objects_by_class", "list_objects"],
+      "required_facts": {"object_total": 33}
+    },
+    {
+      "question_id": 3,
+      "intent": "present_classes",
+      "validation_mode": "set_exact",
+      "preferred_tools": ["list_semantic_labels"],
+      "acceptable_tools": ["count_objects_by_class", "get_scene_statistics"],
+      "required_facts": {"present_classes": ["column", "door_window", "floor", "moldings", "vault", "wall"]}
+    },
+    {
+      "question_id": 4,
+      "intent": "absent_classes",
+      "validation_mode": "set_exact",
+      "preferred_tools": ["list_semantic_labels"],
+      "acceptable_tools": ["count_objects_by_class", "get_scene_statistics"],
+      "required_facts": {"absent_classes": ["arch", "other", "roof", "stairs"]},
+      "negated_class_mentions_are_valid": true
+    },
+    {
+      "question_id": 5,
+      "intent": "full_inventory_with_counts",
+      "validation_mode": "set_and_counts_exact",
+      "preferred_tools": ["list_objects", "count_objects_by_class"],
+      "acceptable_tools": ["get_scene_statistics"],
+      "required_tool_args": {"semantic_labels": null},
+      "required_facts_from": ["scene_facts.object_total", "scene_facts.class_counts", "scene_facts.objects"]
+    },
+    {
+      "question_id": 6,
+      "intent": "class_distribution",
+      "validation_mode": "counts_exact",
+      "preferred_tools": ["count_objects_by_class"],
+      "acceptable_tools": ["list_semantic_labels", "get_scene_statistics"],
+      "required_tool_args": {"semantic_labels": null},
+      "required_facts_from": ["scene_facts.class_counts"]
+    },
+    {
+      "question_id": 7,
+      "intent": "multi_class_count",
+      "validation_mode": "counts_exact",
+      "preferred_tools": ["count_objects_by_class"],
+      "acceptable_tools": ["list_semantic_labels", "list_objects"],
+      "required_tool_args": {"semantic_labels": ["column", "wall", "floor", "roof", "vault", "arch", "stairs", "door_window", "moldings"]},
+      "required_facts": {"class_counts": {"column": 6, "wall": 11, "floor": 1, "roof": 0, "vault": 1, "arch": 0, "stairs": 0, "door_window": 8, "moldings": 6}}
+    },
+    {
+      "question_id": 8,
+      "intent": "main_elements",
+      "validation_mode": "semantic",
+      "preferred_tools": ["list_objects"],
+      "acceptable_tools": ["get_scene_statistics", "list_semantic_labels", "count_objects_by_class"],
+      "required_facts": {"must_only_use_present_classes": true},
+      "manual_review": "Assess whether the answer identifies a representative subset without inventing hierarchy."
+    },
+    {
+      "question_id": 9,
+      "intent": "quantity_of_elements",
+      "validation_mode": "semantic",
+      "preferred_tools": ["count_objects_by_class"],
+      "acceptable_tools": ["get_scene_statistics", "list_objects"],
+      "required_facts": {"dominant_by_instance_count": "wall", "wall_count": 11},
+      "manual_review": "Accept a different dominance criterion only when explicitly named and supported by tool evidence."
+    },
+    {
+      "question_id": 10,
+      "intent": "high_confidence_elements",
+      "validation_mode": "manual_assisted",
+      "preferred_tools": ["list_objects"],
+      "acceptable_tools": ["get_scene_statistics", "list_semantic_labels", "count_objects_by_class"],
+      "required_facts": {"must_only_use_present_classes": true}
+    },
+    {
+      "question_id": 11,
+      "intent": "interior_exterior_classification",
+      "validation_mode": "manual_assisted",
+      "preferred_tools": ["get_scene_statistics"],
+      "acceptable_tools": ["list_objects", "list_semantic_labels", "find_relationships"],
+      "acceptable_conclusions": ["interior", "covered_or_semi_interior"],
+      "required_caveat": "This is an inference from floor, walls and vault, not a directly encoded class."
+    },
+    {
+      "question_id": 12,
+      "intent": "observation_inference_separation",
+      "validation_mode": "manual_assisted",
+      "preferred_tools": ["get_scene_statistics"],
+      "acceptable_tools": ["list_objects", "list_semantic_labels", "list_relationships"],
+      "required_facts": {"direct": ["object inventory", "class counts", "computed relationships", "CSV fields"], "inferred": ["scene typology", "architectural interpretation", "mechanical behaviour beyond explicit evidence"]}
+    },
+    {
+      "question_id": 13,
+      "intent": "confidence_assessment",
+      "validation_mode": "manual_assisted",
+      "preferred_tools": ["get_scene_statistics"],
+      "acceptable_tools": ["list_objects", "list_semantic_labels"],
+      "required_caveat": "Confidence must be tied to segmentation, CSV matching or explicit relationships."
+    },
+    {
+      "question_id": 14,
+      "intent": "class_count",
+      "validation_mode": "exact",
+      "preferred_tools": ["count_objects"],
+      "acceptable_tools": ["count_objects_by_class", "list_objects"],
+      "required_tool_args": {"semantic_labels": ["column"]},
+      "required_facts": {"column": 6}
+    },
+    {
+      "question_id": 15,
+      "intent": "class_object_list",
+      "validation_mode": "set_exact",
+      "preferred_tools": ["list_objects"],
+      "acceptable_tools": ["get_object_info", "list_semantic_labels"],
+      "required_tool_args": {"semantic_labels": ["column"]},
+      "required_facts_from": ["scene_facts.objects.column"]
+    },
+    {
+      "question_id": 16,
+      "intent": "class_material",
+      "validation_mode": "exact",
+      "preferred_tools": ["count_objects", "count_objects_by_class", "get_object_annotation", "get_object_semantic_details"],
+      "acceptable_tools": ["list_semantic_labels", "get_object_info"],
+      "required_facts": {"column_material": "Breccia policroma"},
+      "forbidden_claims": ["marmo", "material inferred without CSV tool"]
+    },
+    {
+      "question_id": 17,
+      "intent": "class_function",
+      "validation_mode": "semantic",
+      "preferred_tools": ["get_object_annotation", "get_object_semantic_details"],
+      "acceptable_tools": ["get_object_info"],
+      "required_facts": {"column_function": "Sostegno delle volte"}
+    },
+    {
+      "question_id": 18,
+      "intent": "class_role",
+      "validation_mode": "exact",
+      "preferred_tools": ["get_object_info"],
+      "acceptable_tools": ["get_object_semantic_details", "list_semantic_labels"],
+      "required_facts": {"column_role": "structural"},
+      "required_caveat": "Role classification is not instance-level mechanical verification."
+    },
+    {
+      "question_id": 19,
+      "intent": "supported_targets",
+      "validation_mode": "relationship_exact",
+      "preferred_tools": ["find_relationships"],
+      "acceptable_tools": ["list_relationships", "get_object_annotation"],
+      "required_tool_args": {"semantic_labels": ["column"]},
+      "required_facts": {"relationship": {"source_class": "column", "type": "supports", "target_class": "vault", "instance_count": 6}}
+    },
+    {
+      "question_id": 20,
+      "intent": "class_relationship_summary",
+      "validation_mode": "tool_output_grounded",
+      "preferred_tools": ["find_relationships"],
+      "acceptable_tools": ["list_relationships"],
+      "required_tool_args": {"semantic_labels": ["column"]},
+      "required_facts": {"must_include": ["column supports vault", "column rests_on floor"], "additional_relations_must_exist_in_tool_output": true}
+    },
+    {
+      "question_id": 21,
+      "intent": "class_count",
+      "validation_mode": "exact",
+      "preferred_tools": ["count_objects"],
+      "acceptable_tools": ["count_objects_by_class", "list_objects"],
+      "required_facts": {"wall": 11}
+    },
+    {
+      "question_id": 22,
+      "intent": "class_object_list",
+      "validation_mode": "set_exact",
+      "preferred_tools": ["list_objects"],
+      "acceptable_tools": ["get_object_info", "list_semantic_labels"],
+      "required_tool_args": {"semantic_labels": ["wall"]},
+      "required_facts_from": ["scene_facts.objects.wall"]
+    },
+    {
+      "question_id": 23,
+      "intent": "class_count",
+      "validation_mode": "set_and_value_exact",
+      "preferred_tools": ["count_objects_by_class", "get_object_annotation"],
+      "acceptable_tools": ["list_semantic_labels", "get_object_semantic_details"],
+      "required_facts": {"material": "Muratura laterizia intonacata", "annotated_count": 10, "unannotated_objects": ["wall_2"]}
+    },
+    {
+      "question_id": 24,
+      "intent": "class_count_whith_function",
+      "validation_mode": "set_and_value_exact",
+      "preferred_tools": ["count_objects_by_class", "list_objects","get_scene_statistics"],
+      "acceptable_tools": ["count_objects", "get_object_annotation", "get_object_semantic_details"],
+      "required_facts": {"function": "Delimitazione, sostegno delle volte e trasferimento dei carichi", "annotated_count": 10, "unannotated_objects": ["wall_2"]}
+    },
+    {
+      "question_id": 25,
+      "intent": "class_role",
+      "validation_mode": "exact",
+      "preferred_tools": ["get_object_info"],
+      "acceptable_tools": ["list_semantic_labels"],
+      "required_facts": {"wall_role": "structural"}
+    },
+    {
+      "question_id": 26,
+      "intent": "class_relationship_summary",
+      "validation_mode": "tool_output_grounded",
+      "preferred_tools": ["find_relationships", "list_relationships"],
+      "acceptable_tools": ["list_relationships", "get_object_info", "get_object_annotation", "get_object_semantic_details"],
+      "required_tool_args": {"semantic_labels": ["wall"]},
+      "required_facts": {"every_reported_relation_must_exist_in_tool_output": true},
+      "lexical_note": "The phrase 'other walls' does not refer to semantic class other."
+    },
+    {
+      "question_id": 27,
+      "intent": "class_count",
+      "validation_mode": "exact",
+      "preferred_tools": ["count_objects"],
+      "acceptable_tools": ["count_objects_by_class", "list_objects"],
+      "required_facts": {"floor": 1}
+    },
+    {
+      "question_id": 28,
+      "intent": "class_object_list",
+      "validation_mode": "set_exact",
+      "preferred_tools": ["list_objects"],
+      "acceptable_tools": ["get_object_info", "list_semantic_labels"],
+      "required_facts": {"floor_objects": ["floor_0"]}
+    },
+    {
+      "question_id": 29,
+      "intent": "class_material",
+      "validation_mode": "exact",
+      "preferred_tools": ["count_objects", "count_objects_by_class"],
+      "acceptable_tools": ["list_semantic_labels"],
+      "required_facts": {"floor_material": "Graniglia o seminato"}
+    },
+    {
+      "question_id": 30,
+      "intent": "class_function",
+      "validation_mode": "semantic",
+      "preferred_tools": ["get_object_annotation", "get_object_semantic_details"],
+      "acceptable_tools": ["get_object_info"],
+      "required_facts": {"floor_function": "Piano di calpestio"}
+    },
+    {
+      "question_id": 31,
+      "intent": "class_role",
+      "validation_mode": "exact",
+      "preferred_tools": ["get_object_info"],
+      "acceptable_tools": ["list_semantic_labels"],
+      "required_facts": {"floor_role": "support_surface"}
+    },
+    {
+      "question_id": 32,
+      "intent": "class_relationship_summary",
+      "validation_mode": "tool_output_grounded",
+      "preferred_tools": ["find_relationships", "list_relationships"],
+      "acceptable_tools": ["get_object_info", "find_relationships", "list_relationships", "get_object_annotation"],
+      "required_tool_args": {"semantic_labels": ["floor"]},
+      "required_facts": {"must_include": ["floor supports columns"], "additional_relations_must_exist_in_tool_output": true}
+    },
+    {
+      "question_id": 33,
+      "intent": "class_count",
+      "validation_mode": "exact",
+      "preferred_tools": ["count_objects"],
+      "acceptable_tools": ["count_objects_by_class", "list_objects"],
+      "required_facts": {"vault": 1},
+      "language_note": "Italian 'volte' means architectural vaults in this context."
+    },
+    {
+      "question_id": 34,
+      "intent": "class_object_list",
+      "validation_mode": "set_exact",
+      "preferred_tools": ["list_objects"],
+      "acceptable_tools": ["get_object_info", "list_semantic_labels"],
+      "required_facts": {"vault_objects": ["vault_0"]}
+    },
+    {
+      "question_id": 35,
+      "intent": "class_material",
+      "validation_mode": "exact",
+      "preferred_tools": ["count_objects", "count_objects_by_class", "list object"],
+      "acceptable_tools": ["list_semantic_labels"],
+      "required_facts": {"vault_material": "Muratura intonacata"}
+    },
+    {
+      "question_id": 36,
+      "intent": "class_function",
+      "validation_mode": "semantic",
+      "preferred_tools": ["get_object_annotation", "get_object_semantic_details"],
+      "acceptable_tools": ["get_object_info"],
+      "required_facts": {"vault_function": "Copertura e trasferimento dei carichi"}
+    },
+    {
+      "question_id": 37,
+      "intent": "class_role",
+      "validation_mode": "exact",
+      "preferred_tools": ["get_object_info"],
+      "acceptable_tools": ["list_semantic_labels"],
+      "required_facts": {"vault_role": "structural"}
+    },
+    {
+      "question_id": 38,
+      "intent": "class_relationship_summary",
+      "validation_mode": "tool_output_grounded",
+      "preferred_tools": ["get_object_info", "get_object_semantic_details", "get_object_annotation"],
+      "acceptable_tools": ["get_object_info", "get_object_annotation", "get_object_semantic_details", "find_relationships", "list_relationships"],
+      "required_tool_args": {"semantic_labels": ["vault"]},
+      "required_facts": {"must_include": ["vault rests_on columns"], "additional_relations_must_exist_in_tool_output": true}
+    },
+    {
+      "question_id": 39,
+      "intent": "absent_class_count",
+      "validation_mode": "exact",
+      "preferred_tools": ["count_objects"],
+      "acceptable_tools": ["count_objects_by_class", "list_semantic_labels"],
+      "required_facts": {"roof": 0}
+    },
+    {
+      "question_id": 40,
+      "intent": "absent_class_relationships",
+      "validation_mode": "exact_absence",
+      "preferred_tools": ["count_objects", "find_relationships", "list_relationships"],
+      "acceptable_tools": ["list_semantic_labels", "count_objects_by_class"],
+      "required_facts": {"roof": 0, "roof_relationships": 0}
+    },
+    {
+      "question_id": 41,
+      "intent": "relationship_exists_with_absent_class",
+      "validation_mode": "exact_absence",
+      "preferred_tools": ["find_relationships"],
+      "acceptable_tools": ["count_objects", "count_objects_by_class", "list_semantic_labels"],
+      "required_tool_args": {"semantic_labels": ["column", "roof"]},
+      "required_facts": {"answer": false, "reason": "roof class absent"}
+    },
+    {
+      "question_id": 42,
+      "intent": "relationship_exists_with_absent_class",
+      "validation_mode": "exact_absence",
+      "preferred_tools": ["find_relationships"],
+      "acceptable_tools": ["count_objects", "count_objects_by_class", "list_semantic_labels"],
+      "required_tool_args": {"semantic_labels": ["roof", "column"]},
+      "required_facts": {"answer": false, "reason": "roof class absent"}
+    },
+    {
+      "question_id": 43,
+      "intent": "relationship_exists_with_absent_class",
+      "validation_mode": "exact_absence",
+      "preferred_tools": ["find_relationships"],
+      "acceptable_tools": ["count_objects", "count_objects_by_class", "list_semantic_labels"],
+      "required_tool_args": {"semantic_labels": ["roof", "wall"]},
+      "required_facts": {"answer": false, "reason": "roof class absent"}
+    },
+    {
+      "question_id": 44,
+      "intent": "absent_class_function",
+      "validation_mode": "exact_absence",
+      "preferred_tools": ["count_objects", "count_objects_by_class"],
+      "acceptable_tools": ["list_semantic_labels", "get_object_annotation"],
+      "required_facts": {"answer": false, "roof": 0},
+      "forbidden_claims": ["substitute vault for roof"]
+    },
+    {
+      "question_id": 45,
+      "intent": "absent_class_count",
+      "validation_mode": "exact",
+      "preferred_tools": ["count_objects"],
+      "acceptable_tools": ["count_objects_by_class", "list_semantic_labels"],
+      "required_facts": {"arch": 0},
+      "forbidden_claims": ["count door_window objects with arched typology as arch objects"]
+    },
+    {
+      "question_id": 46,
+      "intent": "absent_class_relationships",
+      "validation_mode": "exact_absence",
+      "preferred_tools": ["count_objects", "find_relationships", "list_relationships"],
+      "acceptable_tools": ["list_semantic_labels", "count_objects_by_class"],
+      "required_facts": {"arch": 0, "arch_relationships": 0}
+    },
+    {
+      "question_id": 47,
+      "intent": "relationship_exists_with_absent_class",
+      "validation_mode": "exact_absence",
+      "preferred_tools": ["find_relationships"],
+      "acceptable_tools": ["count_objects", "list_semantic_labels"],
+      "required_tool_args": {"semantic_labels": ["vault", "arch"]},
+      "required_facts": {"answer": false, "reason": "arch class absent"}
+    },
+    {
+      "question_id": 48,
+      "intent": "relationship_exists_with_absent_class",
+      "validation_mode": "exact_absence",
+      "preferred_tools": ["find_relationships"],
+      "acceptable_tools": ["count_objects", "list_semantic_labels"],
+      "required_tool_args": {"semantic_labels": ["arch", "column"]},
+      "required_facts": {"answer": false, "reason": "arch class absent"}
+    },
+    {
+      "question_id": 49,
+      "intent": "relationship_exists_with_absent_class",
+      "validation_mode": "exact_absence",
+      "preferred_tools": ["find_relationships", "list_semantic_labels"],
+      "acceptable_tools": ["count_objects"],
+      "required_tool_args": {"semantic_labels": ["arch", "vault"]},
+      "required_facts": {"answer": false, "reason": "arch class absent"},
+      "forbidden_claims": ["invent arch_0"]
+    },
+    {
+      "question_id": 50,
+      "intent": "absent_class_count",
+      "validation_mode": "exact",
+      "preferred_tools": ["count_objects"],
+      "acceptable_tools": ["count_objects_by_class", "list_semantic_labels"],
+      "required_facts": {"stairs": 0}
+    },
+    {
+      "question_id": 51,
+      "intent": "absent_class_relationships",
+      "validation_mode": "exact_absence",
+      "preferred_tools": ["find_relationships", "count_objects"],
+      "acceptable_tools": ["list_relationships", "list_semantic_labels"],
+      "required_facts": {"stairs": 0, "stairs_relationships": 0}
+    },
+    {
+      "question_id": 52,
+      "intent": "absent_class_function",
+      "validation_mode": "exact_absence",
+      "preferred_tools": ["count_objects", "list_semantic_labels"],
+      "acceptable_tools": ["find_relationships"],
+      "required_facts": {"answer": "not_observable", "reason": "stairs class absent"}
+    },
+    {
+      "question_id": 53,
+      "intent": "class_count",
+      "validation_mode": "exact",
+      "preferred_tools": ["count_objects"],
+      "acceptable_tools": ["count_objects_by_class", "list_objects"],
+      "required_facts": {"door_window": 8}
+    },
+    {
+      "question_id": 54,
+      "intent": "class_object_list",
+      "validation_mode": "set_exact",
+      "preferred_tools": ["list_objects"],
+      "acceptable_tools": ["get_object_info", "list_semantic_labels"],
+      "required_tool_args": {"semantic_labels": ["door_window"]},
+      "required_facts_from": ["scene_facts.objects.door_window"]
+    },
+    {
+      "question_id": 55,
+      "intent": "per_object_semantic_details",
+      "validation_mode": "per_object_exact",
+      "preferred_tools": ["get_object_semantic_details"],
+      "acceptable_tools": ["get_object_annotation"],
+      "required_tool_args": {"semantic_labels": ["door_window"]},
+      "required_facts": {"objects_required": 8, "fields_required": ["material", "typology", "function"], "values_must_match_tool_output": true}
+    },
+    {
+      "question_id": 56,
+      "intent": "material_filtered_presence",
+      "validation_mode": "set_exact",
+      "preferred_tools": ["find_objects_by_material"],
+      "acceptable_tools": ["get_object_annotation", "get_object_semantic_details"],
+      "required_tool_args": {"semantic_label": "door_window", "material_aliases": ["wood", "wooden", "legno"]},
+      "required_facts": {"answer": true, "count": 2, "objects": ["door_window_3", "door_window_7"]}
+    },
+    {
+      "question_id": 57,
+      "intent": "material_filtered_positions",
+      "validation_mode": "coordinates",
+      "preferred_tools": ["find_objects_by_material", "get_object_info"],
+      "acceptable_tools": ["get_object_semantic_details"],
+      "required_facts": {"objects": ["door_window_3", "door_window_7"], "centroids": {"door_window_3": [635.53, 811.65, 230.11], "door_window_7": [630.87, 801.82, 230.16]}},
+      "coordinate_tolerance_m": 0.02
+    },
+    {
+      "question_id": 58,
+      "intent": "class_count",
+      "validation_mode": "exact",
+      "preferred_tools": ["count_objects"],
+      "acceptable_tools": ["count_objects_by_class", "list_objects"],
+      "required_facts": {"moldings": 6}
+    },
+    {
+      "question_id": 59,
+      "intent": "class_material_per_object",
+      "validation_mode": "per_object_exact",
+      "preferred_tools": ["get_object_semantic_details", "get_object_annotation"],
+      "acceptable_tools": [],
+      "required_facts_from": ["scene_facts.annotations.moldings.materials_by_object"]
+    },
+    {
+      "question_id": 60,
+      "intent": "class_role",
+      "validation_mode": "exact",
+      "preferred_tools": ["get_object_info"],
+      "acceptable_tools": ["get_object_semantic_details", "get_object_annotation"],
+      "required_facts": {"moldings_role": "ornamental", "structural": false}
+    }
+  ]
+}

@@ -30,6 +30,7 @@ from ..agent import (
 )
 from ..pipeline.pipeline import SceneContext
 from .grounding_checks import GroundingIssue, check_groundedness
+from .structured_reference import reference_for_question
 
 REVIEW_RELIABILITY_FILTER = {
     "ungrounded",
@@ -200,11 +201,19 @@ def _set_language_check(result: BenchmarkResult) -> None:
     result.language_issue = f"Expected final answer in {language_name}."
 
 
-def _set_tool_selection_check(result: BenchmarkResult, ctx: SceneContext) -> None:
-    expected, acceptable = _expected_tools_for_question(
-        result.question,
-        present_labels={obj["semantic_label"] for obj in ctx.objects.values()},
-    )
+def _set_tool_selection_check(
+    result: BenchmarkResult,
+    ctx: SceneContext,
+    reference_spec: dict | None = None,
+) -> None:
+    if reference_spec is not None:
+        expected = list(reference_spec.get("preferred_tools") or [])
+        acceptable = list(reference_spec.get("acceptable_tools") or [])
+    else:
+        expected, acceptable = _expected_tools_for_question(
+            result.question,
+            present_labels={obj["semantic_label"] for obj in ctx.objects.values()},
+        )
     result.expected_tools = expected
     result.acceptable_tools = acceptable
 
@@ -326,16 +335,16 @@ def _expected_tools_for_question(
     if any(term in text for term in ("nearest", "closest", "vicino", "vicini")):
         return ["find_relationships"], ["list_relationships"]
 
-    class_presence_terms = (
-        "classi semantiche", "semantic classes", "presenti", "present",
-        "assenti", "absent",
+    count_terms = (
+        "quanti",
+        "quante",
+        "quantita",
+        "numero",
+        "how many",
+        "quantity",
+        "amount",
+        "count",
     )
-    if any(term in text for term in class_presence_terms) and not any(
-        term in text for term in ("quanti", "how many", "count", "numero")
-    ):
-        return ["list_semantic_labels"], ["count_objects_by_class", "get_scene_statistics"]
-
-    count_terms = ("quanti", "quante", "how many", "count", "numero")
     if any(term in text for term in count_terms):
         if _looks_like_multi_class_count(text, labels):
             return ["count_objects_by_class"], [
@@ -352,13 +361,40 @@ def _expected_tools_for_question(
         ]
 
     object_list_terms = (
-        "quali oggetti", "elenca", "lista", "list objects", "which objects",
-        "object inventory", "inventario",
+        "quali oggetti",
+        "quali elementi",
+        "elenca",
+        "lista",
+        "list objects",
+        "list elements",
+        "which objects",
+        "which elements",
+        "object inventory",
+        "element inventory",
+        "inventario",
     )
     if any(term in text for term in object_list_terms):
-        if absent_labels:
-            return ["count_objects"], ["list_semantic_labels", "count_objects_by_class"]
-        return ["list_objects"], ["get_object_info", "count_objects_by_class"]
+        return ["list_objects"], [
+            "get_object_info",
+            "count_objects_by_class",
+            "list_semantic_labels",
+        ]
+
+    class_presence_terms = (
+        "classi semantiche",
+        "semantic classes",
+        "quali classi",
+        "which classes",
+        "classi presenti",
+        "classes present",
+        "classi assenti",
+        "classes absent",
+    )
+    if any(term in text for term in class_presence_terms):
+        return ["list_semantic_labels"], [
+            "count_objects_by_class",
+            "get_scene_statistics",
+        ]
 
     geometry_terms = (
         "centroid", "centroide", "coordinate", "coordinates",
@@ -490,17 +526,30 @@ def run_benchmark(
 def evaluate_benchmark(
     raw_results: list[BenchmarkResult],
     ctx: SceneContext,
+    structured_reference: dict | None = None,
 ) -> tuple[list[BenchmarkResult], dict]:
     evaluation_results: list[BenchmarkResult] = []
     for raw_result in raw_results:
         result = deepcopy(raw_result)
-        result.reference_answer = _try_answer_deterministic(ctx, result.question)
+        reference_spec = reference_for_question(
+            structured_reference,
+            result.question_id,
+        )
+        if reference_spec is not None:
+            result.reference_answer = json.dumps(
+                reference_spec.get("resolved_facts") or {},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        else:
+            result.reference_answer = _try_answer_deterministic(ctx, result.question)
         _set_language_check(result)
-        _set_tool_selection_check(result, ctx)
+        _set_tool_selection_check(result, ctx, reference_spec)
         result.grounding_issues = check_groundedness(
             ctx,
             result.question,
             result.final_answer,
+            reference_spec=reference_spec,
         )
         evaluation_results.append(result)
     return evaluation_results, build_evaluation_summary(evaluation_results)
@@ -783,7 +832,8 @@ def _write_csv_rows(
 ) -> None:
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", newline="", encoding="utf-8") as handle:
+    # UTF-8 BOM lets Excel on Windows detect accented text correctly.
+    with output_path.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for record in records:
@@ -826,7 +876,7 @@ def write_csv_report(results: list[BenchmarkResult], path: str | Path) -> None:
         "latency_s",
         "error",
     ]
-    with Path(path).open("w", newline="", encoding="utf-8") as handle:
+    with Path(path).open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for result in results:

@@ -29,13 +29,13 @@ What relationships involve the wall class?
 Quanti pavimenti ci sono nella scena?
 Quale oggetto floor è presente nella scena?
 Di che materiale è il pavimento?
-Che funzione ha il floor?
+Che funzione ha l'elemento di classe floor?
 Il pavimento è un elemento strutturale o una superficie di appoggio?
 What relationships involve the floor class?
-Quante volte ci sono nella scena?
+Quanti elementi definiti come volta ci sono nella scena?
 Quale oggetto vault è presente nella scena?
 Di che materiale è la volta?
-Che funzione ha la vault?
+Che funzione ha l'elemento vault?
 La volta è un elemento strutturale?
 What relationships involve the vault class?
 Quanti tetti ci sono nella scena?

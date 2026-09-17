@@ -24,6 +24,7 @@ from arch_agent.benchmark.harness import (
     write_manual_review_report,
     write_raw_report,
 )
+from arch_agent.benchmark.structured_reference import load_structured_reference
 from main import DEFAULT_POINT_CLOUD_PATH, parse_think_override, resolve_local_path, select_point_cloud
 
 EXPECTED_QUESTION_COUNT = 60
@@ -77,6 +78,14 @@ def parse_args() -> argparse.Namespace:
     group2.add_argument(
         "--questions-file", default="benchmark/domande_per_scene.txt",
         help="Plain-text file with one question per line (lines must end with '?').",
+    )
+    group2.add_argument(
+        "--reference-file",
+        default=None,
+        help=(
+            "Approved structured reference JSON. When omitted, the runner "
+            "uses benchmark/references/<scene>_reference_draft.json if present."
+        ),
     )
     group2.add_argument(
         "--limit", type=int, default=0,
@@ -236,6 +245,20 @@ def main() -> None:
 
     output_dir = _output_dir_from_args(args)
     scene_name = _sanitize_for_path(Path(point_cloud_path).stem)
+    if args.reference_file:
+        reference_path = resolve_local_path(args.reference_file)
+    else:
+        candidate = Path("benchmark/references") / f"{scene_name}_reference_draft.json"
+        reference_path = candidate if candidate.exists() else None
+    structured_reference = (
+        load_structured_reference(reference_path)
+        if reference_path is not None
+        else None
+    )
+    if structured_reference is not None:
+        print(f"Structured reference: {reference_path}")
+    else:
+        print("Structured reference: none (legacy validation rules)")
     date = _date_for_path()
     for model in models:
         print(f"\nBenchmarking model: {model}")
@@ -248,6 +271,12 @@ def main() -> None:
             "date": date,
             "test_n": test_n,
             "questions_loaded": EXPECTED_QUESTION_COUNT,
+            "reference_file": str(reference_path) if reference_path else None,
+            "reference_status": (
+                structured_reference.get("status")
+                if structured_reference is not None
+                else None
+            ),
         }
 
         raw_records = run_benchmark(
@@ -258,7 +287,11 @@ def main() -> None:
             think_override=think_override,
             on_result=on_result,
         )
-        evaluation_records, summary = evaluate_benchmark(raw_records, ctx)
+        evaluation_records, summary = evaluate_benchmark(
+            raw_records,
+            ctx,
+            structured_reference=structured_reference,
+        )
         manual_records = manual_review_records(evaluation_records)
 
         paths = _report_paths(output_dir, scene_name, model_name, date, test_n)
