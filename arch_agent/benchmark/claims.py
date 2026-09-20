@@ -159,7 +159,7 @@ def extract(answer: str | None, policy: dict | None = None) -> Claims:
         classes_affirmed=affirmed,
         classes_negated=negated,
         object_ids=set(OBJECT_ID_RE.findall(text)),
-        relations=_relations(text),
+        relations=_relations(text, negation),
         roles=_roles(text, negation, negated=False),
         roles_negated=_roles(text, negation, negated=True),
         numbers=[int(n) for n in re.findall(r"\b\d+\b", text)],
@@ -316,12 +316,21 @@ def _negated_at(text: str, position: int, negation: tuple[str, ...], window: int
     return any(marker in context for marker in negation) or bool(NEGATION_RE.search(context))
 
 
-def _relations(text: str) -> set[tuple[str, str, str]]:
-    """Collect (subject, relation, object) triples over the closed vocabulary."""
+def _relations(text: str, negation: tuple[str, ...] = ()) -> set[tuple[str, str, str]]:
+    """Collect (subject, relation, object) triples over the closed vocabulary.
+
+    Denied relations are left out: "le colonne non supportano il tetto" states
+    that the relation does not hold, and recording it as asserted would turn a
+    correct denial into a claim about a class the scene does not contain.
+    """
     found: set[tuple[str, str, str]] = set()
     for relation, aliases in RELATION_ALIASES.items():
-        for alias in aliases:
+        for alias in _sorted_aliases(aliases):
             for match in re.finditer(rf"\b{re.escape(alias)}\b", text):
+                if _directly_negated(text, match.start()) or (
+                    negation and _negated_at(text, match.start(), negation, window=30)
+                ):
+                    continue
                 subject = _nearest_entity(text, match.start(), backwards=True)
                 target = _nearest_entity(text, match.end(), backwards=False)
                 if subject and target:

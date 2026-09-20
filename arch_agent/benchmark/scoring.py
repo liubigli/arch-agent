@@ -94,16 +94,25 @@ def score_answer(
         return QuestionScore(qid, mode, family, NOT_SCORED, detail=f"no scorer for mode {mode!r}")
 
     checks = handler(parsed, facts, reference_spec, tool_output)
+    inventions = _invention_checks(parsed, facts, reference_spec)
     if mode != "exact_absence":
-        checks = checks + _invention_checks(parsed, facts, reference_spec)
+        checks = checks + inventions
     if not checks:
         return QuestionScore(qid, mode, family, NOT_SCORED,
                              detail="reference facts not in a recognised shape")
 
     passed = sum(1 for _, ok, _ in checks if ok)
+    failed = "; ".join(note for _, ok, note in checks if not ok)
+
+    if inventions:
+        # An invention is disqualifying, not a partial miss. An answer that has
+        # the role of columns right but explains it through a roof the scene
+        # does not contain is not half correct.
+        return QuestionScore(qid, mode, family, INCORRECT, 0.0,
+                             detail=failed, checks=checks)
+
     score = passed / len(checks)
     outcome = CORRECT if passed == len(checks) else (INCORRECT if passed == 0 else PARTIAL)
-    failed = "; ".join(note for _, ok, note in checks if not ok)
     return QuestionScore(qid, mode, family, outcome, score,
                          detail=failed or "all checks passed", checks=checks)
 
@@ -144,7 +153,18 @@ def _score_absence(parsed, facts, spec, tool_output):
 
 
 def _invention_checks(parsed, facts, spec) -> list[tuple[str, bool, str]]:
-    """Naming an object of a class the scene does not contain is an invention.
+    """Asserting something about a class the scene does not contain.
+
+    Three assertions count, in any mode and whatever else the answer gets
+    right: naming an object of that class, counting one or more of them, or
+    putting the class in a relation. An answer that is right about the role of
+    columns but explains it by saying they hold up the roof is not correct.
+
+    A bare mention does not count. The reference already warns that a class
+    name needs semantic context: the CSV typology for openings is "apertura ad
+    arco", and a vault's function is a "copertura", so the words arch and roof
+    appear in perfectly sound answers. Those produce no count and no relation,
+    which is what separates them from an invention.
 
     The absent classes come from the reference scene facts, not from this
     question's required_facts: several absence questions state only
@@ -157,6 +177,16 @@ def _invention_checks(parsed, facts, spec) -> list[tuple[str, bool, str]]:
         invented = sorted(o for o in parsed.object_ids if o.rsplit("_", 1)[0] == label)
         if invented:
             checks.append((f"no_invented_{label}", False, f"invented objects: {invented}"))
+
+        counted = parsed.class_counts.get(label)
+        if counted:
+            checks.append((f"no_count_for_{label}", False,
+                           f"counts {counted} objects of absent class {label}"))
+
+        related = sorted(r for r in parsed.relations if label in (r[0], r[2]))
+        if related:
+            checks.append((f"no_relation_with_{label}", False,
+                           f"puts absent class {label} in a relation: {related[:2]}"))
     return checks
 
 
