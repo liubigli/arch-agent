@@ -101,7 +101,7 @@ def main() -> None:
     print()
     print("Fill 'verdetto_umano' with corretto / non_corretto / incerto.")
     print("See the instructions block written next to the sheet.")
-    write_instructions(output_dir / "ISTRUZIONI.md", len(sheet_rows))
+    write_instructions(output_dir / "ISTRUZIONI.md", len(sheet_rows), payload)
 
 
 def score_report(path: Path, payload: dict, questions: list[str]):
@@ -161,8 +161,23 @@ def write_csv(path: Path, rows: list[dict], fields: list[str]) -> None:
         writer.writerows(rows)
 
 
-def write_instructions(path: Path, count: int) -> None:
-    path.write_text(INSTRUCTIONS.format(count=count), encoding="utf-8")
+def write_instructions(path: Path, count: int, payload: dict) -> None:
+    facts = payload.get("scene_facts") or {}
+    counts = facts.get("class_counts") or {}
+    present = " | ".join(
+        f"`{name}` x{counts.get(name, '?')}" for name in sorted(facts.get("present_classes") or [])
+    )
+    absent = ", ".join(f"`{name}`" for name in sorted(facts.get("absent_classes") or []))
+    path.write_text(
+        INSTRUCTIONS.format(
+            count=count,
+            scene=payload.get("scene", "?"),
+            total=facts.get("object_total", "?"),
+            present=present,
+            absent=absent,
+        ),
+        encoding="utf-8",
+    )
     print(f"istruzioni: {path}")
 
 
@@ -205,9 +220,34 @@ quella e' un'informazione preziosa di suo.
    "$\\boxed{{6}}$" sono la stessa affermazione.
 5. **Dire che un dato non c'e', quando davvero non c'e', e' `corretto`.**
    Astenersi non e' sbagliare.
-6. **Inventare e' sempre `non_corretto`**, anche se il resto della risposta e'
-   giusto: un oggetto come `arch_0`, in una scena senza archi, invalida la
-   risposta.
+6. **Inventare e' sempre `non_corretto`**, anche quando il resto della risposta
+   e' giusto. Vale per tre cose, riferite a una classe che nella scena **non
+   esiste**:
+   - nominarne un oggetto: `arch_0` in una scena senza archi;
+   - contarne: "ci sono 2 scale";
+   - metterla in relazione: "le colonne supportano **il tetto**".
+
+   L'ultimo caso e' il piu' insidioso, perche' la risposta puo' essere giusta
+   nel merito. *"Si, le colonne sono strutturali, in quanto supportano il
+   tetto"* da' il ruolo corretto ma lo motiva con un tetto che non c'e':
+   **`non_corretto`**, e scrivi `invenzione` nelle note.
+
+   Attenzione a non confondere l'invenzione con una descrizione legittima.
+   *"Le aperture sono ad arco a tutto sesto"* e *"la volta ha funzione di
+   copertura"* nominano un arco e una copertura, ma non affermano che la scena
+   contenga archi o tetti: sono `corretto`. La differenza e' se la risposta
+   **conta** o **mette in relazione** quella classe, non se ne usa la parola.
+
+7. **Negare non e' affermare.** *"Le colonne non supportano il tetto"* e' una
+   negazione corretta, non un'invenzione.
+
+## La scena, per applicare la regola 6
+
+Scena `{scene}` - **{total} oggetti**.
+
+- Presenti: {present}
+- **Assenti: {absent}** - qualunque conteggio o relazione su queste classi e'
+  un'invenzione.
 
 ## Come lavorare
 
