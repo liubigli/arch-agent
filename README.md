@@ -303,6 +303,22 @@ named `benchmark_<kind>_<scene>_<model>_<date>_test_<n>.{json,csv}` with
 two conditions never overwrite each other, and every record carries a
 `condition` field.
 
+### Re-scoring reports you already have
+
+Scoring is decoupled from execution, so improving the validator costs no GPU
+time. `score_reports.py` recomputes the metrics for reports a run already
+produced:
+
+```bash
+python score_reports.py benchmark_outputs/benchmark_raw_*.json --show 5
+```
+
+Reports written before 2026-09-17 carry no `question_id` - the field was added
+after the 16 September run - so the question is resolved from its text, and
+from file order when the texts match in sequence. The output states how each
+id was resolved; a high `unresolved` count means the report was produced with
+a different question set and its numbers are not comparable.
+
 ### Scoring
 
 Answers are scored against
