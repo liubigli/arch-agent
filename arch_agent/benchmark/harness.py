@@ -31,6 +31,7 @@ from ..agent import (
 from ..pipeline.pipeline import SceneContext
 from ..tools import CSV_TOOL_NAMES
 from .grounding_checks import GroundingIssue, check_groundedness
+from .scoring import aggregate as aggregate_scores, score_answer
 from .structured_reference import reference_for_question
 
 REVIEW_RELIABILITY_FILTER = {
@@ -67,6 +68,10 @@ class BenchmarkResult:
     acceptable_tools: list[str] = field(default_factory=list)
     tool_selection_status: str | None = None
     tool_selection_issue: str | None = None
+    score_outcome: str | None = None
+    score_value: float | None = None
+    score_family: str | None = None
+    score_detail: str | None = None
     latency_s: float = 0.0
     error: str | None = None
 
@@ -589,8 +594,37 @@ def evaluate_benchmark(
             reference_spec=reference_spec,
             condition=condition,
         )
+        _set_answer_score(result, reference_spec)
         evaluation_results.append(result)
-    return evaluation_results, build_evaluation_summary(evaluation_results)
+
+    summary = build_evaluation_summary(evaluation_results)
+    summary["scoring"] = aggregate_scores(
+        [
+            score_answer(
+                r.final_answer,
+                reference_for_question(structured_reference, r.question_id),
+                tool_output=_tool_output_text(r),
+            )
+            for r in evaluation_results
+        ]
+    )
+    return evaluation_results, summary
+
+
+def _set_answer_score(result: BenchmarkResult, reference_spec: dict | None) -> None:
+    score = score_answer(
+        result.final_answer,
+        reference_spec,
+        tool_output=_tool_output_text(result),
+    )
+    result.score_outcome = score.outcome
+    result.score_value = round(score.score, 4)
+    result.score_family = score.family
+    result.score_detail = score.detail
+
+
+def _tool_output_text(result: BenchmarkResult) -> str:
+    return "\n".join(call.output or "" for call in result.tool_calls)
 
 
 def manual_review_records(
@@ -736,6 +770,10 @@ def write_evaluation_report(
             "acceptable_tools",
             "tool_selection_status",
             "tool_selection_issue",
+            "score_outcome",
+            "score_value",
+            "score_family",
+            "score_detail",
             "grounding_issues",
             "language_ok",
             "language_issue",
@@ -774,6 +812,10 @@ def write_manual_review_report(
             "acceptable_tools",
             "tool_selection_status",
             "tool_selection_issue",
+            "score_outcome",
+            "score_value",
+            "score_family",
+            "score_detail",
             "grounding_issues",
             "language_ok",
             "language_issue",
@@ -811,6 +853,10 @@ def _evaluation_record(result: BenchmarkResult) -> dict:
         "acceptable_tools": result.acceptable_tools,
         "tool_selection_status": result.tool_selection_status,
         "tool_selection_issue": result.tool_selection_issue,
+        "score_outcome": result.score_outcome,
+        "score_value": result.score_value,
+        "score_family": result.score_family,
+        "score_detail": result.score_detail,
         "grounding_issues": [
             {"kind": issue.kind, "detail": issue.detail}
             for issue in result.grounding_issues
@@ -907,6 +953,9 @@ def write_csv_report(results: list[BenchmarkResult], path: str | Path) -> None:
         "acceptable_tools",
         "tool_selection_status",
         "tool_selection_issue",
+        "score_outcome",
+        "score_value",
+        "score_family",
         "final_answer",
         "reference_answer",
         "grounding_issues",
@@ -940,6 +989,9 @@ def write_csv_report(results: list[BenchmarkResult], path: str | Path) -> None:
                     "acceptable_tools": ", ".join(result.acceptable_tools),
                     "tool_selection_status": result.tool_selection_status or "",
                     "tool_selection_issue": result.tool_selection_issue or "",
+                    "score_outcome": result.score_outcome or "",
+                    "score_value": "" if result.score_value is None else result.score_value,
+                    "score_family": result.score_family or "",
                     "final_answer": result.final_answer or "",
                     "reference_answer": result.reference_answer or "",
                     "grounding_issues": " | ".join(
