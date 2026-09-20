@@ -171,6 +171,12 @@ def _score_set(parsed, facts, spec, tool_output):
             checks.append(_set_check("absent_classes", parsed.classes_negated, set(expected)))
         elif key == "class_counts":
             checks.extend(_count_checks(parsed, expected))
+        elif key == "annotated_count" and isinstance(expected, int):
+            # Naming exactly that many objects states the count without
+            # writing the number out.
+            named = len(parsed.object_ids)
+            checks.append((key, expected in parsed.numbers or named == expected,
+                           f"neither states {expected} nor names {expected} objects (named {named})"))
         elif key == "unannotated_objects":
             missing = [o for o in expected if o not in parsed.object_ids]
             checks.append(("unannotated_objects", not missing, f"does not name {missing}"))
@@ -272,7 +278,12 @@ def _score_tool_grounded(parsed, facts, spec, tool_output):
 def _check_fact(parsed, key: str, expected) -> list[tuple[str, bool, str]]:
     """Handle the fact-key conventions used across the reference."""
     if key == "object_total" and isinstance(expected, int):
-        return [("object_total", parsed.total_count == expected,
+        stated = parsed.total_count
+        if stated is None and set(parsed.numbers) == {expected}:
+            # A bare answer such as "$\boxed{33}$" carries no total marker but
+            # states one unambiguous number.
+            stated = expected
+        return [("object_total", stated == expected,
                  f"states total {parsed.total_count}, expected {expected}")]
 
     if key in C.CLASS_ALIASES and isinstance(expected, int):

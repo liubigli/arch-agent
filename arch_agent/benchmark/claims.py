@@ -19,17 +19,28 @@ import unicodedata
 from dataclasses import dataclass, field
 
 OBJECT_ID_RE = re.compile(r"\b([a-z_]+_\d+)\b")
+# Answers are routinely formatted as markdown lists - "- **column**: 6" - so
+# the separator between a class name and its number may carry punctuation.
+_MARKUP = r"[\s*_`~:=]*"
+# A list bullet ends the previous item, so it must not be crossed when looking
+# backwards: in "- **wall**: 11 - **column**: 6" the 11 belongs to wall.
 _NUMBER_BEFORE_RE = re.compile(
-    r"(\d+)\s*(?:oggetti|oggetto|objects?|istanze|istanza|instances?|elementi|elemento|elements?)?\s*$"
+    r"(\d+)\s*(?:oggetti|oggetto|objects?|istanze|istanza|instances?|elementi|elemento|elements?)?"
+    + _MARKUP + r"$"
 )
-_NUMBER_AFTER_RE = re.compile(r"^\s*(?:[:=]|sono|is|are|e|è)?\s*(\d+)")
+# No bare "e" connector: normalisation strips accents, so Italian "e" (and)
+# and "e" (is) are indistinguishable, and "6 colonne e 11 muri" would give the
+# columns the walls' number.
+_NUMBER_AFTER_RE = re.compile(r"^" + _MARKUP + r"(?:sono|is|are)?" + _MARKUP + r"(\d+)")
 
 CLASS_ALIASES: dict[str, tuple[str, ...]] = {
     "arch": ("arch", "arches", "arco", "archi"),
     "column": ("column", "columns", "colonna", "colonne"),
     "moldings": ("moldings", "molding", "modanatura", "modanature", "cornice", "cornici", "lesena", "lesene"),
+    # Aliases are matched longest-first so a plural is not shadowed by its stem.
     "floor": ("floor", "floors", "pavimento", "pavimenti"),
-    "door_window": ("door_window", "door window", "porta", "porte", "finestra", "finestre", "apertura", "aperture"),
+    "door_window": ("door_windows", "door_window", "door windows", "door window",
+                    "porta", "porte", "finestra", "finestre", "apertura", "aperture"),
     "wall": ("wall", "walls", "muro", "muri", "parete", "pareti"),
     "stairs": ("stairs", "staircase", "scala", "scale", "gradini"),
     "vault": ("vault", "vaults", "volta", "volte"),
@@ -77,6 +88,17 @@ DEFAULT_ABSTENTION_MARKERS = (
     "nessuna informazione", "non presente nel grafo", "dato assente",
     "non posso determinare", "not available", "no information",
     "not specified", "cannot determine", "unknown", "no data",
+)
+
+# Marker lists cannot keep up with conjugation: the reference has "non ci sono"
+# but answers also write "non ci siano", "non vi sono", "non risultano". This
+# covers the construction instead of enumerating its forms.
+NEGATION_RE = re.compile(
+    r"\b(?:non|no)\s+(?:ci\s+|vi\s+|ne\s+)?"
+    r"(?:sono|siano|e|sia|era|erano|risulta|risultano|esiste|esistono|"
+    r"compare|compaiono|presenta|presentano|contiene|contengono)\b"
+    r"|\b(?:there\s+(?:is|are)\s+no|does\s+not\s+(?:contain|include)|"
+    r"are\s+not\s+present|is\s+not\s+present)\b"
 )
 
 _AFFIRM = ("si", "yes", "esatto", "corretto", "true", "confermo", "sono", "supportano")
@@ -159,6 +181,11 @@ def _markers(policy: dict, prefix: str, fallback: tuple[str, ...]) -> tuple[str,
     return tuple(dict.fromkeys(tuple(normalize(m) for m in found) + fallback))
 
 
+def _sorted_aliases(aliases: tuple[str, ...]) -> tuple[str, ...]:
+    """Longest first: "door_windows" must be tried before "door_window"."""
+    return tuple(sorted(aliases, key=len, reverse=True))
+
+
 def _any_alias(text: str, aliases: tuple[str, ...]) -> bool:
     return any(re.search(rf"\b{re.escape(alias)}\b", text) for alias in aliases)
 
@@ -210,7 +237,7 @@ def _class_counts(text: str) -> dict[str, int]:
     """
     counts: dict[str, int] = {}
     for label, aliases in CLASS_ALIASES.items():
-        for alias in aliases:
+        for alias in _sorted_aliases(aliases):
             for match in re.finditer(rf"\b{re.escape(alias)}\b", text):
                 value = _number_beside(text, match.start(), match.end())
                 if value is not None and label not in counts:
@@ -219,11 +246,19 @@ def _class_counts(text: str) -> dict[str, int]:
 
 
 def _number_beside(text: str, start: int, end: int, window: int = 26) -> int | None:
-    before = text[max(0, start - window):start]
-    match = _NUMBER_BEFORE_RE.search(before)
+    """The number attached to the class name at [start, end).
+
+    "label: N" is tried first because it is how lists are written; "N labels"
+    is the fallback. Looking backwards stops at a bullet or comma, so one list
+    item cannot claim its neighbour's number.
+    """
+    match = _NUMBER_AFTER_RE.match(text[end:end + window])
     if match:
         return int(match.group(1))
-    match = _NUMBER_AFTER_RE.match(text[end:end + window])
+
+    before = text[max(0, start - window):start]
+    before = re.split(r"[-\u2013\u2014,;]", before)[-1]
+    match = _NUMBER_BEFORE_RE.search(before)
     if match:
         return int(match.group(1))
     return None
@@ -260,9 +295,25 @@ def _class_polarity(
     return affirmed, negated
 
 
+_SENTENCE_SPLIT_RE = re.compile(r"[.;!?\n]")
+
+
 def _negated_at(text: str, position: int, negation: tuple[str, ...], window: int = 48) -> bool:
+    """Is the mention at `position` inside a denial?
+
+    Scope is the sentence, not a character window: "le classi assenti sono
+    arch, stairs e roof" denies all three, but the last one sits further from
+    the marker than any fixed window that does not also leak into neighbouring
+    sentences.
+    """
+    starts = [m.end() for m in _SENTENCE_SPLIT_RE.finditer(text) if m.end() <= position]
+    sentence_start = starts[-1] if starts else 0
+    clause = text[sentence_start:position]
+    if any(marker in clause for marker in negation) or NEGATION_RE.search(clause):
+        return True
+
     context = text[max(0, position - window):position + window]
-    return any(marker in context for marker in negation)
+    return any(marker in context for marker in negation) or bool(NEGATION_RE.search(context))
 
 
 def _relations(text: str) -> set[tuple[str, str, str]]:
