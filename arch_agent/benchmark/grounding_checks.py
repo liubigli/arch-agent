@@ -97,6 +97,7 @@ def check_groundedness(
     question: str,
     final_answer: str | None,
     reference_spec: dict | None = None,
+    condition: str = "full",
 ) -> list[GroundingIssue]:
     if not final_answer:
         return []
@@ -105,7 +106,9 @@ def check_groundedness(
     issues.extend(_check_invalid_relation_types(final_answer))
     issues.extend(_check_unknown_object_names(ctx, final_answer))
     if reference_spec is not None:
-        issues.extend(_check_structured_reference(final_answer, reference_spec))
+        issues.extend(
+            _check_structured_reference(final_answer, reference_spec, condition=condition)
+        )
         return issues
     issues.extend(_check_class_count_number(ctx, question, final_answer))
     issues.extend(_check_per_class_count_number(ctx, question, final_answer))
@@ -129,13 +132,18 @@ _COUNT_ALIASES = {
 def _check_structured_reference(
     answer: str,
     reference_spec: dict,
+    condition: str = "full",
 ) -> list[GroundingIssue]:
     mode = reference_spec.get("validation_mode")
-    if mode == "manual_assisted":
+    if mode == "manual_assisted" and condition == "full":
         return []
 
     normalized = _normalize_text(answer)
     facts = reference_spec.get("resolved_facts") or reference_spec.get("required_facts") or {}
+
+    if condition != "full":
+        return _check_withheld_csv(normalized, reference_spec, facts)
+
     issues: list[GroundingIssue] = []
 
     expected_total = facts.get("object_total")
@@ -196,6 +204,86 @@ def _check_structured_reference(
                 )
             )
     return issues
+
+
+_ROLE_MARKERS = (
+    "strutturale", "strutturali", "structural",
+    "ornamentale", "ornamentali", "ornamental",
+    "superficie di appoggio", "support surface",
+    "apertura", "aperture", "opening",
+    "circolazione", "circulation",
+)
+
+_DEFAULT_ABSTENTION_MARKERS = (
+    "non disponibile", "non e disponibile", "non risulta", "non specificato",
+    "nessuna informazione", "dato assente", "non posso determinare",
+    "not available", "no information", "not specified",
+    "cannot determine", "unknown", "no data",
+)
+
+# Fact keys that are graph-derived, not CSV-derived: reporting them is legitimate
+# even when the CSV layer is withheld.
+_NON_CSV_FACT_KEYS = frozenset({
+    "object_total", "relationship_total", "annotated_count", "count", "answer",
+    "objects_required", "must_only_use_present_classes", "values_must_match_tool_output",
+})
+
+
+def _check_withheld_csv(
+    normalized: str,
+    reference_spec: dict,
+    facts: dict,
+) -> list[GroundingIssue]:
+    """Score one answer produced without the CSV metadata layer.
+
+    The expectation comes from the reference field ``expected_without_csv``:
+    the CSV value is unreachable, so the model must say so instead of
+    supplying one. Asserting a value anyway is the invention this ablation
+    is designed to measure.
+    """
+    expectation = reference_spec.get("expected_without_csv")
+    if expectation in (None, "manual_review"):
+        return []
+
+    policy = reference_spec.get("validation_policy") or {}
+    markers = tuple(
+        policy.get("abstention_markers_it", ())
+    ) + tuple(
+        policy.get("abstention_markers_en", ())
+    ) or _DEFAULT_ABSTENTION_MARKERS
+
+    leaked = [
+        value
+        for key, value in facts.items()
+        if key not in _NON_CSV_FACT_KEYS
+        and isinstance(value, str)
+        and value.strip()
+        and _normalize_text(value) in normalized
+    ]
+    if leaked:
+        return [
+            GroundingIssue(
+                "csv_value_without_source",
+                "CSV layer withheld, but the answer reports its value(s): "
+                + "; ".join(leaked),
+            )
+        ]
+
+    if any(_normalize_text(marker) in normalized for marker in markers):
+        return []
+
+    if expectation == "abstention_or_role_only" and any(
+        marker in normalized for marker in _ROLE_MARKERS
+    ):
+        return []
+
+    return [
+        GroundingIssue(
+            "missing_abstention",
+            "CSV layer withheld: the answer neither declares the value "
+            "unavailable nor restricts itself to graph-derived facts.",
+        )
+    ]
 
 
 def _extract_total_count(text: str) -> int | None:

@@ -88,6 +88,17 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     group2.add_argument(
+        "--condition",
+        choices=("full", "graph"),
+        default="full",
+        help=(
+            "Ablation condition. 'full' is the standard run: spatial graph plus "
+            "CSV metadata. 'graph' withholds the CSV layer entirely - it is not "
+            "loaded into the pipeline and the CSV tools are not bound to the "
+            "agent - so only geometry and spatial relations remain."
+        ),
+    )
+    group2.add_argument(
         "--limit", type=int, default=0,
         help="Max number of questions to run (0 = no limit).",
     )
@@ -217,6 +228,7 @@ def main() -> None:
         use_normals=args.use_normals,
         annotation_csv_path=annotation_csv_path,
         annotation_match_threshold=args.annotation_match_threshold,
+        skip_annotations=args.condition != "full",
     )
     ctx = run_pipeline(params)
 
@@ -238,6 +250,7 @@ def main() -> None:
     think_override = parse_think_override(args.think)
     print(f"Models: {', '.join(models)}")
     print(f"Thinking mode: {args.think}")
+    print(f"Ablation condition: {args.condition}")
 
     def on_result(result):
         status = "ERROR" if result.error else f"{result.num_tool_calls} tool call(s)"
@@ -263,6 +276,8 @@ def main() -> None:
     for model in models:
         print(f"\nBenchmarking model: {model}")
         model_name = _model_name_for_report(model, args.think)
+        if args.condition != "full":
+            model_name = f"{model_name}_cond_{args.condition}"
         test_n = _next_test_number(output_dir, scene_name, model_name, date)
         metadata = {
             "scene": scene_name,
@@ -271,6 +286,7 @@ def main() -> None:
             "date": date,
             "test_n": test_n,
             "questions_loaded": EXPECTED_QUESTION_COUNT,
+            "condition": args.condition,
             "reference_file": str(reference_path) if reference_path else None,
             "reference_status": (
                 structured_reference.get("status")
@@ -286,11 +302,13 @@ def main() -> None:
             capture_reasoning=args.capture_reasoning,
             think_override=think_override,
             on_result=on_result,
+            condition=args.condition,
         )
         evaluation_records, summary = evaluate_benchmark(
             raw_records,
             ctx,
             structured_reference=structured_reference,
+            condition=args.condition,
         )
         manual_records = manual_review_records(evaluation_records)
 
