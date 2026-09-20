@@ -246,6 +246,84 @@ You: Reload the scene with eps=0.3 to get finer clusters
 Agent: [calls reload_scene] Scene reloaded. Objects: 24 | Relationships: 41 ...
 ```
 
+## Benchmark
+
+`benchmark.py` runs the official question set against one or more Ollama
+models and scores the answers against an approved structured reference. It
+binds a restricted tool set to the agent, so diagnostic and pipeline-mutation
+tools stay out of the measurement.
+
+### Ablation conditions
+
+The benchmark runs in one of two conditions, selected with `--condition`.
+Both use the same point cloud, the same DBSCAN segmentation and the same
+spatial graph — on `scena4_VAL` both give 33 objects and 170 edges — so the
+only variable is whether the CSV knowledge layer exists at all.
+
+| Condition | Flag | Pipeline | Tools bound | Reachable by the model |
+|---|---|---|---:|---|
+| With CSV | `--condition full` (default) | annotation CSV loaded and matched to objects | 11 | geometry, spatial relations, material, typology, function, description |
+| Without CSV | `--condition graph` | annotation CSV never resolved | 8 | geometry and spatial relations only |
+
+Withholding the CSV takes more than hiding the four CSV tools: matched values
+are written into the scene-graph nodes, and `get_object_info` prints them
+from there. `--condition graph` therefore skips loading the CSV entirely, so
+material, typology, function and description are absent from the graph.
+
+### Running both conditions
+
+```bash
+# With CSV - the standard run
+python benchmark.py /path/to/scena4_VAL.laz \
+  --annotation-csv /path/to/scena4_VAL_annotations.csv \
+  --condition full \
+  --models llama3.1 gemma4:31b qwen3.5 command-r gpt-oss:20b
+
+# Without CSV - the ablation
+python benchmark.py /path/to/scena4_VAL.laz \
+  --condition graph \
+  --models llama3.1 gemma4:31b qwen3.5 command-r gpt-oss:20b
+```
+
+Pass `--annotation-csv` explicitly on `full` runs. Without it the loader
+auto-discovers a CSV next to the LAZ file, and two different CSVs give two
+different `full` conditions. The flag has no effect under `--condition graph`.
+
+Use `--limit 5` for a smoke run before a full sweep. On the September 2026
+runs, mean latency per question ranged from 1.3 s (`llama3.1`) to 14.4 s
+(`gemma4:31b`), so the 60-question set takes roughly 2 to 15 minutes per
+model.
+
+### Reports
+
+Reports land in `benchmark_results/` unless `--output-dir` says otherwise,
+named `benchmark_<kind>_<scene>_<model>_<date>_test_<n>.{json,csv}` with
+`kind` one of `raw`, `evaluation` and `manual_review`. Runs under
+`--condition graph` add a `_cond_graph` suffix to the model segment, so the
+two conditions never overwrite each other, and every record carries a
+`condition` field.
+
+### Scoring
+
+Answers are scored against
+`benchmark/references/<scene>_reference_draft.json`, which must carry
+`"status": "approved"`. Per question it pins the expected facts, the
+preferred and acceptable tools, and any forbidden claims. Use
+`--reference-file` to point at a different one.
+
+Under `--condition graph` the CSV values are unreachable, so questions that
+depend on them are scored on whether the model says so instead of supplying
+a value. The reference field `expected_without_csv` declares the expectation:
+
+| Value | Expected answer | Flagged when violated |
+|---|---|---|
+| `abstention` | the value is not available | `missing_abstention` when a value is asserted anyway, `csv_value_without_source` when the CSV value itself is reproduced |
+| `abstention_or_role_only` | not available, or the architectural role from `semantic_schema` | as above |
+| `manual_review` | the question changes meaning without the CSV | not scored automatically |
+
+Questions whose preferred tools are withheld in this condition are reported
+as `not_applicable` for tool routing rather than penalised for it.
+
 ## Configuration
 
 The main project configuration is split between Python schema/rules, CSV scene metadata, and the agent prompt:
@@ -272,10 +350,22 @@ arch_agent/
         graph.py           # NetworkX DiGraph builders
         pipeline.py        # PipelineParams, SceneContext, run_pipeline()
     tools/
-        scene_tools.py     # LangChain tools wrapping the scene graph and CSV detail
+        registry.py        # tool assembly, TOOL_ORDER and the benchmark tool sets
+        inventory_tools.py # semantic classes, object counts, object lists
+        geometry_tools.py  # dimensions, areas, volumes, distances
+        annotation_tools.py# material, typology, function (CSV layer only)
+        relationship_tools.py # spatial-graph queries
+        scene_state_tools.py  # scene statistics and reload
+        _shared.py         # helpers used by more than one tool module
+        scene_tools.py     # compatibility shim re-exporting the public names
+    benchmark/
+        harness.py         # benchmark run loop, scoring and reports
+        grounding_checks.py# deterministic groundedness checks
+        structured_reference.py # loading of the approved per-question reference
     agent.py               # LangGraph agent + conversation loop
     __init__.py
 main.py                    # CLI entry point
+benchmark.py               # benchmark CLI (see the Benchmark section)
 ```
 
 ## CIDOC/KG ontology layer
