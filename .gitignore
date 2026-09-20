@@ -220,3 +220,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Generated annotation material for the scorer-validation exercise
+benchmark/kappa/

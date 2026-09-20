@@ -39,6 +39,9 @@ def reference_for_question(
             resolved = deepcopy(entry)
             resolved["resolved_facts"] = _resolve_required_facts(payload, entry)
             resolved["validation_policy"] = deepcopy(payload.get("validation_policy") or {})
+            scene_facts = payload.get("scene_facts") or {}
+            resolved["scene_absent_classes"] = list(scene_facts.get("absent_classes") or [])
+            resolved["scene_present_classes"] = list(scene_facts.get("present_classes") or [])
             return resolved
     return None
 
