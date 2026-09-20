@@ -50,6 +50,12 @@ def parse_args() -> argparse.Namespace:
     group.add_argument("--use-normals", action="store_true")
     group.add_argument("--annotation-csv", default=None)
     group.add_argument("--annotation-match-threshold", type=float, default=2.0)
+    group.add_argument(
+        "--annotation-class-region-tolerance", type=float, default=0.5,
+        help=(
+            "Max distance (m) between a CSV row box centre and the centre of all objects of its class for the row to be read as describing the whole region and attached to each of them. 0 disables it, restoring strict per-object matching."
+        ),
+    )
 
     group3 = parser.add_argument_group("visualization parameters")
     group3.add_argument(
@@ -228,6 +234,7 @@ def main() -> None:
         use_normals=args.use_normals,
         annotation_csv_path=annotation_csv_path,
         annotation_match_threshold=args.annotation_match_threshold,
+        annotation_class_region_tolerance=args.annotation_class_region_tolerance,
         skip_annotations=args.condition != "full",
     )
     ctx = run_pipeline(params)

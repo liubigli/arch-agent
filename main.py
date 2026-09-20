@@ -73,6 +73,17 @@ def parse_args() -> argparse.Namespace:
         default=2.0,
         help="Max distance in meters for matching CSV global_box_center to object AABB box_center",
     )
+    group.add_argument(
+        "--annotation-class-region-tolerance",
+        type=float,
+        default=0.5,
+        help=(
+            "Max distance (m) between a CSV row box centre and the centre of "
+            "all objects of its class for the row to be read as describing the "
+            "whole region and attached to each of them. 0 disables it, "
+            "restoring strict per-object matching."
+        ),
+    )
 
     # Visualization params
     group3 = parser.add_argument_group("visualization parameters")
@@ -189,6 +200,7 @@ def main() -> None:
         use_normals=args.use_normals,
         annotation_csv_path=annotation_csv_path,
         annotation_match_threshold=args.annotation_match_threshold,
+        annotation_class_region_tolerance=args.annotation_class_region_tolerance,
     )
 
     ctx = run_pipeline(params)

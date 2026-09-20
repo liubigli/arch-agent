@@ -72,6 +72,10 @@ BOX_CENTER_Y_COLUMNS = ("global_box_center_y", "box_center_y", "bbox_center_y", 
 BOX_CENTER_Z_COLUMNS = ("global_box_center_z", "box_center_z", "bbox_center_z", "z", "center_z", "cz")
 CSV_ENCODINGS = ("utf-8-sig", "utf-8", "cp1252", "latin1")
 
+# A CSV row whose box centre lands this close to the centre of every object
+# of its class is read as describing the whole region, not one object.
+DEFAULT_CLASS_REGION_TOLERANCE = 0.5
+
 
 def resolve_annotation_csv(point_cloud_path: str, explicit_path: str | None = None) -> str | None:
     if explicit_path:
@@ -97,13 +101,14 @@ def load_object_annotations(
     csv_path: str,
     objects: dict,
     max_distance: float = 2.0,
+    class_region_tolerance: float = DEFAULT_CLASS_REGION_TOLERANCE,
 ) -> tuple[dict[str, list[dict]], list[dict]]:
     df = _read_annotation_csv(csv_path)
     df = _repair_single_field_rows(df)
     df = df.rename(columns={column: _normalize_column(column) for column in df.columns})
 
     annotations: dict[str, list[dict]] = {}
-    unmatched: list[dict] = []
+    pending: list[tuple[dict, pd.Series, str | None]] = []
     for row_index, row in df.iterrows():
         annotation = _annotation_from_row(row, row_index, csv_path)
         semantic_label = _semantic_label_from_row(row)
@@ -116,13 +121,89 @@ def load_object_annotations(
         annotation["semantic_label"] = semantic_label
         annotation["match"] = match_info
         if object_name is None:
-            unmatched.append(annotation)
+            pending.append((annotation, row, semantic_label))
             continue
 
         annotation["object_name"] = object_name
         annotations.setdefault(object_name, []).append(annotation)
 
+    unmatched = _attach_class_region_rows(
+        pending,
+        objects,
+        annotations,
+        tolerance=class_region_tolerance,
+    )
     return annotations, unmatched
+
+
+def _attach_class_region_rows(
+    pending: list[tuple[dict, "pd.Series", str | None]],
+    objects: dict,
+    annotations: dict[str, list[dict]],
+    tolerance: float,
+) -> list[dict]:
+    """Attach rows that describe a whole semantic region to every object in it.
+
+    The scene CSV mixes granularities. Discrete elements get one row each - six
+    columns, six column rows - while a continuous surface gets a single row
+    whose global_box_center is the centre of the entire semantic region.
+    Nearest-object matching cannot place those rows: on scena4_VAL the single
+    wall row sits 5.37 m from the nearest wall fragment, well beyond
+    max_distance, so it was dropped and all eleven walls ended up with no
+    material, typology or function at all.
+
+    A pending row is treated as region-level when its centre coincides, within
+    ``tolerance``, with the centre of every object of its class. It is then
+    attached to each of them. Set ``tolerance`` to 0 to disable this and keep
+    the strict per-object behaviour.
+    """
+    unmatched: list[dict] = []
+    for annotation, row, semantic_label in pending:
+        names = sorted(
+            name for name, obj in objects.items()
+            if obj.get("semantic_label") == semantic_label
+        )
+        row_center = _global_box_center_from_row(row)
+        region_center = _class_region_center(objects, names, len(row_center) if row_center is not None else 0)
+
+        if tolerance <= 0 or not names or row_center is None or region_center is None:
+            unmatched.append(annotation)
+            continue
+
+        distance = float(np.linalg.norm(region_center - row_center))
+        if distance > tolerance:
+            annotation["match"] = {
+                **annotation.get("match", {}),
+                "class_region_distance_m": distance,
+                "class_region_tolerance_m": float(tolerance),
+            }
+            unmatched.append(annotation)
+            continue
+
+        for name in names:
+            entry = dict(annotation)
+            entry["object_name"] = name
+            entry["match"] = {
+                "method": "class_region",
+                "distance_m": distance,
+                "tolerance_m": float(tolerance),
+                "objects_in_class": len(names),
+            }
+            annotations.setdefault(name, []).append(entry)
+
+    return unmatched
+
+
+def _class_region_center(objects: dict, names: list[str], dimensions: int) -> np.ndarray | None:
+    """Centre of the bounding box enclosing every object of one class."""
+    if not names or dimensions <= 0:
+        return None
+    bounds = [objects[name].get("bounds") for name in names]
+    if any(b is None for b in bounds):
+        return None
+    lower = np.min([np.asarray(b["min"], dtype=float) for b in bounds], axis=0)
+    upper = np.max([np.asarray(b["max"], dtype=float) for b in bounds], axis=0)
+    return ((lower + upper) / 2.0)[:dimensions]
 
 
 def _read_annotation_csv(csv_path: str) -> pd.DataFrame:

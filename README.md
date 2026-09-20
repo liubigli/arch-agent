@@ -66,6 +66,14 @@ Material, typology, function, and historical/descriptive notes come from this
 CSV metadata only; they are not inferred from point-cloud visual features.
 Material type is determined exclusively from the CSV attached to the scene.
 
+The CSV mixes two granularities, and both are matched. A row whose
+`global_box_center` lands on one object describes that object: six columns get
+six rows. A row whose centre coincides with the centre of *all* objects of its
+class describes the whole semantic region and is attached to each of them -
+which is how a single `wall` row covers the eleven fragments DBSCAN extracts
+from one continuous wall. `--annotation-class-region-tolerance 0` turns the
+second rule off and restores strict per-object matching.
+
 Supported semantic labels are integer-encoded. The class registry is defined in
 `arch_agent/semantic_schema.py` and reused by the loader, relationship rules and
 agent tools.
@@ -231,6 +239,8 @@ pixi run view-dbscan path/to/scene.laz --classes column wall --with-boxes
 | `--distance-threshold` | `2.0` | Max centroid distance (m) for spatial relationships |
 | `--sample-n` | `150000` | Max points to load (0 = no limit) |
 | `--use-normals` | `False` | Poisson-based surface area (slower, more accurate) |
+| `--annotation-match-threshold` | `2.0` | Max distance (m) to match a CSV row to a single object |
+| `--annotation-class-region-tolerance` | `0.5` | Max distance (m) for a CSV row to count as describing a whole semantic region (0 disables) |
 | `--model` | `llama3` | Ollama model to use |
 
 ## Example interaction

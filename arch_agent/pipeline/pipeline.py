@@ -8,7 +8,11 @@ from .segmentation import extract_semantic_objects
 from .features import compute_object_features, compute_scene_features
 from .relationships import compute_all_relations_stratified
 from .graph import build_scene_graphs
-from .annotations import load_object_annotations, resolve_annotation_csv
+from .annotations import (
+    DEFAULT_CLASS_REGION_TOLERANCE,
+    load_object_annotations,
+    resolve_annotation_csv,
+)
 
 
 @dataclass
@@ -21,6 +25,7 @@ class PipelineParams:
     use_normals: bool = False
     annotation_csv_path: str | None = None
     annotation_match_threshold: float = 2.0
+    annotation_class_region_tolerance: float = DEFAULT_CLASS_REGION_TOLERANCE
     skip_annotations: bool = False
 
     @property
@@ -74,11 +79,20 @@ def run_pipeline(params: PipelineParams) -> SceneContext:
             annotation_csv,
             objects,
             max_distance=params.annotation_match_threshold,
+            class_region_tolerance=params.annotation_class_region_tolerance,
         )
         matched_count = sum(len(entries) for entries in object_annotations.values())
+        region_count = sum(
+            1
+            for entries in object_annotations.values()
+            for entry in entries
+            if (entry.get("match") or {}).get("method") == "class_region"
+        )
+        region_note = f", of which {region_count} class-region" if region_count else ""
         print(
             "      -> CSV detail: "
-            f"{matched_count} matched, {len(unmatched_annotations)} unmatched "
+            f"{matched_count} matched{region_note}, "
+            f"{len(unmatched_annotations)} unmatched "
             f"({annotation_csv})"
         )
     else:

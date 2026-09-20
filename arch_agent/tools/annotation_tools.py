@@ -482,7 +482,9 @@ def _format_annotations_for_class(
 ) -> str:
     lines = [
         f"CSV annotations for class {semantic_label}: {len(annotated)} matched entries.",
-        "Matching method should be global_box_center when the CSV provides global_box_center_x/y/z.",
+        "Matching method is global_box_center for rows that describe a single "
+        "object, and class_region for a row whose box centre is the centre of "
+        "the whole semantic region, which applies to every object of that class.",
     ]
     for object_name, annotation in annotated[:30]:
         box_center = _object_box_center_text(ctx, object_name)
