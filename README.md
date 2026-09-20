@@ -303,6 +303,21 @@ named `benchmark_<kind>_<scene>_<model>_<date>_test_<n>.{json,csv}` with
 two conditions never overwrite each other, and every record carries a
 `condition` field.
 
+### Figures
+
+```bash
+python plot_scores.py    <dir>/benchmark_raw_*.json                    # accuracy by family
+python compare_models.py <dir>/benchmark_raw_*.json --figure docs/figures  # which gaps are real
+```
+
+Both write PNG and SVG to `docs/figures/`, plus a markdown table alongside the
+heatmap as the table view for a colour-encoded figure.
+
+The comparison figure exists because the models answer the same questions, so
+the data are paired and a difference in accuracy is not by itself a difference
+in ability. It reports McNemar's exact test per pair, with Bonferroni applied
+across the comparisons.
+
 ### Re-scoring reports you already have
 
 Scoring is decoupled from execution, so improving the validator costs no GPU

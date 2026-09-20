@@ -35,6 +35,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("reports", nargs="+")
     parser.add_argument("--reference-file", default="benchmark/references/scena4_VAL_reference_draft.json")
     parser.add_argument("--alpha", type=float, default=0.05)
+    parser.add_argument("--figure", default=None,
+                        help="Directory to write the pairwise matrix figure into.")
     return parser.parse_args()
 
 
@@ -76,6 +78,102 @@ def main() -> None:
         print(f"  {first} vs {second}: p={p:.4f} {holds}")
     if not significant:
         print("  nessuna differenza significativa da correggere")
+
+    if args.figure:
+        draw_matrix(names, results, args)
+
+
+# --------------------------------------------------------------------------
+# figure
+# --------------------------------------------------------------------------
+
+ACCENT = "#2a78d6"      # the difference is real
+NEUTRAL = "#e1e0d9"     # not distinguishable
+SURFACE = "#fcfcfb"
+INK = "#0b0b0b"
+INK_SECONDARY = "#52514e"
+INK_MUTED = "#898781"
+
+
+def draw_matrix(names, results, args) -> None:
+    """Lower triangle, models ordered by accuracy.
+
+    Two categories, not a magnitude: a p-value ramp would invite reading a
+    small p as a large difference, which it is not. Emphasis encoding instead -
+    the accent marks the comparisons that resolve, everything else recedes -
+    and the p-value is printed in every cell so identity never rests on colour.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+
+    n = len(names)
+    corrected = args.alpha / (n * (n - 1) / 2)
+    fig, ax = plt.subplots(figsize=(1.45 * n + 1.6, 0.82 * n + 2.3))
+    fig.patch.set_facecolor(SURFACE)
+    ax.set_facecolor(SURFACE)
+
+    for row in range(1, n):
+        for col in range(row):
+            first, second = names[col], names[row]
+            shared = sorted(set(results[first]) & set(results[second]))
+            b = sum(1 for q in shared if results[first][q] and not results[second][q])
+            c = sum(1 for q in shared if not results[first][q] and results[second][q])
+            p = mcnemar_exact(b, c)
+            real = p < args.alpha
+            ax.add_patch(plt.Rectangle((col + 0.03, row + 0.03), 0.94, 0.94,
+                                       facecolor=ACCENT if real else NEUTRAL,
+                                       edgecolor=SURFACE, linewidth=1.5))
+            label = "p < 0.001" if p < 0.001 else f"p = {p:.3f}"
+            ax.text(col + 0.5, row + 0.60, label, ha="center", va="center",
+                    fontsize=10.5, color="#ffffff" if real else INK,
+                    fontweight="bold" if real else "normal")
+            mark = "differenza reale" if real else "non distinguibili"
+            ax.text(col + 0.5, row + 0.34, mark, ha="center", va="center",
+                    fontsize=8, color="#dbe8fa" if real else INK_SECONDARY)
+
+    for index, name in enumerate(names):
+        accuracy_pct = accuracy(results[name])
+        ax.text(index + 0.5, index + 0.5, f"{name}\n{accuracy_pct:.0%}",
+                ha="center", va="center", fontsize=10.5, color=INK, fontweight="bold",
+                linespacing=1.45)
+
+    ax.set_xlim(0, n)
+    ax.set_ylim(n, 0)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+
+    fig.text(0.012, 0.965, "Quali differenze tra modelli sono reali",
+             fontsize=14, color=INK, fontweight="bold", ha="left", va="top")
+    fig.text(0.012, 0.915,
+             "Test di McNemar esatto sulle 50 domande valutabili, stesse domande per ogni modello",
+             fontsize=10, color=INK_SECONDARY, ha="left", va="top")
+    # The empty half of the triangle is the natural home for the legend.
+    ax.legend(
+        handles=[Patch(facecolor=ACCENT, label="differenza reale"),
+                 Patch(facecolor=NEUTRAL, label="non distinguibili")],
+        loc="upper right", bbox_to_anchor=(0.995, 0.86), frameon=False,
+        fontsize=9.5, labelcolor=INK_SECONDARY, handlelength=1.4, handleheight=1.0,
+    )
+    fig.text(
+        0.012, 0.035,
+        f"I modelli sulla diagonale sono ordinati per accuratezza. Soglia alpha = {args.alpha}; "
+        f"con {int(n * (n - 1) / 2)} confronti la correzione di Bonferroni la porta a {corrected:.4f},\n"
+        "e tutte le differenze marcate come reali reggono anche a quella soglia. "
+        "Dentro ciascun gruppo grigio la classifica non e' sostenuta dai dati.",
+        fontsize=8.5, color=INK_MUTED, ha="left", va="bottom",
+    )
+
+    output_dir = Path(args.figure)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout(rect=(0, 0.08, 1, 0.88))
+    for suffix in ("png", "svg"):
+        path = output_dir / f"benchmark_mcnemar_matrix.{suffix}"
+        fig.savefig(path, dpi=200, facecolor=SURFACE)
+        print(f"\nwritten: {path}")
 
 
 def score_report(path: Path, payload: dict) -> tuple[str, dict[int, bool]]:
