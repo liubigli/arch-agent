@@ -29,6 +29,7 @@ from ..agent import (
     create_agent,
 )
 from ..pipeline.pipeline import SceneContext
+from ..tools import CSV_TOOL_NAMES
 from .grounding_checks import GroundingIssue, check_groundedness
 from .structured_reference import reference_for_question
 
@@ -53,6 +54,7 @@ class BenchmarkResult:
     question: str
     model: str
     question_id: int | None = None
+    condition: str = "full"
     expected_language: str | None = None
     language_ok: bool | None = None
     language_issue: str | None = None
@@ -144,8 +146,14 @@ def run_question(
     model: str,
     question: str,
     question_id: int | None = None,
+    condition: str = "full",
 ) -> BenchmarkResult:
-    result = BenchmarkResult(question=question, model=model, question_id=question_id)
+    result = BenchmarkResult(
+        question=question,
+        model=model,
+        question_id=question_id,
+        condition=condition,
+    )
     result.expected_language = _response_language(question)
 
     start = time.monotonic()
@@ -205,6 +213,7 @@ def _set_tool_selection_check(
     result: BenchmarkResult,
     ctx: SceneContext,
     reference_spec: dict | None = None,
+    condition: str = "full",
 ) -> None:
     if reference_spec is not None:
         expected = list(reference_spec.get("preferred_tools") or [])
@@ -214,6 +223,24 @@ def _set_tool_selection_check(
             result.question,
             present_labels={obj["semantic_label"] for obj in ctx.objects.values()},
         )
+
+    if condition != "full":
+        # The CSV tools are not bound to the agent in this condition, so a
+        # reference that prefers them cannot be satisfied. Routing is scored
+        # only on the tools the agent could actually call.
+        withheld = [name for name in expected if name in CSV_TOOL_NAMES]
+        expected = [name for name in expected if name not in CSV_TOOL_NAMES]
+        acceptable = [name for name in acceptable if name not in CSV_TOOL_NAMES]
+        if withheld and not expected:
+            result.expected_tools = []
+            result.acceptable_tools = acceptable
+            result.tool_selection_status = "not_applicable"
+            result.tool_selection_issue = (
+                "Preferred tools withheld in this condition: "
+                + ", ".join(sorted(withheld))
+            )
+            return
+
     result.expected_tools = expected
     result.acceptable_tools = acceptable
 
@@ -506,17 +533,25 @@ def run_benchmark(
     capture_reasoning: bool = False,
     think_override: bool | None = None,
     on_result=None,
+    condition: str = "full",
 ) -> list[BenchmarkResult]:
     agent = create_agent(
         ctx,
         model=model,
         capture_reasoning=capture_reasoning,
         think_override=think_override,
-        tool_mode="benchmark",
+        tool_mode="benchmark" if condition == "full" else "benchmark_graph",
     )
     results = []
     for question_id, question in enumerate(questions, start=1):
-        result = run_question(agent, ctx, model, question, question_id=question_id)
+        result = run_question(
+            agent,
+            ctx,
+            model,
+            question,
+            question_id=question_id,
+            condition=condition,
+        )
         results.append(result)
         if on_result:
             on_result(result)
@@ -527,10 +562,12 @@ def evaluate_benchmark(
     raw_results: list[BenchmarkResult],
     ctx: SceneContext,
     structured_reference: dict | None = None,
+    condition: str = "full",
 ) -> tuple[list[BenchmarkResult], dict]:
     evaluation_results: list[BenchmarkResult] = []
     for raw_result in raw_results:
         result = deepcopy(raw_result)
+        result.condition = condition
         reference_spec = reference_for_question(
             structured_reference,
             result.question_id,
@@ -544,12 +581,13 @@ def evaluate_benchmark(
         else:
             result.reference_answer = _try_answer_deterministic(ctx, result.question)
         _set_language_check(result)
-        _set_tool_selection_check(result, ctx, reference_spec)
+        _set_tool_selection_check(result, ctx, reference_spec, condition=condition)
         result.grounding_issues = check_groundedness(
             ctx,
             result.question,
             result.final_answer,
             reference_spec=reference_spec,
+            condition=condition,
         )
         evaluation_results.append(result)
     return evaluation_results, build_evaluation_summary(evaluation_results)

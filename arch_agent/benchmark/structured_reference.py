@@ -38,6 +38,7 @@ def reference_for_question(
         if entry.get("question_id") == question_id:
             resolved = deepcopy(entry)
             resolved["resolved_facts"] = _resolve_required_facts(payload, entry)
+            resolved["validation_policy"] = deepcopy(payload.get("validation_policy") or {})
             return resolved
     return None
 

@@ -21,6 +21,7 @@ class PipelineParams:
     use_normals: bool = False
     annotation_csv_path: str | None = None
     annotation_match_threshold: float = 2.0
+    skip_annotations: bool = False
 
     @property
     def csv_path(self) -> str:
@@ -58,9 +59,13 @@ def run_pipeline(params: PipelineParams) -> SceneContext:
     features = compute_object_features(objects, use_normals=params.use_normals)
     scene_features = compute_scene_features(objects)
 
-    annotation_csv = resolve_annotation_csv(
-        params.point_cloud_path,
-        explicit_path=params.annotation_csv_path,
+    annotation_csv = (
+        None
+        if params.skip_annotations
+        else resolve_annotation_csv(
+            params.point_cloud_path,
+            explicit_path=params.annotation_csv_path,
+        )
     )
     object_annotations = {}
     unmatched_annotations = []

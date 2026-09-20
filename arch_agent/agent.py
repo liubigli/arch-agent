@@ -25,7 +25,11 @@ from .pipeline.relationships import (
     mereological_relation_type,
     supports_label_pair,
 )
-from .tools.scene_tools import create_benchmark_scene_tools, create_scene_tools
+from .tools import (
+    BENCHMARK_GRAPH_TOOL_NAMES,
+    create_benchmark_scene_tools,
+    create_scene_tools,
+)
 from .settings import get_config
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "system.md"
@@ -117,11 +121,15 @@ def create_agent(
     think_override: bool | None = None,
     tool_mode: str = "full",
 ):
-    tools = (
-        create_benchmark_scene_tools(ctx)
-        if tool_mode == "benchmark"
-        else create_scene_tools(ctx)
-    )
+    if tool_mode == "benchmark":
+        tools = create_benchmark_scene_tools(ctx)
+    elif tool_mode == "benchmark_graph":
+        tools = create_benchmark_scene_tools(
+            ctx,
+            allowed_names=BENCHMARK_GRAPH_TOOL_NAMES,
+        )
+    else:
+        tools = create_scene_tools(ctx)
     profile = resolve_model_profile(model)
     llm_kwargs = {
         "model": model,

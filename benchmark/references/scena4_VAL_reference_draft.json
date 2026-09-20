@@ -8,7 +8,8 @@
     "Exact checks apply to counts, identities, materials, roles and explicit relationships.",
     "Interpretive questions use manual_assisted validation.",
     "A class mentioned with count 0 or explicit negation must not be treated as present.",
-    "Class counts and total object count are separate facts."
+    "Class counts and total object count are separate facts.",
+    "PROPOSTA DA VALIDARE (non ancora approvata): il campo 'expected_without_csv' descrive la risposta attesa nella condizione di ablation 'graph', in cui il CSV non viene caricato. 'abstention' = il valore non e recuperabile e il modello deve dichiararlo non disponibile; affermare un valore concreto e invenzione. 'abstention_or_role_only' = il valore CSV non e disponibile, ma il ruolo architettonico derivato da semantic_schema resta legittimo. 'manual_review' = la domanda cambia natura senza CSV e richiede revisione umana."
   ],
   "scene_facts": {
     "object_total": 33,
@@ -127,6 +128,25 @@
     "geometric_relations_do_not_imply_support": true,
     "unsupported_material_inference_is_error": true,
     "numeric_tolerance_coordinates_m": 0.02,
+    "abstention_markers_it": [
+      "non disponibile",
+      "non e disponibile",
+      "non \u00e8 disponibile",
+      "non risulta",
+      "non specificato",
+      "nessuna informazione",
+      "non presente nel grafo",
+      "dato assente",
+      "non posso determinare"
+    ],
+    "abstention_markers_en": [
+      "not available",
+      "no information",
+      "not specified",
+      "cannot determine",
+      "unknown",
+      "no data"
+    ],
     "allowed_result_states": [
       "grounded",
       "partially_grounded",
@@ -237,6 +257,7 @@
     },
     {
       "question_id": 12,
+      "expected_without_csv": "manual_review",
       "intent": "observation_inference_separation",
       "validation_mode": "manual_assisted",
       "preferred_tools": ["get_scene_statistics"],
@@ -271,6 +292,7 @@
     },
     {
       "question_id": 16,
+      "expected_without_csv": "abstention",
       "intent": "class_material",
       "validation_mode": "exact",
       "preferred_tools": ["count_objects", "count_objects_by_class", "get_object_annotation", "get_object_semantic_details"],
@@ -280,6 +302,7 @@
     },
     {
       "question_id": 17,
+      "expected_without_csv": "abstention_or_role_only",
       "intent": "class_function",
       "validation_mode": "semantic",
       "preferred_tools": ["get_object_annotation", "get_object_semantic_details"],
@@ -332,6 +355,7 @@
     },
     {
       "question_id": 23,
+      "expected_without_csv": "abstention",
       "intent": "class_count",
       "validation_mode": "set_and_value_exact",
       "preferred_tools": ["count_objects_by_class", "get_object_annotation"],
@@ -340,6 +364,7 @@
     },
     {
       "question_id": 24,
+      "expected_without_csv": "abstention_or_role_only",
       "intent": "class_count_whith_function",
       "validation_mode": "set_and_value_exact",
       "preferred_tools": ["count_objects_by_class", "list_objects","get_scene_statistics"],
@@ -382,6 +407,7 @@
     },
     {
       "question_id": 29,
+      "expected_without_csv": "abstention",
       "intent": "class_material",
       "validation_mode": "exact",
       "preferred_tools": ["count_objects", "count_objects_by_class"],
@@ -390,6 +416,7 @@
     },
     {
       "question_id": 30,
+      "expected_without_csv": "abstention_or_role_only",
       "intent": "class_function",
       "validation_mode": "semantic",
       "preferred_tools": ["get_object_annotation", "get_object_semantic_details"],
@@ -432,6 +459,7 @@
     },
     {
       "question_id": 35,
+      "expected_without_csv": "abstention",
       "intent": "class_material",
       "validation_mode": "exact",
       "preferred_tools": ["count_objects", "count_objects_by_class", "list object"],
@@ -440,6 +468,7 @@
     },
     {
       "question_id": 36,
+      "expected_without_csv": "abstention_or_role_only",
       "intent": "class_function",
       "validation_mode": "semantic",
       "preferred_tools": ["get_object_annotation", "get_object_semantic_details"],
@@ -603,6 +632,7 @@
     },
     {
       "question_id": 55,
+      "expected_without_csv": "abstention",
       "intent": "per_object_semantic_details",
       "validation_mode": "per_object_exact",
       "preferred_tools": ["get_object_semantic_details"],
@@ -612,6 +642,7 @@
     },
     {
       "question_id": 56,
+      "expected_without_csv": "abstention",
       "intent": "material_filtered_presence",
       "validation_mode": "set_exact",
       "preferred_tools": ["find_objects_by_material"],
@@ -638,6 +669,7 @@
     },
     {
       "question_id": 59,
+      "expected_without_csv": "abstention",
       "intent": "class_material_per_object",
       "validation_mode": "per_object_exact",
       "preferred_tools": ["get_object_semantic_details", "get_object_annotation"],
