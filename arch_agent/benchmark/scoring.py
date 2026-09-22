@@ -205,7 +205,15 @@ def _score_set(parsed, facts, spec, tool_output):
         if key == "present_classes":
             checks.append(_set_check("present_classes", parsed.classes_affirmed, set(expected)))
         elif key == "absent_classes":
-            checks.append(_set_check("absent_classes", parsed.classes_negated, set(expected)))
+            # "other" is a pseudo-class. The reference's own validation_policy
+            # warns that the ordinary word is not the class, and no model names
+            # it among the absent ones - but an answer that does is not wrong
+            # either, so it is excluded from the comparison both ways.
+            checks.append(_set_check(
+                "absent_classes",
+                parsed.classes_negated - {"other"},
+                set(expected) - {"other"},
+            ))
         elif key == "class_counts":
             checks.extend(_count_checks(parsed, expected))
         elif key == "annotated_count" and isinstance(expected, int):

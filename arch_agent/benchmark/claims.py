@@ -101,6 +101,21 @@ NEGATION_RE = re.compile(
     r"are\s+not\s+present|is\s+not\s+present)\b"
 )
 
+# Models write small counts as words at least as often as digits - "Two
+# door_window objects have a CSV material of Legno". The scene has at most a
+# few dozen objects of any class, so a short table covers it.
+NUMBER_WORDS = {
+    "zero": 0, "nessuno": 0, "nessuna": 0, "no": 0,
+    "uno": 1, "una": 1, "un": 1, "one": 1,
+    "due": 2, "two": 2, "tre": 3, "three": 3,
+    "quattro": 4, "four": 4, "cinque": 5, "five": 5,
+    "sei": 6, "six": 6, "sette": 7, "seven": 7,
+    "otto": 8, "eight": 8, "nove": 9, "nine": 9,
+    "dieci": 10, "ten": 10, "undici": 11, "eleven": 11,
+    "dodici": 12, "twelve": 12,
+}
+_NUMBER_WORD_RE = re.compile(r"\b(" + "|".join(sorted(NUMBER_WORDS, key=len, reverse=True)) + r")\b")
+
 _AFFIRM = ("si", "yes", "esatto", "corretto", "true", "confermo", "sono", "supportano")
 _DENY = ("no", "non", "not", "false", "nessun", "assente")
 
@@ -162,7 +177,10 @@ def extract(answer: str | None, policy: dict | None = None) -> Claims:
         relations=_relations(text, negation),
         roles=_roles(text, negation, negated=False),
         roles_negated=_roles(text, negation, negated=True),
-        numbers=[int(n) for n in re.findall(r"\b\d+\b", text)],
+        numbers=(
+            [int(n) for n in re.findall(r"\b\d+\b", text)]
+            + [NUMBER_WORDS[w] for w in _NUMBER_WORD_RE.findall(text)]
+        ),
         coordinates=_coordinates(text),
         polarity=_polarity(text),
         abstains=any(marker in text for marker in abstention),
@@ -261,6 +279,10 @@ def _number_beside(text: str, start: int, end: int, window: int = 26) -> int | N
     match = _NUMBER_BEFORE_RE.search(before)
     if match:
         return int(match.group(1))
+
+    word = re.search(r"\b(\w+)\s+\w*$", before)
+    if word and word.group(1) in NUMBER_WORDS:
+        return NUMBER_WORDS[word.group(1)]
     return None
 
 
