@@ -75,6 +75,25 @@ CASES = [
     (60, CORRECT, "I moldings sono elementi ornamentali, non strutturali.",
      "SCORER: a bare 'non' before a role word is not in the marker list"),
     (1, NOT_SCORED, "La scena e una sala con colonne e volte.", "semantic, needs judgement"),
+
+    # Found by the kappa annotation: every one of these was marked correct by a
+    # person and wrong by the scorer.
+    (3, CORRECT,
+     "Le classi semantiche presenti nella scena sono: colonna, porta/finestra, pavimento, "
+     "modanatura, volta e muro. Le classi assenti sono arco, scala e tetto.",
+     "SCORER: the next sentence's 'assenti' must not deny this one's classes"),
+    (46, CORRECT,
+     'The relationships that involve the arch class are not present in this scene, as there are '
+     'no objects of the "arch" semantic label. The count for the "arch" class is 0.',
+     "SCORER: one stray mention among several denials must not flip the class to asserted"),
+    (49, CORRECT,
+     "Si. Gli archi sono assenti in questa scena. Non e possibile osservare relazioni tra "
+     "gli archi e la volta poiche gli archi non sono presenti.",
+     "SCORER: a leading 'Si.' is a discourse marker, not an affirmative answer"),
+    (32, CORRECT,
+     "The relationships that involve the floor class are:\n* supports (floor -> column)\n"
+     "* rests_on (column -> floor)",
+     "SCORER: relations written as 'supports (floor -> column)'"),
 ]
 
 EXPECTED_COVERAGE = 49  # 50 once tool output is supplied: Q26 is scored against it

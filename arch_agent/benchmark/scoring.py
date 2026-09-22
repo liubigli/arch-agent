@@ -136,7 +136,14 @@ def _score_absence(parsed, facts, spec, tool_output):
         if key in _META_KEYS:
             continue
         if key == "answer":
-            denied = parsed.polarity is False or parsed.abstains
+            # "Si. Gli archi sono assenti in questa scena" opens with a
+            # discourse marker, not an affirmative answer. Treating the class
+            # as absent is the substance of the denial, so it counts.
+            absent_denied = any(
+                label in parsed.classes_negated
+                for label in (spec.get("scene_absent_classes") or [])
+            )
+            denied = parsed.polarity is False or parsed.abstains or absent_denied
             checks.append(("answer_is_negative", denied,
                            f"expected a negative answer, polarity={parsed.polarity}"))
         elif key.endswith("_relationships"):

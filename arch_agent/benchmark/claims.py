@@ -288,7 +288,11 @@ def _class_polarity(
         if counts.get(label) == 0:
             negated.add(label)
             continue
-        if all(_negated_at(text, pos, negation) for pos in positions):
+        # Any denial counts. A long answer repeats a class name several times -
+        # "no objects of the arch label ... the count for arch is 0" - and
+        # requiring every occurrence to sit next to a marker made one stray
+        # mention flip the whole answer to an assertion.
+        if any(_negated_at(text, pos, negation) for pos in positions):
             negated.add(label)
         else:
             affirmed.add(label)
@@ -308,11 +312,17 @@ def _negated_at(text: str, position: int, negation: tuple[str, ...], window: int
     """
     starts = [m.end() for m in _SENTENCE_SPLIT_RE.finditer(text) if m.end() <= position]
     sentence_start = starts[-1] if starts else 0
+    ends = [m.start() for m in _SENTENCE_SPLIT_RE.finditer(text) if m.start() > position]
+    sentence_end = ends[0] if ends else len(text)
+
     clause = text[sentence_start:position]
     if any(marker in clause for marker in negation) or NEGATION_RE.search(clause):
         return True
 
-    context = text[max(0, position - window):position + window]
+    # The window never leaves the sentence. "modanatura, volta e muro. Le
+    # classi assenti sono arco" would otherwise let the next sentence's
+    # "assenti" deny the three classes the first sentence affirms.
+    context = text[max(sentence_start, position - window):min(sentence_end, position + window)]
     return any(marker in context for marker in negation) or bool(NEGATION_RE.search(context))
 
 
@@ -324,9 +334,26 @@ def _relations(text: str, negation: tuple[str, ...] = ()) -> set[tuple[str, str,
     correct denial into a claim about a class the scene does not contain.
     """
     found: set[tuple[str, str, str]] = set()
+
+    # Models often list relations as "supports (floor -> column)", where the
+    # subject follows the relation instead of preceding it. Read that form
+    # first: looking backwards for a subject would pick up the previous list
+    # item.
+    consumed: list[tuple[int, int]] = []
+    for match in _ARROW_FORM_RE.finditer(text):
+        relation = _canonical_relation(match.group("rel"))
+        source, target = _canonical_class(match.group("src")), _canonical_class(match.group("tgt"))
+        if relation and source and target and not _directly_negated(text, match.start()):
+            found.add((source, relation, target))
+            consumed.append(match.span())
+
     for relation, aliases in RELATION_ALIASES.items():
         for alias in _sorted_aliases(aliases):
             for match in re.finditer(rf"\b{re.escape(alias)}\b", text):
+                # The arrow form already read this span; re-reading it with the
+                # positional heuristic invents triples out of its own operands.
+                if any(start <= match.start() < end for start, end in consumed):
+                    continue
                 if _directly_negated(text, match.start()) or (
                     negation and _negated_at(text, match.start(), negation, window=30)
                 ):
@@ -336,6 +363,28 @@ def _relations(text: str, negation: tuple[str, ...] = ()) -> set[tuple[str, str,
                 if subject and target:
                     found.add((subject, relation, target))
     return found
+
+
+_ARROW_FORM_RE = re.compile(
+    r"(?P<rel>[a-z_]+)\s*[\(:]\s*(?P<src>[a-z_]+(?:_\d+)?)\s*(?:->|=>|\u2192)\s*"
+    r"(?P<tgt>[a-z_]+(?:_\d+)?)"
+)
+
+
+def _canonical_relation(token: str) -> str | None:
+    for relation, aliases in RELATION_ALIASES.items():
+        if token == relation or token in aliases:
+            return relation
+    return None
+
+
+def _canonical_class(token: str) -> str | None:
+    if OBJECT_ID_RE.fullmatch(token):
+        return token
+    for label, aliases in CLASS_ALIASES.items():
+        if token == label or token in aliases:
+            return label
+    return None
 
 
 def _nearest_entity(text: str, position: int, backwards: bool, window: int = 60) -> str | None:
