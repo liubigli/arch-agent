@@ -136,7 +136,14 @@ def _score_absence(parsed, facts, spec, tool_output):
         if key in _META_KEYS:
             continue
         if key == "answer":
-            denied = parsed.polarity is False or parsed.abstains
+            # "Si. Gli archi sono assenti in questa scena" opens with a
+            # discourse marker, not an affirmative answer. Treating the class
+            # as absent is the substance of the denial, so it counts.
+            absent_denied = any(
+                label in parsed.classes_negated
+                for label in (spec.get("scene_absent_classes") or [])
+            )
+            denied = parsed.polarity is False or parsed.abstains or absent_denied
             checks.append(("answer_is_negative", denied,
                            f"expected a negative answer, polarity={parsed.polarity}"))
         elif key.endswith("_relationships"):
@@ -198,7 +205,15 @@ def _score_set(parsed, facts, spec, tool_output):
         if key == "present_classes":
             checks.append(_set_check("present_classes", parsed.classes_affirmed, set(expected)))
         elif key == "absent_classes":
-            checks.append(_set_check("absent_classes", parsed.classes_negated, set(expected)))
+            # "other" is a pseudo-class. The reference's own validation_policy
+            # warns that the ordinary word is not the class, and no model names
+            # it among the absent ones - but an answer that does is not wrong
+            # either, so it is excluded from the comparison both ways.
+            checks.append(_set_check(
+                "absent_classes",
+                parsed.classes_negated - {"other"},
+                set(expected) - {"other"},
+            ))
         elif key == "class_counts":
             checks.extend(_count_checks(parsed, expected))
         elif key == "annotated_count" and isinstance(expected, int):

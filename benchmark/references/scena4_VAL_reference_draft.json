@@ -9,6 +9,7 @@
     "Interpretive questions use manual_assisted validation.",
     "A class mentioned with count 0 or explicit negation must not be treated as present.",
     "Class counts and total object count are separate facts.",
+    "REVISIONE 2026-09-23, dopo la validazione con annotazione umana (kappa): sei voci corrette. Q29 riportava 'Graniglia o seminato' contro il CSV del benchmark e contro scene_facts, che dicono 'Ciottoli in pietra'. Q4 pretendeva che i modelli nominassero la pseudo-classe 'other'. Q23, Q24, Q56 e Q59 pretendevano fatti veri ma non richiesti dalla domanda posta: il conteggio degli oggetti annotati, gli id degli oggetti, il materiale per singolo oggetto. Quei fatti non sono stati cancellati ma spostati in 'additional_facts', che lo scorer non verifica.",
     "PROPOSTA DA VALIDARE (non ancora approvata): il campo 'expected_without_csv' descrive la risposta attesa nella condizione di ablation 'graph', in cui il CSV non viene caricato. 'abstention' = il valore non e recuperabile e il modello deve dichiararlo non disponibile; affermare un valore concreto e invenzione. 'abstention_or_role_only' = il valore CSV non e disponibile, ma il ruolo architettonico derivato da semantic_schema resta legittimo. 'manual_review' = la domanda cambia natura senza CSV e richiede revisione umana."
   ],
   "scene_facts": {
@@ -72,7 +73,7 @@
       },
       "floor": {
         "matched_objects": ["floor_0"],
-        "material": "Ciottoli in pietra ",
+        "material": "Ciottoli in pietra",
         "typology": "Pavimento continuo",
         "function": "Piano di calpestio"
       },
@@ -190,7 +191,8 @@
       "validation_mode": "set_exact",
       "preferred_tools": ["list_semantic_labels"],
       "acceptable_tools": ["count_objects_by_class", "get_scene_statistics"],
-      "required_facts": {"absent_classes": ["arch", "other", "roof", "stairs"]},
+      "required_facts": {"absent_classes": ["arch", "roof", "stairs"]},
+      "additional_facts": {"absent_classes_full": ["arch", "other", "roof", "stairs"]},
       "negated_class_mentions_are_valid": true
     },
     {
@@ -360,7 +362,8 @@
       "validation_mode": "set_and_value_exact",
       "preferred_tools": ["count_objects_by_class", "get_object_annotation"],
       "acceptable_tools": ["list_semantic_labels", "get_object_semantic_details"],
-      "required_facts": {"material": "Muratura laterizia intonacata", "annotated_count": 10, "unannotated_objects": ["wall_2"]}
+      "required_facts": {"material": "Muratura laterizia intonacata"},
+      "additional_facts": {"annotated_count": 10, "unannotated_objects": ["wall_2"]}
     },
     {
       "question_id": 24,
@@ -369,7 +372,8 @@
       "validation_mode": "set_and_value_exact",
       "preferred_tools": ["count_objects_by_class", "list_objects","get_scene_statistics"],
       "acceptable_tools": ["count_objects", "get_object_annotation", "get_object_semantic_details"],
-      "required_facts": {"function": "Delimitazione, sostegno delle volte e trasferimento dei carichi", "annotated_count": 10, "unannotated_objects": ["wall_2"]}
+      "required_facts": {"function": "Delimitazione, sostegno delle volte e trasferimento dei carichi"},
+      "additional_facts": {"annotated_count": 10, "unannotated_objects": ["wall_2"]}
     },
     {
       "question_id": 25,
@@ -412,7 +416,7 @@
       "validation_mode": "exact",
       "preferred_tools": ["count_objects", "count_objects_by_class"],
       "acceptable_tools": ["list_semantic_labels"],
-      "required_facts": {"floor_material": "Graniglia o seminato"}
+      "required_facts": {"floor_material": "Ciottoli in pietra"}
     },
     {
       "question_id": 30,
@@ -648,7 +652,8 @@
       "preferred_tools": ["find_objects_by_material"],
       "acceptable_tools": ["get_object_annotation", "get_object_semantic_details"],
       "required_tool_args": {"semantic_label": "door_window", "material_aliases": ["wood", "wooden", "legno"]},
-      "required_facts": {"answer": true, "count": 2, "objects": ["door_window_3", "door_window_7"]}
+      "required_facts": {"answer": true, "count": 2},
+      "additional_facts": {"objects": ["door_window_3", "door_window_7"]}
     },
     {
       "question_id": 57,
@@ -671,10 +676,11 @@
       "question_id": 59,
       "expected_without_csv": "abstention",
       "intent": "class_material_per_object",
-      "validation_mode": "per_object_exact",
+      "validation_mode": "exact",
       "preferred_tools": ["get_object_semantic_details", "get_object_annotation"],
       "acceptable_tools": [],
-      "required_facts_from": ["scene_facts.annotations.moldings.materials_by_object"]
+      "required_facts": {"molding_material_1": "Stucco o intonaco sagomato", "molding_material_2": "Muratura intonacata con elementi modanati in stucco"},
+      "additional_facts_from": ["scene_facts.annotations.moldings.materials_by_object"]
     },
     {
       "question_id": 60,

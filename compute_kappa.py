@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import random
 from collections import Counter
 from pathlib import Path
@@ -152,10 +153,20 @@ def interpret(kappa: float) -> str:
 
 
 def read_csv(path: Path) -> list[dict]:
+    """Read a sheet back, whatever the annotator's spreadsheet wrote.
+
+    Excel in an Italian locale saves CSV with ";" and a BOM, so the file that
+    comes back is not the file that went out. Sniffing the delimiter costs
+    nothing and avoids a confusing failure on the last step of the process.
+    """
     if not path.exists():
         raise SystemExit(f"File mancante: {path}")
-    with path.open(encoding="utf-8", newline="") as handle:
-        return list(csv.DictReader(handle))
+    text = path.read_text(encoding="utf-8-sig")
+    header = text.splitlines()[0] if text else ""
+    delimiter = ";" if header.count(";") > header.count(",") else ","
+    # StringIO, not splitlines: the answers contain newlines inside quoted
+    # fields, and splitting on lines first would tear them apart.
+    return list(csv.DictReader(io.StringIO(text), delimiter=delimiter))
 
 
 if __name__ == "__main__":
