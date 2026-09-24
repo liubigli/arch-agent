@@ -1,0 +1,644 @@
+<title>Valutare arch-agent</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Spectral:ital,wght@0,500;0,600;1,500&display=swap">
+<style>
+  :root {
+    --ground:    #f7f8fa;
+    --plate:     #ffffff;
+    --raise:     #eef1f6;
+    --ink:       #101418;
+    --ink-2:     #3d4757;
+    --muted:     #5a6472;
+    --line:      #dde2ea;
+    --line-soft: #e9edf3;
+    --accent:    #2a78d6;
+    --deep:      #1c3552;
+    --good:      #16704a;
+
+    --serif: "Spectral", "Iowan Old Style", Georgia, serif;
+    --sans:  "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono:  "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #101317; --plate: #171b21; --raise: #1e242c;
+      --ink: #eef1f5; --ink-2: #c3cbd6; --muted: #949eac;
+      --line: #2a313b; --line-soft: #222831;
+      --accent: #4a93e8; --deep: #9fc3ec; --good: #58b98b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #101317; --plate: #171b21; --raise: #1e242c;
+    --ink: #eef1f5; --ink-2: #c3cbd6; --muted: #949eac;
+    --line: #2a313b; --line-soft: #222831;
+    --accent: #4a93e8; --deep: #9fc3ec; --good: #58b98b;
+  }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding-inline: 20px; padding-block: 0 72px; }
+  .col { max-width: 68ch; }
+
+  h1, h2, h3 { font-family: var(--serif); text-wrap: balance; margin: 0; }
+  h1 { font-size: clamp(2rem, 5vw, 2.95rem); font-weight: 600; line-height: 1.12; letter-spacing: -0.015em; }
+  h2 { font-size: clamp(1.45rem, 3.3vw, 1.95rem); font-weight: 600; line-height: 1.2; }
+  h3 { font-size: 1.14rem; font-weight: 600; line-height: 1.3; }
+  p  { margin: 0; }
+
+  .eyebrow {
+    font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--muted);
+  }
+
+  header.mast { border-bottom: 1px solid var(--line); padding-block: 52px 38px;
+                display: flex; flex-direction: column; gap: 20px; }
+  .lede { font-size: 1.12rem; color: var(--ink-2); max-width: 62ch; }
+  .mast-meta { display: flex; flex-wrap: wrap; gap: 8px 26px;
+               font-family: var(--mono); font-size: 0.78rem; color: var(--muted); }
+  .mast-meta b { color: var(--ink-2); font-weight: 500; }
+
+  section { padding-block: 46px; border-bottom: 1px solid var(--line-soft); }
+  section:last-of-type { border-bottom: 0; }
+  .sec-head { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }
+  .stack { display: flex; flex-direction: column; gap: 18px; }
+
+  .scene { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+           gap: 1px; background: var(--line); border: 1px solid var(--line);
+           border-radius: 3px; overflow: hidden; }
+  .scene div { background: var(--plate); padding: 13px 16px; }
+  .scene .k { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.08em;
+              text-transform: uppercase; color: var(--muted); display: block; }
+  .scene .v { font-family: var(--serif); font-size: 1.45rem; font-weight: 600;
+              font-variant-numeric: tabular-nums; }
+  .scene .v small { font-family: var(--sans); font-size: 0.76rem; font-weight: 400; color: var(--muted); }
+
+  figure { margin: 0; }
+  .plate { background: #fcfcfb; border: 1px solid var(--line); border-radius: 4px;
+           padding: 10px; overflow-x: auto; }
+  .plate img { display: block; width: 100%; min-width: 600px; }
+  figcaption { color: var(--muted); font-size: 0.88rem; margin-top: 10px; max-width: 72ch; }
+
+  .tw { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+  th, td { text-align: left; padding: 9px 14px 9px 0; border-bottom: 1px solid var(--line-soft); }
+  th { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.08em;
+       text-transform: uppercase; color: var(--muted); font-weight: 500; white-space: nowrap; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; padding-right: 0; }
+  tbody tr:last-child td { border-bottom: 0; }
+  .mono { font-family: var(--mono); font-size: 0.88em; }
+
+  .demo { display: grid; gap: 14px; grid-template-columns: 1fr; }
+  @media (min-width: 720px) { .demo { grid-template-columns: 1fr 1fr; } }
+  .panel { border: 1px solid var(--line); border-radius: 4px; background: var(--plate);
+           padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+  .quote { font-family: var(--serif); font-style: italic; font-size: 1.02rem; color: var(--ink); }
+  .claims { font-family: var(--mono); font-size: 0.82rem; line-height: 1.75; color: var(--ink-2); }
+  .claims .ok  { color: var(--good); }
+  .claims .bad { color: var(--accent); font-weight: 500; }
+  .verdict { font-family: var(--mono); font-size: 0.74rem; letter-spacing: 0.08em;
+             text-transform: uppercase; border-top: 1px solid var(--line-soft);
+             padding-top: 10px; color: var(--muted); }
+  .verdict b { color: var(--ink); font-weight: 500; }
+
+  ol.steps { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column;
+             gap: 20px; counter-reset: s; }
+  ol.steps > li { display: grid; grid-template-columns: 34px 1fr; gap: 16px; counter-increment: s; }
+  ol.steps > li::before { content: counter(s); font-family: var(--mono); font-size: 0.78rem;
+                          color: var(--accent); border-top: 2px solid var(--accent); padding-top: 6px; }
+  ol.steps h3 { margin-bottom: 6px; }
+
+  .note { border-left: 2px solid var(--accent); padding: 2px 0 2px 18px; color: var(--ink-2); }
+  .note.flat { border-left-color: var(--line); }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 22px 32px; }
+  .stat .v { font-family: var(--serif); font-size: 2.3rem; font-weight: 600; line-height: 1;
+             font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  .stat .k { font-size: 0.86rem; color: var(--muted); margin-top: 6px; display: block; }
+
+  .cm { border-collapse: collapse; font-family: var(--mono); font-size: 0.86rem; width: auto; }
+  .cm td, .cm th { border: 1px solid var(--line); padding: 10px 14px; text-align: center; }
+  .cm th { background: var(--raise); text-transform: none; letter-spacing: 0; font-size: 0.74rem; }
+  .cm td.hit { background: var(--raise); font-weight: 500; }
+  .cm td.miss { color: var(--accent); font-weight: 500; }
+
+  ul.plain { margin: 0; padding-left: 1.1em; display: flex; flex-direction: column; gap: 8px; }
+
+  footer { padding-block: 32px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.86rem; }
+
+  @media print {
+    :root { --ground: #ffffff; --plate: #ffffff; --raise: #f2f4f8; --ink: #0d1116;
+            --ink-2: #333c49; --muted: #5a6472; --line: #ccd3de; --line-soft: #e2e7ee;
+            --accent: #1c5cab; --good: #14603f; }
+    body { font-size: 10.5pt; line-height: 1.5; }
+    .wrap { max-width: none; padding-inline: 0; padding-block: 0; }
+    h1 { font-size: 24pt; } h2 { font-size: 15pt; } h3 { font-size: 11.5pt; }
+    section { padding-block: 16pt; break-inside: auto; }
+    .sec-head, figure, .panel, .scene, .cm, ol.steps > li { break-inside: avoid; }
+    h2, h3 { break-after: avoid; }
+    .plate { overflow: visible; }
+    .plate img { min-width: 0; }
+    .col { max-width: none; }
+    header.mast { padding-block: 0 20pt; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="mast">
+    <span class="eyebrow">arch-agent · riunione interna · settembre 2026</span>
+    <h1>Un protocollo per valutare<br>un agente su nuvole di punti</h1>
+    <p class="lede">
+      Quello che presentiamo è lo strumento di misura, non le conclusioni. Con una
+      scena sola nessun numero qui autorizza a generalizzare — ma l'impianto che li
+      produce è costruito perché, quando le scene saranno più di una, le conclusioni
+      quantitative si possano trarre davvero.
+    </p>
+    <div class="mast-meta">
+      <span><b>60</b> domande</span>
+      <span><b>5</b> modelli</span>
+      <span><b>2</b> condizioni sperimentali</span>
+      <span>κ = <b>0,776</b></span>
+      <span><b>0</b> righe di codice per aggiungere una scena</span>
+    </div>
+  </header>
+
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">La tesi</span>
+      <h2>Perché difendiamo il metodo e non i risultati</h2>
+    </div>
+    <div class="col stack">
+      <p>
+        Su una scena l'unità statistica sono le domande, non le scene: qualunque
+        affermazione del tipo «questo modello è migliore su nuvole architettoniche»
+        sarebbe indifendibile. Quello che invece è già difendibile oggi è l'affermazione
+        più utile per il gruppo:
+      </p>
+      <p class="note">
+        <b>Esiste un apparato che, dato un nuovo rilievo e una giornata di annotazione,
+        produce numeri confrontabili, con un margine d'errore dichiarato e una misura
+        di quanto ci si possa fidare della misura stessa.</b>
+      </p>
+      <p>
+        Il resto di questo documento è la descrizione di quell'apparato e delle prove
+        che funziona. I risultati sui cinque modelli compaiono in fondo, come
+        dimostrazione che la macchina gira — non come conclusione.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">Il sistema sotto esame</span>
+      <h2>Che cosa risponde alle domande</h2>
+    </div>
+    <div class="stack">
+      <div class="col">
+        <p>
+          Da un <span class="mono">.laz</span> con etichette semantiche, DBSCAN estrae gli
+          oggetti e ne deriva un grafo spaziale. Su quello si innestano due strati distinti,
+          e la separazione fra i tre è la tesi del progetto, non un dettaglio.
+        </p>
+      </div>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Strato</th><th>Contenuto</th><th>Origine</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">L1</td>
+                <td>grafo spaziale: <span class="mono">near</span>, <span class="mono">supports</span>,
+                    <span class="mono">rests_on</span>, <span class="mono">is_opening_in</span></td>
+                <td>geometria</td></tr>
+            <tr><td class="mono">L2</td>
+                <td>materiale, tipologia, funzione, descrizione</td>
+                <td>CSV compilato da un architetto</td></tr>
+            <tr><td class="mono">L3</td>
+                <td>grafo CIDOC-CRM: tipi, materiali, aggregati</td>
+                <td>derivato da L1 e L2</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="col">
+        <p class="note flat">
+          Il vincolo che regge tutto: <b>il materiale non si inferisce mai dalla geometria</b>.
+          Una colonna è in <span class="mono">Breccia policroma</span> perché lo dice il CSV.
+          È anche ciò che rende possibile l'esperimento più avanti: togliendo il CSV,
+          quell'informazione diventa verificabilmente irraggiungibile.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">La scena e le domande</span>
+      <h2>scena4_VAL</h2>
+    </div>
+    <div class="stack">
+      <div class="scene">
+        <div><span class="k">column</span><span class="v">6</span></div>
+        <div><span class="k">wall</span><span class="v">11</span></div>
+        <div><span class="k">door_window</span><span class="v">8</span></div>
+        <div><span class="k">moldings</span><span class="v">6</span></div>
+        <div><span class="k">floor</span><span class="v">1</span></div>
+        <div><span class="k">vault</span><span class="v">1</span></div>
+        <div><span class="k">arch · roof · stairs</span><span class="v">0 <small>assenti</small></span></div>
+      </div>
+      <div class="col">
+        <p class="note flat">
+          Le tre classi assenti reggono <b>14 domande su 60</b>. Un modello che risponde
+          «due scale collegano i livelli» ha inventato un pezzo di edificio: è la trappola
+          per allucinazioni attorno a cui il set è costruito, e la famiglia che separa i
+          modelli più di ogni altra.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">Il metodo — parte prima</span>
+      <h2>Perché non si valuta la prosa</h2>
+    </div>
+    <div class="col stack">
+      <p>
+        Il primo validatore cercava espressioni regolari nel testo intero. Il rapporto di
+        settembre lo diceva apertamente: il tasso automatico «sottostima sensibilmente la
+        qualità reale del run». Falliva così:
+      </p>
+      <ul class="plain">
+        <li><span class="mono">«8 door_window»</span> letto come «8 oggetti in tutto nella scena».</li>
+        <li><span class="mono">«roof: 0»</span> letto come affermazione che il tetto è presente.</li>
+        <li>Gli identificatori numerati negli elenchi scambiati per conteggi.</li>
+      </ul>
+      <p>
+        Non è un problema di soglie. Si stava confrontando <b>prosa</b> con <b>fatti</b>, quindi
+        il punteggio dipendeva dallo stile di scrittura: un modello che formatta in elenchi
+        markdown veniva punito rispetto a uno che scrive frasi distese, a parità di correttezza.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">Il metodo — parte seconda</span>
+      <h2>Ridurre la risposta a ciò che afferma</h2>
+    </div>
+    <div class="stack">
+      <div class="col stack">
+        <p>
+          La valutazione è spezzata in due passi. Prima la risposta viene ridotta a un insieme
+          normalizzato di affermazioni; solo dopo, quelle vengono confrontate con il riferimento.
+        </p>
+        <p>
+          L'estrazione è <b>a regole, non con un secondo LLM</b>: il dominio è chiuso e lo
+          conosciamo per intero — dieci classi con i loro sinonimi italiani e inglesi, quattordici
+          tipi di relazione, identificatori con un unico schema. Un estrattore LLM aggiungerebbe
+          una seconda fonte di errore che nessuno sta misurando.
+        </p>
+      </div>
+      <div class="demo">
+        <div class="panel">
+          <span class="eyebrow">Risposta · llama3.1 · Q18</span>
+          <p class="quote">«Sì. Le colonne sono elementi strutturali, in quanto supportano il tetto.»</p>
+          <p class="claims">
+            ruoli&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <span class="ok">{structural}</span><br>
+            relazioni <span class="bad">{(column, supports, roof)}</span>
+          </p>
+          <p class="verdict">esito <b>non corretto</b> — <span class="mono">roof</span> non esiste nella scena</p>
+        </div>
+        <div class="panel">
+          <span class="eyebrow">Risposta · gemma4:31b · Q6</span>
+          <p class="quote">«- **wall**: 11 · - **door_window**: 8 · - **column**: 6»</p>
+          <p class="claims">
+            conteggi <span class="ok">{wall: 11, door_window: 8, column: 6}</span><br>
+            totale&nbsp;&nbsp;&nbsp; <span class="ok">nessuno dichiarato</span>
+          </p>
+          <p class="verdict">esito <b>corretto</b> — il numero si lega al nome di classe più vicino</p>
+        </div>
+      </div>
+      <div class="col">
+        <p class="note">
+          L'affermazione su una classe assente è <b>squalificante</b>, non un errore parziale.
+          Contano tre cose: nominarne un oggetto, contarne, metterla in relazione. Una menzione
+          nuda non basta — la tipologia nel CSV è letteralmente «apertura ad arco» e la funzione
+          della volta è una «copertura», quindi quelle parole compaiono in risposte sane.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">Il metodo — parte terza</span>
+      <h2>Un criterio per ogni tipo di domanda</h2>
+    </div>
+    <div class="stack">
+      <div class="tw">
+        <table>
+          <thead><tr><th>Famiglia</th><th class="n">Domande</th><th>Confronto</th></tr></thead>
+          <tbody>
+            <tr><td>Valore esatto</td><td class="n">18</td><td>conteggio, materiale o ruolo atteso</td></tr>
+            <tr><td>Assenza</td><td class="n">11</td><td>la risposta nega la premessa</td></tr>
+            <tr><td>Insiemi</td><td class="n">11</td><td>precision e recall sull'insieme</td></tr>
+            <tr><td>Coerenza con i tool</td><td class="n">4</td><td>ogni relazione citata esiste nell'output dello strumento</td></tr>
+            <tr><td>Conteggi, per oggetto, relazioni, coordinate</td><td class="n">6</td><td>dizionario, attributi, triple, tolleranza 0,02 m</td></tr>
+            <tr><td><i>Interpretative</i></td><td class="n">10</td><td><i>non valutate automaticamente</i></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="col stack">
+        <p>
+          <b>Cinquanta domande su sessanta</b> sono verificabili senza giudizio umano. Le altre
+          restano fuori dal conteggio invece di essere contate come sbagliate: una copertura
+          dichiarata vale più di un'accuratezza gonfiata.
+        </p>
+        <p class="note flat">
+          Lo scoring è <b>disaccoppiato dall'esecuzione</b>: rilegge le risposte già salvate.
+          Migliorare il giudizio costa un rilancio dello script, non un'ora di GPU. È la ragione
+          per cui è stato possibile correggerlo dodici volte in pochi giorni senza rifare un solo
+          benchmark — e la ragione per cui il protocollo può ancora evolvere senza invalidare i dati.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">Il metodo — parte quarta</span>
+      <h2>Validare il validatore</h2>
+    </div>
+    <div class="stack">
+      <div class="col">
+        <p>
+          A questo punto lo scorer produce numeri, ma nulla dice che coincidano con il giudizio
+          di una persona. Misurarlo è il passo che rende presentabile tutto il resto — ed è il
+          passo che la maggior parte delle valutazioni automatiche salta.
+        </p>
+      </div>
+      <ol class="steps col">
+        <li><div>
+          <h3>Campione stratificato per modello</h3>
+          <p>Sessanta risposte, dodici per modello, seme fisso. Stratificate per modello e
+          <b>non</b> per verdetto dello scorer: bilanciare fra corrette e sbagliate cambierebbe
+          le frequenze marginali, ed è da quelle che κ si calcola.</p>
+        </div></li>
+        <li><div>
+          <h3>Annotazione cieca</h3>
+          <p>L'annotatrice vede domanda, risposta e fatto atteso. Non vede il verdetto automatico,
+          che sta in un file separato. Chi vede prima il verdetto lo conferma, non lo valida.</p>
+        </div></li>
+        <li><div>
+          <h3>Regole di giudizio dichiarate prima</h3>
+          <p>Parziale vale non corretto; lingua e formulazione non contano; astenersi è corretto
+          solo quando il dato davvero manca; inventare è sempre sbagliato. Senza regole comuni,
+          κ misura un disaccordo di definizione invece che di giudizio.</p>
+        </div></li>
+        <li><div>
+          <h3>Accordo corretto per il caso</h3>
+          <p>Due valutatori che dicono «corretto» nell'80% dei casi si accordano nel 70% per puro
+          caso. L'accordo grezzo non è una misura; κ toglie quella quota.</p>
+        </div></li>
+      </ol>
+      <div class="col stack">
+        <div class="stats">
+          <div class="stat"><span class="v">93,0%</span><span class="k">accordo grezzo</span></div>
+          <div class="stat"><span class="v">68,6%</span><span class="k">atteso per caso</span></div>
+          <div class="stat"><span class="v">0,776</span><span class="k">Cohen's κ · IC 95% [0,52–0,95]</span></div>
+        </div>
+        <div class="tw">
+          <table class="cm">
+            <thead><tr><th></th><th>scorer: corretto</th><th>scorer: sbagliato</th></tr></thead>
+            <tbody>
+              <tr><th>umano: corretto</th><td class="hit">44</td><td class="miss">4</td></tr>
+              <tr><th>umano: sbagliato</th><td class="miss">0</td><td class="hit">9</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">
+          <b>Zero</b> in basso a sinistra: lo scorer non ha mai accettato una risposta che una
+          persona giudica sbagliata. Sbaglia solo per eccesso di severità, il che rende le
+          accuratezze <b>limiti inferiori</b>. Per un benchmark che misura allucinazioni, è la
+          direzione giusta in cui sbagliare.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">L'argomento centrale</span>
+      <h2>Il metodo ha trovato i propri errori</h2>
+    </div>
+    <div class="col stack">
+      <p>
+        La prima misura è uscita a <b>κ = 0,387</b>: non presentabile. È il risultato più
+        importante dell'intero lavoro, perché il disaccordo non era rumore — <b>indicava dove
+        guardare</b>, e in due direzioni diverse.
+      </p>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Dopo</th><th class="n">κ</th><th class="n">Disaccordi</th><th>Che cosa era emerso</th></tr></thead>
+          <tbody>
+            <tr><td>prima misura</td><td class="n">0,387</td><td class="n">16</td><td>—</td></tr>
+            <tr><td>correzione dell'estrattore</td><td class="n">0,515</td><td class="n">11</td><td>5 difetti di parsing</td></tr>
+            <tr><td>correzione del riferimento</td><td class="n">0,776</td><td class="n">4</td><td>6 difetti del gold stesso</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        I difetti dell'estrattore erano cose come: la finestra di negazione scavalcava il confine
+        di frase, un «Sì.» iniziale letto come risposta affermativa invece che come segnale di
+        discorso, le relazioni scritte <span class="mono">supports (floor → column)</span> illeggibili.
+      </p>
+      <p>
+        I difetti del riferimento erano più interessanti: Q29 pretendeva un materiale del pavimento
+        in contraddizione con il CSV; Q4 pretendeva che i modelli nominassero <span class="mono">other</span>,
+        che è una pseudo-classe; quattro domande pretendevano fatti veri <b>che la domanda non chiede</b>.
+        A «di che materiale sono i muri?» si risponde con il materiale, non anche con il numero di
+        oggetti annotati.
+      </p>
+      <p class="note">
+        Questo è l'argomento da difendere in riunione. Non «i nostri numeri sono giusti», ma
+        <b>«abbiamo un modo per accorgerci quando non lo sono, e ha funzionato due volte su due»</b>.
+        Dei quattro disaccordi residui, tre non sono nemmeno dello scorer: due annotazioni generose
+        e una risposta che dà un conteggio dove la domanda chiedeva un elenco.
+      </p>
+      <p class="note flat">
+        Vale la pena aggiungere che l'errore è attribuibile su <b>due livelli indipendenti</b>:
+        <span class="mono">validate_triples</span> misura il grafo spaziale contro un gold annotato
+        da un architetto, lo scorer misura l'LLM contro il riferimento. Quando l'agente sbaglia si
+        può dire di chi è la colpa. Gran parte della letteratura LLM+grafo di conoscenza non separa
+        i due livelli.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">Il metodo — parte quinta</span>
+      <h2>Quali differenze sono reali</h2>
+    </div>
+    <div class="stack">
+      <div class="col">
+        <p>
+          Tutti i modelli rispondono <b>alle stesse domande</b>: i dati sono appaiati. Con 50 item
+          l'intervallo su una proporzione attorno all'80% è di circa ±11 punti — confrontare due
+          accuratezze come campioni indipendenti non farebbe passare quasi nulla. Il test di
+          McNemar guarda solo le domande su cui i due modelli divergono, nella forma esatta perché
+          le discordanze sono poche, con correzione di Bonferroni sui dieci confronti.
+        </p>
+      </div>
+      <figure>
+        <div class="plate"><img src="figures/mcnemar-matrix.png" alt="Matrice dei confronti a coppie: i tre modelli migliori non sono distinguibili fra loro"></div>
+        <figcaption>Triangolo inferiore, modelli ordinati per accuratezza. Blu dove la differenza si risolve, grigio dove no.</figcaption>
+      </figure>
+      <div class="col">
+        <p class="note">
+          <b>gemma4:31b non è «il migliore».</b> Il suo 90% contro l'86% di gpt-oss non supera il
+          test. Ciò che i dati sostengono è una struttura a fasce, non una classifica — ed è
+          esattamente il tipo di disciplina che il protocollo serve a imporre.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">Il metodo — parte sesta</span>
+      <h2>Una manipolazione controllata</h2>
+    </div>
+    <div class="stack">
+      <div class="col stack">
+        <p>
+          La seconda condizione sperimentale toglie il layer CSV. Non nascondendo gli strumenti,
+          ma <b>non caricandolo affatto</b>: i valori finiscono nei nodi del grafo, quindi
+          nasconderli soltanto avrebbe lasciato che un tool geometrico li rivelasse.
+        </p>
+        <p>
+          Segmentazione, feature e grafo spaziale restano identici — 33 oggetti e 170 archi in
+          entrambe le condizioni. <b>L'unica variabile manipolata è la disponibilità della
+          conoscenza umana.</b>
+        </p>
+      </div>
+      <figure>
+        <div class="plate"><img src="figures/withheld-csv-outcomes.png" alt="Esiti sulle 11 domande il cui dato è stato sottratto: gemma si astiene 10 volte su 11, llama3.1 inventa 10 volte su 11, command-r non risponde 10 volte su 11"></div>
+        <figcaption>
+          Le 11 domande su materiale, tipologia e funzione, con il CSV non caricato. La risposta
+          corretta è dichiarare che il dato non è raggiungibile.
+        </figcaption>
+      </figure>
+      <div class="col">
+        <p class="note">
+          I tre esiti sono tenuti separati per una ragione metodologica. <b>command-r sembrerebbe
+          il peggiore con zero astensioni — ma non inventa: non risponde affatto</b>, dieci volte
+          su undici. È il ciclo dell'agente che si interrompe, non un'allucinazione. Collassare le
+          due cose avrebbe raccontato il falso su quel modello.
+        </p>
+      </div>
+      <figure>
+        <div class="plate"><img src="figures/conditions-dumbbell.png" alt="Confronto appaiato fra le due condizioni: tutti i modelli peggiorano senza CSV, due differenze superano il test"></div>
+        <figcaption>
+          Confronto appaiato sulle 42 domande la cui risposta attesa non cambia fra le condizioni.
+          Le 11 che dipendono dal CSV sono escluse: senza CSV la risposta corretta non è il valore
+          ma dichiararne l'assenza, e confrontarle misurerebbe due compiti diversi.
+        </figcaption>
+      </figure>
+      <div class="col">
+        <p>
+          Tutti peggiorano senza il CSV, ma solo due differenze si risolvono: gpt-oss −24 punti
+          (p = 0,006) e qwen3.5 −26 (p = 0,035). Va letto accanto a un secondo dato: <b>le risposte
+          vuote passano da 0 a un intervallo fra 5 e 15</b>. Parte di ciò che sembra un calo di
+          ragionamento è l'agente che smette di produrre output.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">Risultati</span>
+      <h2>Dove i modelli cedono</h2>
+    </div>
+    <div class="stack">
+      <figure>
+        <div class="plate"><img src="figures/accuracy-heatmap.png" alt="Heatmap dell'accuratezza per modello e famiglia di domande"></div>
+        <figcaption>
+          Percentuale di risposte pienamente corrette. Le colonne portano il numero di domande
+          dietro ogni cella, e una riga separa le famiglie che poggiano su quattro domande o meno.
+        </figcaption>
+      </figure>
+      <div class="col">
+        <p>
+          Il profilo d'errore è più informativo del posizionamento. <b>qwen3.5</b> ha l'accuratezza
+          più alta sui valori singoli (95%) ma crolla sugli insiemi (45%): azzecca il numero e
+          sbaglia l'elenco. <b>command-r</b> incapsula gli argomenti dei tool in uno schema che
+          l'adattatore non riconosce — la sua difficoltà non è architettonica ma di protocollo.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">Il passo successivo</span>
+      <h2>Che cosa serve per la scena 2</h2>
+    </div>
+    <div class="stack">
+      <div class="tw">
+        <table>
+          <thead><tr><th>Serve</th><th>Costo</th><th>Chi</th></tr></thead>
+          <tbody>
+            <tr><td>Il rilievo <span class="mono">.laz</span> con etichette semantiche</td><td>—</td><td>già disponibile</td></tr>
+            <tr><td>Il CSV di annotazione</td><td>mezza giornata</td><td>architetto</td></tr>
+            <tr><td>Riferimento strutturato per le 60 domande</td><td>una giornata</td><td>annotatore</td></tr>
+            <tr><td>Esecuzione dei benchmark, due condizioni</td><td>~1 ora di GPU</td><td>automatico</td></tr>
+            <tr><td>Scoring, κ, McNemar, figure</td><td>minuti</td><td>automatico</td></tr>
+            <tr><td><b>Modifiche al codice</b></td><td><b>nessuna</b></td><td>—</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="col">
+        <p class="note">
+          È questa la riga che conta per il gruppo: l'apparato non contiene nulla di specifico
+          alla scena4. Estrattore, scorer, condizioni, annotazione cieca, test statistici e figure
+          leggono tutti dal riferimento strutturato. <b>Con tre o quattro scene le conclusioni
+          quantitative diventano legittime</b>, e il costo marginale di ciascuna è una giornata
+          di annotazione.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">Limiti</span>
+      <h2>Che cosa questi numeri non dicono</h2>
+    </div>
+    <div class="col stack">
+      <ul class="plain">
+        <li><b>Una scena sola.</b> Nulla qui autorizza a generalizzare ad altre geometrie o dataset.</li>
+        <li><b>Dieci domande su sessanta</b> restano al giudizio umano: la copertura dell'83% è dichiarata, non aggirata.</li>
+        <li><b>L'intervallo su κ è largo</b> — [0,52 – 0,95] su 57 voci. La cifra puntuale non va letta come precisa.</li>
+        <li><b>Il parametro <span class="mono">think</span> non ha avuto effetto</b>: fra varianti attive e disattive cambiano da zero a cinque risposte su sessanta, con latenze identiche.</li>
+        <li><b>Lo scorer sbaglia per severità</b>, quindi le accuratezze sono limiti inferiori.</li>
+        <li><b>Quattro disaccordi con l'annotazione restano aperti</b>, tre dei quali riguardano l'annotazione e non lo scorer.</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer class="col">
+    <p>
+      Benchmark del 17 settembre 2026 (condizione completa) e del 22 settembre (condizione senza
+      CSV) su <span class="mono">scena4_VAL</span>, cinque modelli Ollama locali. Riferimento
+      strutturato approvato e revisionato il 23 settembre dopo la validazione con annotazione
+      umana. Tutte le metriche e le figure sono rigenerabili dai report grezzi senza rilanciare
+      i modelli.
+    </p>
+  </footer>
+
+</div>
