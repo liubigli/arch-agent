@@ -1,0 +1,11 @@
+﻿condition,model,questions,routing_scored,optimal_routing_pct,acceptable_routing_pct,clean_acceptable_routing_pct,argument_accuracy_pct,answer_accuracy_pct,answer_partial_credit_pct,scoring_coverage_pct,operational_success_pct,abstention_accuracy_pct,unsupported_id_answers,legacy_grounded_pct,language_accuracy_pct,avg_tool_calls,invalid_tool_attempts,questions_with_invalid_tool,avg_latency_s,errors
+full_csv,command-r,60,60,68.3,83.3,83.3,10.0,42.0,48.5,83.3,55.0,,1,63.3,100.0,1.27,0,0,4.673,0
+full_csv,gemma4:31b,60,60,83.3,96.7,93.3,100.0,90.0,94.0,83.3,96.7,,0,90.0,98.3,1.28,2,2,15.134,0
+full_csv,gpt-oss:20b,60,60,75.0,90.0,90.0,100.0,86.0,88.1,83.3,90.0,,0,83.3,96.7,1.05,0,0,3.223,0
+full_csv,llama3.1,60,60,60.0,78.3,78.3,95.0,60.0,66.7,83.3,76.7,,0,75.0,100.0,0.97,0,0,1.396,0
+full_csv,qwen3.5,60,60,81.7,98.3,98.3,90.0,78.0,80.6,83.3,85.0,,0,73.3,88.3,1.23,0,0,3.653,0
+graph_no_csv,command-r,60,54,66.7,79.6,79.6,10.0,40.0,47.0,83.3,46.7,0.0,0,70.0,81.7,1.27,0,0,9.261,0
+graph_no_csv,gemma4:31b,60,54,72.2,83.3,75.9,65.0,64.0,65.6,83.3,78.3,72.7,0,73.3,88.3,1.7,14,13,32.629,6
+graph_no_csv,gpt-oss:20b,60,54,55.6,70.4,70.4,65.0,50.0,53.6,83.3,66.7,27.3,0,66.7,86.7,1.02,14,12,3.518,7
+graph_no_csv,llama3.1,60,54,46.3,61.1,61.1,70.0,48.0,53.8,83.3,55.0,0.0,0,75.0,91.7,0.82,0,0,1.22,5
+graph_no_csv,qwen3.5,60,54,66.7,79.6,75.9,60.0,40.0,44.5,83.3,60.0,9.1,0,63.3,75.0,1.98,24,12,4.996,5

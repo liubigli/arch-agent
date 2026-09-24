@@ -1,0 +1,211 @@
+CONFRONTO QUALITATIVO DELLE RISPOSTE DEI MODELLI
+Benchmark scena4_VAL con CSV - think=true
+=================================================
+
+SCOPO
+-----
+Questo confronto valuta costruzione della frase, chiarezza, sintesi,
+leggibilita e organizzazione della risposta. La qualita stilistica viene
+considerata separatamente dalla correttezza tecnica e dal grounding.
+
+
+1. RISPOSTA SINTETICA
+---------------------
+Domanda: "Di che materiale sono le colonne?"
+
+GPT-OSS:20b
+"Le colonne sono realizzate in Breccia policroma."
+
+Valutazione: e la formulazione migliore per una domanda diretta. E completa,
+naturale e priva di contenuto superfluo.
+
+Gemma4:31b
+"Le colonne (column_0, column_1, column_2, column_3, column_4, column_5)
+sono in Breccia policroma."
+
+Valutazione: corretta e piu documentale. Gli identificatori sono utili per
+la tracciabilita, ma non erano indispensabili per la domanda.
+
+Qwen3.5
+"Le colonne sono realizzate in breccia policroma. Si tratta di colonne
+doriche che sostengono le volte e scandiscono lo spazio architettonico."
+
+Valutazione: ben scritta, ma aggiunge tipologia e funzione non richieste.
+E piu narrativa e meno controllata.
+
+Llama3.1
+"Osservato dai dati: Le colonne sono in marmo."
+
+Valutazione: frase semplice, ma materiale inventato. Una forma linguistica
+corretta non compensa la mancanza di grounding.
+
+
+2. DESCRIZIONE DELLA SCENA
+--------------------------
+Domanda: "Come descriveresti la scena in modo sintetico?"
+
+GPT-OSS:20b
+"La scena e composta da 33 oggetti e 262 relazioni spaziali/architettoniche.
+Le classi presenti sono: colonne (6), porte/finestra (8), pavimento (1),
+modanature (6), volta (1) e muri (11)."
+
+Valutazione: risposta equilibrata, con apertura sintetica, dati ordinati e
+terminologia comprensibile.
+
+Gemma4:31b
+"La scena e composta da 33 oggetti distribuiti tra diverse classi
+semantiche: 11 wall, 8 door_window, 6 column, 6 moldings, 1 vault e 1 floor."
+
+Valutazione: molto precisa, ma mescola italiano e nomi tecnici inglesi.
+E adatta a un report tecnico, meno a un pubblico generale.
+
+Command-R
+"La scena rappresenta un ambiente interno con una volta a botte e colonne
+che sostengono il soffitto."
+
+Valutazione: frase naturale e architettonicamente leggibile, ma introduce
+"volta a botte" e "soffitto" senza evidenza. E un esempio di risposta
+linguisticamente convincente ma semanticamente rischiosa.
+
+Llama3.1
+"Le classi semantiche presenti sono la colonna, la finestra/porta, il
+pavimento, i modanature, la volta e il muro."
+
+Valutazione: costruzione meno naturale. Singolare e plurale sono incoerenti
+e "i modanature" e grammaticalmente errato.
+
+
+3. RELAZIONI DEI MURI
+---------------------
+Domanda: "What relationships involve the wall class?"
+
+GPT-OSS:20b organizza la risposta in tabella:
+
+Relation type | Direction | Notes
+geometric:adjacent_to | wall <-> moldings, columns, door_window, other walls
+architectural_rule:supports/rests_on | floor -> wall; wall -> floor
+
+Valutazione: formato migliore per confrontare relazioni. Distingue tipo,
+direzione e significato.
+
+Gemma4:31b usa sezioni:
+
+Geometric relations: Adjacent to, Near
+Architectural relations: Supports/Rests on
+Composition relations: ...
+
+Valutazione: molto completa e ben organizzata, ma tende alla prolissita.
+
+Qwen3.5 aggiunge una breve spiegazione a ogni relazione.
+
+Valutazione: didattico e leggibile, ma rischia di trasformare una richiesta
+di elenco in un'interpretazione estesa.
+
+Llama3.1
+"The relationships involving the wall class are: adjacent_to between
+moldings and walls."
+
+Valutazione: troppo incompleta; cita una sola relazione nonostante il tool
+ne restituisca diverse.
+
+Command-R
+"Walls are adjacent to mouldings, columns, doors and windows, vaults, and
+other walls."
+
+Valutazione: fluida, ma troppo generica. Non conserva direzione,
+identificatori e livelli di evidenza.
+
+
+4. CLASSE ASSENTE
+-----------------
+Domanda: "Le colonne supportano il tetto?"
+
+GPT-OSS:20b
+"No. Il tetto non e presente nella scena, quindi non ci sono colonne che lo
+supportino."
+
+Valutazione: formulazione migliore; risposta immediata, causa esplicita e
+nessuna sovrainterpretazione.
+
+Gemma4:31b
+"No. Il tetto e assente nella scena (0 oggetti), pertanto non vi e alcuna
+evidenza di una relazione di supporto tra le colonne e il tetto."
+
+Valutazione: piu formale e rigorosa. E particolarmente adatta a un rapporto
+scientifico.
+
+Qwen3.5
+"No, le colonne non supportano il tetto perche nella scena non sono presenti
+oggetti classificati come roof."
+
+Valutazione: corretta e chiara, anche se piu lunga. Il validatore automatico
+l'ha segnata erroneamente come incorrect; questo caso dimostra l'importanza
+della revisione manuale.
+
+Llama3.1
+"Si. Nessuna evidenza diretta per le relazioni tra colonne e tetto poiche il
+tetto e assente nel modello."
+
+Valutazione: risposta internamente contraddittoria. L'apertura affermativa
+nega la spiegazione successiva.
+
+
+5. RISPOSTA COMPLESSA
+---------------------
+Domanda: "Puoi indicare, per ogni porta/finestra, materiale, tipologia e
+funzione?"
+
+GPT-OSS:20b produce una tabella con le colonne:
+
+ID | Materiale | Tipologia | Funzione
+
+Valutazione: soluzione piu efficace per una presentazione aziendale. E
+confrontabile, compatta e facilmente verificabile.
+
+Gemma4:31b usa un elenco puntato per ogni oggetto.
+
+Valutazione: completo e leggibile, ma meno immediato quando gli oggetti sono
+numerosi.
+
+Qwen3.5 aggiunge anche una descrizione sintetica.
+
+Valutazione: risultato ricco e professionale, ma supera quanto richiesto.
+
+Llama3.1 aggrega tutti i valori in un'unica frase:
+"Il materiale e Vetro e metallo o Legno, la tipologia e Apertura ad arco o
+Porta d'ingresso..."
+
+Valutazione: frase grammaticalmente corretta, ma perde l'associazione tra
+ciascun oggetto e i suoi attributi.
+
+
+VALUTAZIONE STILISTICA COMPLESSIVA
+---------------------------------
+1. GPT-OSS:20b
+   Miglior equilibrio tra sintesi, struttura e leggibilita.
+
+2. Gemma4:31b
+   Piu rigoroso e completo, talvolta eccessivamente lungo.
+
+3. Qwen3.5
+   Linguaggio ricco e didattico, ma tende ad aggiungere interpretazioni o
+   dettagli non richiesti.
+
+4. Command-R
+   Naturale e conciso, ma spesso generico o non sufficientemente grounded.
+
+5. Llama3.1
+   Veloce e talvolta diretto, ma presenta omissioni, incoerenze e
+   contraddizioni.
+
+
+CONCLUSIONE
+-----------
+Per una presentazione aziendale, GPT-OSS:20b offre la migliore costruzione
+della risposta. Gemma4:31b e preferibile quando servono risposte tecniche
+complete e tracciabili. Qwen3.5 e efficace per risposte descrittive e
+didattiche, ma richiede un maggiore controllo sulle aggiunte interpretative.
+
+Il giudizio stilistico non sostituisce la valutazione di correttezza. Una
+risposta puo essere linguisticamente convincente ma non grounded, oppure
+tecnicamente corretta ma poco leggibile.
