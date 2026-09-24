@@ -109,7 +109,22 @@ def draw_matrix(names, results, args) -> None:
     from matplotlib.patches import Patch
 
     n = len(names)
-    corrected = args.alpha / (n * (n - 1) / 2)
+    pair_count = int(n * (n - 1) / 2)
+    corrected = args.alpha / pair_count
+    # Counted, not asserted: the caption used to claim every marked difference
+    # survived the correction, which stopped being true when the scores moved.
+    resolved = survived = 0
+    scored_n = 0
+    for row in range(1, n):
+        for col in range(row):
+            first, second = names[col], names[row]
+            shared = sorted(set(results[first]) & set(results[second]))
+            scored_n = max(scored_n, len(shared))
+            b = sum(1 for q in shared if results[first][q] and not results[second][q])
+            c = sum(1 for q in shared if not results[first][q] and results[second][q])
+            p_value = mcnemar_exact(b, c)
+            resolved += p_value < args.alpha
+            survived += p_value < corrected
     fig, ax = plt.subplots(figsize=(1.45 * n + 1.6, 0.82 * n + 2.3))
     fig.patch.set_facecolor(SURFACE)
     ax.set_facecolor(SURFACE)
@@ -149,7 +164,8 @@ def draw_matrix(names, results, args) -> None:
     fig.text(0.012, 0.965, "Quali differenze tra modelli sono reali",
              fontsize=14, color=INK, fontweight="bold", ha="left", va="top")
     fig.text(0.012, 0.915,
-             "Test di McNemar esatto sulle 50 domande valutabili, stesse domande per ogni modello",
+             f"Test di McNemar esatto sulle {scored_n} domande valutabili, "
+             "stesse domande per ogni modello",
              fontsize=10, color=INK_SECONDARY, ha="left", va="top")
     # The empty half of the triangle is the natural home for the legend.
     ax.legend(
@@ -158,11 +174,13 @@ def draw_matrix(names, results, args) -> None:
         loc="upper right", bbox_to_anchor=(0.995, 0.86), frameon=False,
         fontsize=9.5, labelcolor=INK_SECONDARY, handlelength=1.4, handleheight=1.0,
     )
+    holds = ("tutte reggono" if survived == resolved
+             else f"{survived} su {resolved} reggono")
     fig.text(
         0.012, 0.035,
         f"I modelli sulla diagonale sono ordinati per accuratezza. Soglia alpha = {args.alpha}; "
-        f"con {int(n * (n - 1) / 2)} confronti la correzione di Bonferroni la porta a {corrected:.4f},\n"
-        "e tutte le differenze marcate come reali reggono anche a quella soglia. "
+        f"con {pair_count} confronti la correzione di Bonferroni la porta a {corrected:.4f}, "
+        f"e delle differenze marcate\ncome reali {holds} anche a quella soglia. "
         "Dentro ciascun gruppo grigio la classifica non e' sostenuta dai dati.",
         fontsize=8.5, color=INK_MUTED, ha="left", va="bottom",
     )
@@ -179,12 +197,14 @@ def draw_matrix(names, results, args) -> None:
 def score_report(path: Path, payload: dict) -> tuple[str, dict[int, bool]]:
     data = json.loads(path.read_text(encoding="utf-8"))
     records = data["records"] if isinstance(data, dict) else data
+    condition = data.get("condition", "full") if isinstance(data, dict) else "full"
     out: dict[int, bool] = {}
     for record in records:
         question_id = record.get("question_id")
         spec = reference_for_question(payload, question_id)
         tool_output = "\n".join((c.get("output") or "") for c in (record.get("tool_calls") or []))
-        score = score_answer(record.get("final_answer"), spec, tool_output=tool_output)
+        score = score_answer(record.get("final_answer"), spec,
+                             tool_output=tool_output, condition=condition)
         if score.is_scored:
             out[question_id] = score.outcome == CORRECT
     return model_name(path), out
@@ -209,7 +229,7 @@ def mcnemar_exact(b: int, c: int) -> float:
 
 def model_name(path: Path) -> str:
     stem = re.sub(r"^benchmark_raw_scena4_VAL_|_test_\d+$", "", path.stem)
-    stem = re.sub(r"_think_(true|false)", "", stem)
+    stem = re.sub(r"_think_(true|false)|_cond_(graph|full|none)", "", stem)
     stem = re.sub(r"_\d{8}$", "", stem)
     return (stem.replace("gpt_oss_20b", "gpt-oss:20b").replace("gemma4_31b", "gemma4:31b")
                 .replace("qwen3_5", "qwen3.5").replace("llama3_1", "llama3.1")

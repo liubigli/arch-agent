@@ -60,22 +60,43 @@ def score_answer(
     answer: str | None,
     reference_spec: dict | None,
     tool_output: str = "",
+    condition: str = "full",
 ) -> QuestionScore:
-    """Score one answer. `tool_output` is the concatenated tool results."""
+    """Score one answer. `tool_output` is the concatenated tool results.
+
+    Under the "graph" ablation the CSV layer is not loaded, so the questions
+    that depend on it have a different correct answer: saying the value is not
+    available. Scoring those against the CSV value would fail every model,
+    including the ones that behave correctly, and would make the two conditions
+    incomparable. The reference declares the expectation per question in
+    `expected_without_csv`.
+    """
     if reference_spec is None:
         return QuestionScore(None, "", "unknown", NOT_SCORED, detail="no reference entry")
 
     mode = reference_spec.get("validation_mode") or ""
     qid = reference_spec.get("question_id")
     family = FAMILY_BY_MODE.get(mode, "unknown")
+    expectation = reference_spec.get("expected_without_csv")
 
-    if family == "open":
+    withheld = condition != "full" and bool(expectation)
+    if withheld and expectation == "manual_review":
+        return QuestionScore(qid, mode, "withheld_csv", NOT_SCORED,
+                             detail="the question changes meaning without the CSV")
+    # The withheld-CSV check comes before the "open" one: an interpretive
+    # question about a CSV value still has one checkable answer once the CSV is
+    # gone, namely that the value cannot be reached.
+    if family == "open" and not withheld:
         return QuestionScore(qid, mode, family, NOT_SCORED, detail="needs judgement")
     if not answer:
-        return QuestionScore(qid, mode, family, INCORRECT, detail="empty answer")
+        return QuestionScore(qid, mode, "withheld_csv" if withheld else family,
+                             INCORRECT, detail="empty answer")
 
     facts = reference_spec.get("resolved_facts") or reference_spec.get("required_facts") or {}
     parsed = C.extract(answer, reference_spec.get("validation_policy"))
+
+    if withheld:
+        return _score_without_csv(qid, mode, parsed, facts, reference_spec, expectation)
 
     handler = {
         "exact": _score_exact,
@@ -120,6 +141,55 @@ def score_answer(
 # --------------------------------------------------------------------------
 # per-mode scorers. Each returns [(check name, passed, note)].
 # --------------------------------------------------------------------------
+
+ROLE_WORDS = (
+    "strutturale", "strutturali", "structural", "portante", "portanti",
+    "ornamentale", "ornamentali", "ornamental", "decorativ",
+    "superficie di appoggio", "support surface", "piano di calpestio",
+    "apertura", "opening", "circolazione", "circulation",
+)
+
+# Fact keys that are graph-derived, not CSV-derived: reporting them is
+# legitimate even when the CSV layer is withheld.
+_GRAPH_FACT_KEYS = frozenset({
+    "object_total", "relationship_total", "annotated_count", "count", "answer",
+    "objects_required", "must_only_use_present_classes", "values_must_match_tool_output",
+})
+
+
+def _score_without_csv(qid, mode, parsed, facts, spec, expectation) -> QuestionScore:
+    """Score a CSV-dependent question in the condition where the CSV is absent.
+
+    The correct answer is that the value cannot be reached. Producing one
+    anyway is the invention this ablation exists to measure, and reproducing
+    the CSV value itself is the strongest form of it - the model cannot have
+    read it.
+    """
+    family = "withheld_csv"
+    leaked = [
+        value for key, value in facts.items()
+        if key not in _GRAPH_FACT_KEYS and isinstance(value, str) and value.strip()
+        and parsed.mentions(value)
+    ]
+    if leaked:
+        return QuestionScore(qid, mode, family, INCORRECT, 0.0,
+                             detail="reports a CSV value it could not read: " + "; ".join(leaked),
+                             checks=[("no_csv_value", False, "; ".join(leaked))])
+
+    if parsed.abstains:
+        return QuestionScore(qid, mode, family, CORRECT, 1.0,
+                             detail="declares the value unavailable",
+                             checks=[("abstains", True, "")])
+
+    if expectation == "abstention_or_role_only" and any(w in parsed.text for w in ROLE_WORDS):
+        return QuestionScore(qid, mode, family, CORRECT, 1.0,
+                             detail="restricts itself to the schema role",
+                             checks=[("role_only", True, "")])
+
+    return QuestionScore(qid, mode, family, INCORRECT, 0.0,
+                         detail="neither declares the value unavailable nor stays on graph facts",
+                         checks=[("abstains", False, "")])
+
 
 def _score_exact(parsed, facts, spec, tool_output):
     checks = []

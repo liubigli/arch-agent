@@ -98,6 +98,22 @@ CASES = [
 
 EXPECTED_COVERAGE = 49  # 50 once tool output is supplied: Q26 is scored against it
 
+# Condition "graph" withholds the CSV layer, so a CSV-dependent question has a
+# different correct answer: saying the value cannot be reached.
+# (question id, expected outcome, answer, note)
+WITHHELD_CSV_CASES = [
+    (16, CORRECT, "Non sono disponibili dati relativi al materiale delle colonne.", "abstains"),
+    (16, INCORRECT, "Le colonne sono in marmo bianco.", "invents a value"),
+    (16, INCORRECT, "Le colonne sono in Breccia policroma.",
+     "reproduces the CSV value it could not have read"),
+    (16, INCORRECT, "Le colonne sono 6 elementi strutturali della scena.",
+     "neither abstains nor is asked about the role"),
+    (17, CORRECT, "Il ruolo architettonico delle colonne e strutturale; la funzione CSV non e disponibile.",
+     "role only is allowed where the reference says so"),
+    (2, CORRECT, "La scena contiene 33 oggetti in totale.",
+     "a graph question is scored the same way in both conditions"),
+]
+
 
 def main() -> int:
     payload = load_structured_reference(REFERENCE)
@@ -120,6 +136,15 @@ def main() -> int:
     if coverage != EXPECTED_COVERAGE:
         failures.append(f"  coverage is {coverage}, expected {EXPECTED_COVERAGE}")
 
+    for question_id, expected, answer, note in WITHHELD_CSV_CASES:
+        spec = reference_for_question(payload, question_id)
+        result = score_answer(answer, spec, condition="graph")
+        if result.outcome != expected:
+            failures.append(
+                f"  Q{question_id} [graph] expected {expected}, got {result.outcome} [{note}]"
+                f"\n      {result.detail[:100]}"
+            )
+
     # Q26 is scored entirely against the tool output, so it needs one to count.
     spec26 = reference_for_question(payload, 26)
     tool_text = "wall_0 adjacent_to wall_1; wall_0 supports vault_0"
@@ -131,9 +156,11 @@ def main() -> int:
         failures.append("  Q26 accepted a relation absent from the tool output")
 
     if failures:
-        print(f"FAILED {len(failures)} of {len(CASES) + 3} checks\n" + "\n".join(failures))
+        print(f"FAILED {len(failures)} of {len(CASES) + len(WITHHELD_CSV_CASES) + 3} checks\n"
+              + "\n".join(failures))
         return 1
-    print(f"OK: {len(CASES)} answer cases, coverage {coverage}/60, tool-grounding both ways")
+    print(f"OK: {len(CASES)} answer cases + {len(WITHHELD_CSV_CASES)} without-CSV cases, "
+          f"coverage {coverage}/60, tool-grounding both ways")
     return 0
 
 

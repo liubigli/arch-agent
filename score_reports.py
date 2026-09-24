@@ -72,6 +72,7 @@ def main() -> None:
             print(f"{path}: no records, skipped")
             continue
 
+        condition = report_condition(path)
         resolution = resolve_question_ids(records, questions)
         scores = []
         for record, question_id in zip(records, resolution["ids"]):
@@ -81,12 +82,14 @@ def main() -> None:
                     record.get("final_answer"),
                     spec,
                     tool_output=tool_output_text(record),
+                    condition=condition,
                 )
             )
 
         summary = aggregate(scores)
         summary["resolution"] = {k: v for k, v in resolution.items() if k != "ids"}
         summary["records"] = len(records)
+        summary["condition"] = condition
         report_summaries[str(path)] = summary
         print_report(path, records, scores, summary, show=args.show)
 
@@ -100,6 +103,16 @@ def main() -> None:
 def load_questions(path: Path) -> list[str]:
     lines = path.read_text(encoding="utf-8-sig").splitlines()
     return [line.strip() for line in lines if line.strip().endswith("?")]
+
+
+def report_condition(path: Path) -> str:
+    """Which ablation the run used, taken from the report itself.
+
+    Reading it from the file rather than a flag means a no-CSV run cannot be
+    scored against the CSV values by forgetting to pass one.
+    """
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return payload.get("condition", "full") if isinstance(payload, dict) else "full"
 
 
 def read_records(path: Path) -> list[dict]:
@@ -164,6 +177,7 @@ def normalize(text: str) -> str:
 def print_report(path: Path, records, scores, summary: dict, show: int) -> None:
     resolution = summary["resolution"]
     print(f"== {path}")
+    print(f"   condizione: {summary['condition']}")
     print(
         f"   records {summary['records']} | ids: field={resolution['from_field']} "
         f"text={resolution['from_text']} position={resolution['from_position']} "
