@@ -146,7 +146,7 @@ def describe_expectation(spec: dict) -> str:
 
 def model_name(path: Path) -> str:
     stem = re.sub(r"^benchmark_raw_scena4_VAL_|_test_\d+$", "", path.stem)
-    stem = re.sub(r"_think_(true|false)", "", stem)
+    stem = re.sub(r"_think_(true|false)|_cond_(graph|full|none)", "", stem)
     return re.sub(r"_\d{8}$", "", stem)
 
 

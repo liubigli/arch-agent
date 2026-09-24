@@ -44,6 +44,7 @@ FAMILY_LABEL = {
     "per_object": "Per\noggetto",
     "relationship": "Relazioni",
     "coordinates": "Coordinate",
+    "withheld_csv": "Astensione\n(senza CSV)",
 }
 
 
@@ -52,6 +53,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("reports", nargs="+")
     parser.add_argument("--reference-file", default="benchmark/references/scena4_VAL_reference_draft.json")
     parser.add_argument("-o", "--output-dir", default="docs/figures")
+    parser.add_argument("--name", default="benchmark_accuracy_heatmap",
+                        help="Basename for the written files.")
     parser.add_argument("--title", default="Accuratezza per famiglia di domande")
     parser.add_argument("--subtitle", default="scena4_VAL, 60 domande, run del 17 settembre 2026")
     return parser.parse_args()
@@ -76,19 +79,21 @@ def main() -> None:
 def score_report(path: Path, payload: dict) -> tuple[str, dict]:
     data = json.loads(path.read_text(encoding="utf-8"))
     records = data["records"] if isinstance(data, dict) else data
+    condition = data.get("condition", "full") if isinstance(data, dict) else "full"
     scores = []
     for record in records:
         spec = reference_for_question(payload, record.get("question_id"))
         tool_output = "\n".join(
             (call.get("output") or "") for call in (record.get("tool_calls") or [])
         )
-        scores.append(score_answer(record.get("final_answer"), spec, tool_output=tool_output))
+        scores.append(score_answer(record.get("final_answer"), spec,
+                                   tool_output=tool_output, condition=condition))
     return model_name(path), aggregate(scores)
 
 
 def model_name(path: Path) -> str:
     stem = re.sub(r"^benchmark_raw_scena4_VAL_|_test_\d+$", "", path.stem)
-    stem = re.sub(r"_think_(true|false)", "", stem)
+    stem = re.sub(r"_think_(true|false)|_cond_(graph|full|none)", "", stem)
     stem = re.sub(r"_\d{8}$", "", stem)
     return stem.replace("gpt_oss_20b", "gpt-oss:20b").replace("gemma4_31b", "gemma4:31b") \
                .replace("qwen3_5", "qwen3.5").replace("llama3_1", "llama3.1") \
@@ -187,14 +192,14 @@ def draw(rows, families, args, output_dir: Path) -> None:
 
     fig.tight_layout(rect=(0, 0.08, 1, 0.88))
     for suffix in ("png", "svg"):
-        path = output_dir / f"benchmark_accuracy_heatmap.{suffix}"
+        path = output_dir / f"{args.name}.{suffix}"
         fig.savefig(path, dpi=200, facecolor=SURFACE)
         print(f"written: {path}")
 
-    write_table(rows, columns, output_dir)
+    write_table(rows, columns, output_dir, args)
 
 
-def write_table(rows, columns, output_dir: Path) -> None:
+def write_table(rows, columns, output_dir: Path, args) -> None:
     """The table view the accessibility pass requires."""
     header = ["modello", "totale"] + [k for k, _ in columns[1:]]
     lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
@@ -204,7 +209,7 @@ def write_table(rows, columns, output_dir: Path) -> None:
             stats = summary["by_family"].get(key)
             cells.append("-" if stats is None else f"{stats['accuracy'] * 100:.0f}%")
         lines.append("| " + " | ".join(cells) + " |")
-    path = output_dir / "benchmark_accuracy_table.md"
+    path = output_dir / f"{args.name}_table.md"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"written: {path}")
 

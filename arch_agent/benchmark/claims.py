@@ -116,6 +116,19 @@ NUMBER_WORDS = {
 }
 _NUMBER_WORD_RE = re.compile(r"\b(" + "|".join(sorted(NUMBER_WORDS, key=len, reverse=True)) + r")\b")
 
+# Same problem as negation: the reference lists "non disponibile" but answers
+# write "non sono disponibili", "nessuna evidenza diretta", "non e stato
+# possibile reperire". A construction covers them; a list never will.
+ABSTENTION_RE = re.compile(
+    r"\bnon\s+(?:e|sono|risulta|risultano|sono\s+stati)?\s*"
+    r"(?:disponibil[ei]|reperibil[ei]|present[ei]\s+nel\s+(?:csv|grafo))\b"
+    r"|\bnessun[ao]?\s+(?:evidenza|informazione|dato|dati|annotazione|riscontro)\b"
+    r"|\bnon\s+(?:ho|e\s+stato)\s+(?:trovato|possibile)\b"
+    r"|\bnon\s+(?:posso|possiamo)\s+(?:determinare|stabilire|dire)\b"
+    r"|\bno\s+(?:data|information|evidence|csv)\b"
+    r"|\b(?:is|are)\s+not\s+available\b|\bcannot\s+be\s+determined\b"
+)
+
 _AFFIRM = ("si", "yes", "esatto", "corretto", "true", "confermo", "sono", "supportano")
 _DENY = ("no", "non", "not", "false", "nessun", "assente")
 
@@ -183,7 +196,7 @@ def extract(answer: str | None, policy: dict | None = None) -> Claims:
         ),
         coordinates=_coordinates(text),
         polarity=_polarity(text),
-        abstains=any(marker in text for marker in abstention),
+        abstains=any(marker in text for marker in abstention) or bool(ABSTENTION_RE.search(text)),
     )
 
 

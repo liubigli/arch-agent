@@ -179,12 +179,14 @@ def draw_matrix(names, results, args) -> None:
 def score_report(path: Path, payload: dict) -> tuple[str, dict[int, bool]]:
     data = json.loads(path.read_text(encoding="utf-8"))
     records = data["records"] if isinstance(data, dict) else data
+    condition = data.get("condition", "full") if isinstance(data, dict) else "full"
     out: dict[int, bool] = {}
     for record in records:
         question_id = record.get("question_id")
         spec = reference_for_question(payload, question_id)
         tool_output = "\n".join((c.get("output") or "") for c in (record.get("tool_calls") or []))
-        score = score_answer(record.get("final_answer"), spec, tool_output=tool_output)
+        score = score_answer(record.get("final_answer"), spec,
+                             tool_output=tool_output, condition=condition)
         if score.is_scored:
             out[question_id] = score.outcome == CORRECT
     return model_name(path), out
@@ -209,7 +211,7 @@ def mcnemar_exact(b: int, c: int) -> float:
 
 def model_name(path: Path) -> str:
     stem = re.sub(r"^benchmark_raw_scena4_VAL_|_test_\d+$", "", path.stem)
-    stem = re.sub(r"_think_(true|false)", "", stem)
+    stem = re.sub(r"_think_(true|false)|_cond_(graph|full|none)", "", stem)
     stem = re.sub(r"_\d{8}$", "", stem)
     return (stem.replace("gpt_oss_20b", "gpt-oss:20b").replace("gemma4_31b", "gemma4:31b")
                 .replace("qwen3_5", "qwen3.5").replace("llama3_1", "llama3.1")
