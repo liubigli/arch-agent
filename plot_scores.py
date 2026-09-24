@@ -110,7 +110,12 @@ def order_families(rows) -> list[tuple[str, int]]:
 
 def draw(rows, families, args, output_dir: Path) -> None:
     cmap = LinearSegmentedColormap.from_list("seq_blue", RAMP)
-    columns = [("__overall__", 50)] + families
+    # The number of scored questions is not a constant: withholding the CSV
+    # turns the eleven metadata questions into checkable abstention questions,
+    # so the denominator changes with the condition.
+    scored = max(summary["scored"] for _, summary in rows)
+    asked = max(summary["questions"] for _, summary in rows)
+    columns = [("__overall__", scored)] + families
     grid = [
         [
             summary["accuracy"] if key == "__overall__"
@@ -164,7 +169,7 @@ def draw(rows, families, args, output_dir: Path) -> None:
     ax.set_ylim(len(rows), 0)
     ax.set_xticks([x + 0.5 for x in x_of])
     ax.set_xticklabels(
-        ["Totale\n(n=50)"] + [f"{FAMILY_LABEL.get(k, k)}\n(n={n})" for k, n in families],
+        [f"Totale\n(n={scored})"] + [f"{FAMILY_LABEL.get(k, k)}\n(n={n})" for k, n in families],
         fontsize=9, color=INK_SECONDARY,
     )
     ax.xaxis.set_ticks_position("top")
@@ -178,9 +183,9 @@ def draw(rows, families, args, output_dir: Path) -> None:
     fig.text(0.012, 0.915, args.subtitle, fontsize=10, color=INK_SECONDARY, ha="left", va="top")
     fig.text(
         0.012, 0.045,
-        "Percentuale di risposte pienamente corrette. Le 10 domande interpretative "
-        "restano escluse: richiedono giudizio umano.\nLe famiglie con n basso sono "
-        "indicative, non conclusive.",
+        f"Percentuale di risposte pienamente corrette. Le {asked - scored} domande "
+        "interpretative restano escluse: richiedono giudizio umano.\nLe famiglie con n "
+        "basso sono indicative, non conclusive.",
         fontsize=8.5, color=INK_MUTED, ha="left", va="bottom",
     )
 

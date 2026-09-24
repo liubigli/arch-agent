@@ -93,7 +93,13 @@ def model_name(path: Path) -> str:
 
 
 def draw(rows, total: int, args) -> None:
-    fig, ax = plt.subplots(figsize=(10.4, 0.66 * len(rows) + 2.5))
+    # Vertical budget in inches, so every block has room that does not depend on
+    # a layout pass: title 1.15, rows 0.62 each, x label 0.55, legend 0.50,
+    # footnote 0.70.
+    rows_in = 0.62 * len(rows)
+    height = 1.15 + rows_in + 0.55 + 0.50 + 0.70
+    fig = plt.figure(figsize=(10.4, height))
+    ax = fig.add_axes([0.14, 1.75 / height, 0.82, rows_in / height])
     fig.patch.set_facecolor(SURFACE)
     ax.set_facecolor(SURFACE)
 
@@ -120,27 +126,28 @@ def draw(rows, total: int, args) -> None:
     ax.tick_params(axis="y", length=0)
     ax.set_xlabel(f"domande su {total} in cui il dato richiesto non è raggiungibile",
                   fontsize=9.5, color=INK_SECONDARY, labelpad=10)
-    ax.invert_yaxis()
+    ax.set_ylim(len(rows) - 0.5, -0.5)
     for spine in ax.spines.values():
         spine.set_visible(False)
     ax.grid(axis="x", color="#e1e0d9", linewidth=0.8, zorder=0)
     ax.set_axisbelow(True)
 
-    fig.text(0.012, 0.965, "Quando il dato non c'è, il modello lo dice?",
+    fig.text(0.016, 1 - 0.30 / height, "Quando il dato non c'è, il modello lo dice?",
              fontsize=14.5, color=INK, fontweight="bold", ha="left", va="top")
-    fig.text(0.012, 0.912,
+    fig.text(0.016, 1 - 0.66 / height,
              "Condizione senza CSV: materiale, tipologia e funzione non sono caricati. "
              "La risposta corretta è dichiararlo.",
              fontsize=10, color=INK_SECONDARY, ha="left", va="top")
-    ax.legend(
+    fig.legend(
         handles=[Patch(facecolor=ABSTAINS, label="dichiara il dato non disponibile"),
                  Patch(facecolor=INVENTS, label="fornisce comunque un valore"),
                  Patch(facecolor=EMPTY, label="nessuna risposta prodotta")],
-        loc="lower center", bbox_to_anchor=(0.5, -0.36), ncol=3, frameon=False,
+        loc="upper center", bbox_to_anchor=(0.5, 1.20 / height), ncol=3, frameon=False,
         fontsize=9.5, labelcolor=INK_SECONDARY, handlelength=1.4, handleheight=1.0,
+        columnspacing=2.2,
     )
     fig.text(
-        0.012, 0.035,
+        0.016, 0.22 / height,
         "Nessuna risposta prodotta non è un'allucinazione: è il ciclo dell'agente che si "
         "interrompe dopo la chiamata allo strumento.\nLe due cose sono tenute separate perché "
         "hanno cause diverse e richiedono interventi diversi.",
@@ -149,7 +156,6 @@ def draw(rows, total: int, args) -> None:
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout(rect=(0, 0.2, 1, 0.84))
     for suffix in ("png", "svg"):
         path = output_dir / f"{args.name}.{suffix}"
         fig.savefig(path, dpi=200, facecolor=SURFACE)

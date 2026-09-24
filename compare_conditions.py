@@ -154,7 +154,16 @@ def draw(rows, n_shared: int, n_withheld: int, args) -> None:
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
 
-    fig, ax = plt.subplots(figsize=(10.2, 0.6 * len(rows) + 2.3))
+    # Explicit figure-space layout. Anchoring the legend in axes coordinates
+    # and then letting tight_layout move the axes put the legend on top of the
+    # x-axis label; nothing here depends on a later layout pass.
+    # Vertical budget in inches, so every block has room that does not depend on
+    # a layout pass: title 1.15, rows 0.62 each, x label 0.55, legend 0.50,
+    # footnote 0.70.
+    rows_in = 0.62 * len(rows)
+    height = 1.15 + rows_in + 0.55 + 0.50 + 0.70
+    fig = plt.figure(figsize=(10.2, height))
+    ax = fig.add_axes([0.16, 1.75 / height, 0.80, rows_in / height])
     fig.patch.set_facecolor(SURFACE)
     ax.set_facecolor(SURFACE)
 
@@ -178,7 +187,7 @@ def draw(rows, n_shared: int, n_withheld: int, args) -> None:
     ax.set_xticklabels(["0%", "25%", "50%", "75%", "100%"])
     ax.tick_params(axis="x", labelsize=9, colors=INK_SECONDARY, length=0)
     ax.tick_params(axis="y", length=0)
-    ax.invert_yaxis()
+    ax.set_ylim(len(rows) - 0.5, -0.5)
     for spine in ax.spines.values():
         spine.set_visible(False)
     ax.grid(axis="x", color="#e1e0d9", linewidth=0.8, zorder=0)
@@ -186,23 +195,23 @@ def draw(rows, n_shared: int, n_withheld: int, args) -> None:
     ax.set_xlabel(f"accuratezza sulle {n_shared} domande la cui risposta attesa non cambia",
                   fontsize=9.5, color=INK_SECONDARY, labelpad=10)
 
-    fig.text(0.012, 0.965, "Quanto vale il layer CSV", fontsize=14.5,
+    fig.text(0.016, 1 - 0.30 / height, "Quanto vale il layer CSV", fontsize=14.5,
              color=INK, fontweight="bold", ha="left", va="top")
-    fig.text(0.012, 0.905,
+    fig.text(0.016, 1 - 0.66 / height,
              "Stessi modelli, stesse domande, con e senza le annotazioni dell'architetto",
              fontsize=10, color=INK_SECONDARY, ha="left", va="top")
-    ax.legend(
+    fig.legend(
         handles=[
             Line2D([], [], marker="o", linestyle="", markersize=10,
                    markerfacecolor=ACCENT_FULL, markeredgecolor=SURFACE, label="con CSV"),
             Line2D([], [], marker="o", linestyle="", markersize=10,
                    markerfacecolor=ACCENT_GRAPH, markeredgecolor=SURFACE, label="senza CSV"),
         ],
-        loc="lower center", bbox_to_anchor=(0.5, -0.30), ncol=2, frameon=False,
-        fontsize=9.5, labelcolor=INK_SECONDARY,
+        loc="upper center", bbox_to_anchor=(0.5, 1.20 / height), ncol=2, frameon=False,
+        fontsize=9.5, labelcolor=INK_SECONDARY, columnspacing=2.4,
     )
     fig.text(
-        0.012, 0.035,
+        0.016, 0.22 / height,
         f"Le {n_withheld} domande che dipendono dal CSV sono escluse: senza CSV la risposta "
         "corretta non è il valore ma dichiararne l'assenza,\ne confrontarle misurerebbe due "
         "compiti diversi. L'asterisco marca le differenze che superano il test di McNemar esatto.",
@@ -211,7 +220,6 @@ def draw(rows, n_shared: int, n_withheld: int, args) -> None:
 
     output_dir = Path(args.figure)
     output_dir.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout(rect=(0, 0.23, 1, 0.83))
     for suffix in ("png", "svg"):
         path = output_dir / f"{args.name}.{suffix}"
         fig.savefig(path, dpi=200, facecolor=SURFACE)
