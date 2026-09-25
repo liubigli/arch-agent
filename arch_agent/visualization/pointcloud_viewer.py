@@ -67,6 +67,15 @@ def _make_point_cloud(points: np.ndarray, colors: np.ndarray):
     return pcd
 
 
+def _rgb_colors(df) -> np.ndarray | None:
+    if not {"R", "G", "B"}.issubset(df.columns):
+        return None
+    rgb = df[["R", "G", "B"]].to_numpy(dtype=float)
+    maximum = float(np.nanmax(rgb)) if rgb.size else 1.0
+    scale = 65535.0 if maximum > 255.0 else 255.0
+    return np.clip(rgb / scale, 0.0, 1.0)
+
+
 def _scene_diagonal(points: np.ndarray) -> float:
     if points.size == 0:
         return 1.0
@@ -206,9 +215,11 @@ def visualize_clustered_objects(
     classes: list[str] | None = None,
     with_boxes: bool = False,
     with_labels: bool = False,
+    with_legend: bool = False,
+    color_mode: str = "cluster",
     add_axes: bool = False,
 ) -> None:
-    """Visualize DBSCAN objects with a different color for each cluster."""
+    """Visualize DBSCAN objects using cluster, semantic, or source RGB colors."""
     selected_objects = {
         name: data
         for name, data in objects.items()
@@ -220,7 +231,11 @@ def visualize_clustered_objects(
         return
 
     object_names = sorted(selected_objects)
-    color_map = _stable_palette(object_names, saturation=0.62, value=0.95)
+    semantic_labels = sorted(
+        {str(data["semantic_label"]) for data in selected_objects.values()}
+    )
+    class_colors = _stable_palette(semantic_labels, saturation=0.68, value=0.95)
+    cluster_colors = _stable_palette(object_names, saturation=0.62, value=0.95)
     all_points = []
     all_colors = []
     geometries = []
@@ -233,9 +248,22 @@ def visualize_clustered_objects(
         if xyz.size == 0:
             continue
 
-        color = color_map[object_name]
+        semantic_label = str(object_data["semantic_label"])
+        box_color = class_colors[semantic_label]
+        point_color = cluster_colors[object_name]
         all_points.append(xyz)
-        all_colors.append(np.repeat(color[None, :], xyz.shape[0], axis=0))
+        if color_mode == "rgb":
+            rgb = _rgb_colors(points_df)
+            if rgb is None:
+                print(
+                    f"RGB unavailable for {object_name}; using its semantic class color."
+                )
+                rgb = np.repeat(box_color[None, :], xyz.shape[0], axis=0)
+            all_colors.append(rgb)
+        elif color_mode == "semantic":
+            all_colors.append(np.repeat(box_color[None, :], xyz.shape[0], axis=0))
+        else:
+            all_colors.append(np.repeat(point_color[None, :], xyz.shape[0], axis=0))
 
         if with_boxes:
             bounds = object_data["bounds"]
@@ -243,7 +271,7 @@ def visualize_clustered_objects(
                 min_bound=np.asarray(bounds["min"], dtype=float),
                 max_bound=np.asarray(bounds["max"], dtype=float),
             )
-            box.color = color
+            box.color = box_color
             geometries.append(box)
 
     if not all_points:
@@ -261,6 +289,26 @@ def visualize_clustered_objects(
                 (_object_label_position(selected_objects[object_name], scene_scale), object_name)
             )
 
+    if with_legend:
+        lower = points.min(axis=0)
+        upper = points.max(axis=0)
+        marker_size = max(scene_scale * 0.007, 0.08)
+        line_step = max(scene_scale * 0.035, marker_size * 3.0)
+        legend_x = upper[0] + scene_scale * 0.06
+        legend_y = upper[1]
+        legend_z = upper[2]
+        for index, semantic_label in enumerate(semantic_labels):
+            position = np.array(
+                [legend_x, legend_y, legend_z - index * line_step], dtype=float
+            )
+            marker = o3d.geometry.TriangleMesh.create_sphere(radius=marker_size)
+            marker.translate(position)
+            marker.paint_uniform_color(class_colors[semantic_label])
+            geometries.append(marker)
+            label_entries.append(
+                (position + np.array([marker_size * 1.8, 0.0, 0.0]), semantic_label)
+            )
+
     if add_axes:
         axis_size = max(0.5, scene_scale * 0.08)
         geometries.append(o3d.geometry.TriangleMesh.create_coordinate_frame(size=axis_size))
@@ -272,7 +320,7 @@ def visualize_clustered_objects(
         count = object_data["point_count"]
         print(f"  - {object_name} ({label}): {count:,} points")
 
-    if with_labels:
+    if with_labels or with_legend:
         _show_geometries_with_labels(
             geometries,
             label_entries,
@@ -313,6 +361,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--point-size", type=float, default=1.5, help="Open3D point size.")
     parser.add_argument("--with-boxes", action="store_true", help="Show DBSCAN AABB boxes in cluster mode.")
     parser.add_argument("--labels", action="store_true", help="Show DBSCAN object names as 3D labels in cluster mode.")
+    parser.add_argument(
+        "--legend",
+        action="store_true",
+        help="Show a semantic color legend beside the scene in cluster mode.",
+    )
+    parser.add_argument(
+        "--color-mode",
+        choices=("cluster", "semantic", "rgb"),
+        default="cluster",
+        help="Point coloring in cluster mode; boxes always use semantic colors.",
+    )
     parser.add_argument("--axes", action="store_true", help="Show a coordinate frame.")
     return parser.parse_args()
 
@@ -347,6 +406,8 @@ def main() -> None:
             classes=args.classes,
             with_boxes=args.with_boxes,
             with_labels=args.labels,
+            with_legend=args.legend,
+            color_mode=args.color_mode,
             add_axes=args.axes,
         )
 
