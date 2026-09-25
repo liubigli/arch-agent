@@ -48,8 +48,13 @@ COLUMN_X = {
 }
 
 
+def _scene_name_from_path(path: Path) -> str:
+    match = re.search(r"(scena\d+_[A-Za-z0-9_]+?)(?:_cidoc|_threshold|$)", path.stem)
+    return match.group(1) if match else path.stem
+
+
 def _display_name(value: str) -> str:
-    value = re.sub(r"^Scena4Val_", "", str(value))
+    value = re.sub(r"^Scena\d+[A-Za-z0-9]*_", "", str(value))
     value = re.sub(r"^(Funzione|Materiale|Tipo)_", r"\1: ", value)
     value = value.replace("_", " ")
     value = re.sub(r"(?<=[a-zà-ù])(?=[A-Z])", " ", value)
@@ -57,6 +62,7 @@ def _display_name(value: str) -> str:
 
 
 def render_cidoc_triples(input_path: str, output_path: str) -> Path:
+    scene_name = _scene_name_from_path(Path(input_path))
     columns = ["source", "predicate", "target", "source_class", "target_class"]
     frame = pd.read_csv(input_path, sep="\t", comment="#", names=columns)
 
@@ -156,7 +162,7 @@ def render_cidoc_triples(input_path: str, output_path: str) -> Path:
         fontsize=9,
     )
     axis.set_title(
-        "scena4_VAL - architectural relationships (CIDOC knowledge graph)",
+        f"{scene_name} - architectural relationships (CIDOC knowledge graph)",
         fontsize=18,
         pad=18,
     )
@@ -174,6 +180,7 @@ def render_cidoc_triples(input_path: str, output_path: str) -> Path:
 
 
 def render_cidoc_schema(input_path: str, output_path: str) -> Path:
+    scene_name = _scene_name_from_path(Path(input_path))
     columns = ["source", "predicate", "target", "source_class", "target_class"]
     frame = pd.read_csv(input_path, sep="\t", comment="#", names=columns)
     combinations = (
@@ -242,14 +249,14 @@ def render_cidoc_schema(input_path: str, output_path: str) -> Path:
         )
 
     axis.set_title(
-        "scena4_VAL - CIDOC CRM architectural relationship schema",
+        f"{scene_name} - CIDOC CRM architectural relationship schema",
         fontsize=18,
         pad=20,
     )
     axis.text(
         0.5,
         0.02,
-        "Aggregated from the 112 CIDOC triples generated from scene annotations",
+        f"Aggregated from the {len(frame)} CIDOC triples generated from scene annotations",
         transform=axis.transAxes,
         ha="center",
         fontsize=10,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import re
 
 import matplotlib
 
@@ -21,10 +22,13 @@ RELATION_COLORS = {
 }
 
 CLASS_COLORS = {
+    "arch": "#e41a1c",
     "column": "#2455ff",
     "door_window": "#00a9bd",
     "floor": "#22a447",
     "moldings": "#d81bce",
+    "roof": "#d39b00",
+    "stairs": "#ff7f00",
     "vault": "#8a2be2",
     "wall": "#ef3038",
 }
@@ -65,6 +69,10 @@ def _canonical_edges(frame: pd.DataFrame) -> list[tuple[str, str, str]]:
 
 def render_spatial_triples(input_path: str, output_path: str) -> Path:
     source_path = Path(input_path)
+    match = re.search(
+        r"spatial_triples_(?:manual_review|raw)_(.+?)_threshold", source_path.stem
+    )
+    scene_name = match.group(1) if match else source_path.stem
     frame = _validated_rows(_read_triples(source_path))
     edges = _canonical_edges(frame)
 
@@ -151,7 +159,7 @@ def render_spatial_triples(input_path: str, output_path: str) -> Path:
         fontsize=9,
     )
     axis.set_title(
-        "scena4_VAL - manually validated spatial triples\n"
+        f"{scene_name} - manually validated spatial triples\n"
         "below is represented by the inverse above edge; symmetric relations are deduplicated",
         fontsize=17,
         pad=18,
