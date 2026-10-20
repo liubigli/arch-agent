@@ -11,7 +11,6 @@ import argparse
 from pathlib import Path, PureWindowsPath
 
 from arch_agent.pipeline.pipeline import PipelineParams, run_pipeline
-from arch_agent.agent import run_agent
 
 
 DEFAULT_POINT_CLOUD_PATH = (
@@ -38,6 +37,26 @@ def parse_args() -> argparse.Namespace:
 
     # Pipeline params
     group = parser.add_argument_group("pipeline parameters")
+    group.add_argument(
+        "--export-json", metavar="PATH",
+        help="Export loaded points and all scene data as JSON (never overwrites an existing file)",
+    )
+    group.add_argument(
+        "--export-usd", metavar="PATH",
+        help="Export the scene as OpenUSD (.usd/.usda/.usdc; requires usd-core)",
+    )
+    group.add_argument(
+        "--export-ifc", metavar="PATH",
+        help="Export approximate BIM objects as IFC4 (.ifc; requires ifcopenshell)",
+    )
+    group.add_argument(
+        "--usd-color-max", type=int, choices=(255, 65535), default=65535,
+        help="RGB encoding maximum for USD display colors (LAZ defaults to 16-bit)",
+    )
+    group.add_argument(
+        "--export-only", action="store_true",
+        help="Exit after export without starting the agent (requires an --export-* option)",
+    )
     group.add_argument(
         "--eps", type=float, default=0.5,
         help="DBSCAN epsilon for object segmentation (smaller = tighter clusters)",
@@ -117,7 +136,10 @@ def parse_args() -> argparse.Namespace:
         ),
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.export_only and not (args.export_json or args.export_usd or args.export_ifc):
+        parser.error("--export-only requires --export-json, --export-usd or --export-ifc")
+    return args
 
 
 def resolve_local_path(path_value: str) -> Path:
@@ -193,9 +215,26 @@ def main() -> None:
 
     ctx = run_pipeline(params)
 
+    if args.export_json:
+        from arch_agent.scene_export import export_scene_json
+        output = export_scene_json(ctx, resolve_local_path(args.export_json))
+        print(f"Scene JSON saved to: {output}")
+    if args.export_usd:
+        from arch_agent.usd_export import export_scene_usd
+        output = export_scene_usd(ctx, resolve_local_path(args.export_usd), color_max=args.usd_color_max)
+        print(f"OpenUSD scene saved to: {output}")
+    if args.export_ifc:
+        from arch_agent.ifc_export import export_scene_ifc
+        output = export_scene_ifc(ctx, resolve_local_path(args.export_ifc))
+        print(f"IFC scene saved to: {output}")
+    if args.export_only:
+        return
+
     if args.plot_segmentation:
         from arch_agent.visualization.pointcloud_viewer import visualize_clustered_objects
         visualize_clustered_objects(ctx.objects)
+
+    from arch_agent.agent import run_agent
 
     run_agent(
         ctx,

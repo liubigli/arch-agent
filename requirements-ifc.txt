@@ -1,0 +1,2 @@
+# Optional IFC4 exporter and validation library.
+ifcopenshell>=0.8.3,<0.10

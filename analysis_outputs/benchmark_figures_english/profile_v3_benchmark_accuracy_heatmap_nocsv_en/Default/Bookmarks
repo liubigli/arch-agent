@@ -1,0 +1,83 @@
+{
+   "checksum": "f924ea2a76224e392336b82626bee7a9",
+   "roots": {
+      "bookmark_bar": {
+         "children": [ {
+            "date_added": "13436957408764670",
+            "date_last_used": "0",
+            "guid": "efe818a0-14b0-4683-baf2-dedde7bcbf20",
+            "id": "9",
+            "name": "ASUS Software Portal - Exclusive technology",
+            "show_icon": false,
+            "source": "oem_preload",
+            "type": "url",
+            "url": "https://www.asus.com/Software-and-Innovations-Portal/",
+            "visit_count": 0
+         }, {
+            "date_added": "13436957408764565",
+            "date_last_used": "0",
+            "guid": "33ff71c9-e3d2-48a2-836e-386694f88e9f",
+            "id": "8",
+            "name": "MyASUS Software - Get the best from ASUS PC",
+            "show_icon": false,
+            "source": "oem_preload",
+            "type": "url",
+            "url": "https://www.asus.com/ASUS-Software/",
+            "visit_count": 0
+         }, {
+            "date_added": "13436957408764255",
+            "date_last_used": "0",
+            "guid": "a4de5f4b-821d-4542-b2b8-ea8ff468d049",
+            "id": "7",
+            "name": "McAfee LiveSafe",
+            "show_icon": false,
+            "source": "oem_preload",
+            "type": "url",
+            "url": "https://home.mcafee.com/root/campaign.aspx?cid=247829",
+            "visit_count": 0
+         } ],
+         "date_added": "13436957408619364",
+         "date_last_used": "0",
+         "date_modified": "13436957408764670",
+         "guid": "0bc5d13f-2cba-5d74-951f-3f233fe6c908",
+         "id": "1",
+         "name": "Barra Preferiti",
+         "source": "unknown",
+         "type": "folder"
+      },
+      "other": {
+         "children": [  ],
+         "date_added": "13436957408619364",
+         "date_last_used": "0",
+         "date_modified": "0",
+         "guid": "82b081ec-3dd3-529c-8475-ab6c344590dd",
+         "id": "2",
+         "name": "Altri preferiti",
+         "source": "unknown",
+         "type": "folder"
+      },
+      "synced": {
+         "children": [  ],
+         "date_added": "13436957408619364",
+         "date_last_used": "0",
+         "date_modified": "0",
+         "guid": "4cf2e351-0e85-532b-bb37-df045d8f8d0f",
+         "id": "3",
+         "name": "Preferiti dispositivo mobile",
+         "source": "unknown",
+         "type": "folder"
+      },
+      "workspaces_v2": {
+         "children": [  ],
+         "date_added": "13436957408619364",
+         "date_last_used": "0",
+         "date_modified": "0",
+         "guid": "75aa6670-344f-549d-b742-660f029506ab",
+         "id": "5",
+         "name": "Aree di lavoro",
+         "source": "unknown",
+         "type": "folder"
+      }
+   },
+   "version": 1
+}

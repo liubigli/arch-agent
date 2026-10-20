@@ -45,6 +45,99 @@ Interactive chat
 
 The key distinction is that the spatial graph is the operational scene graph, CSV metadata is an enrichment layer, and CIDOC/KG is the cultural-heritage knowledge graph built from the available evidence.
 
+## JSON scene export
+
+Export the loaded point cloud and its associated information locally, without
+starting the interactive agent:
+
+```bash
+python main.py path/to/scene.laz --annotation-csv path/to/annotations.csv --sample-n 0 --export-json exports/scene.json --export-only
+```
+
+Omit `--export-only` to continue into chat after export. Existing output files
+are never overwritten. The export uses the pipeline's loaded points: the default
+sampling limit is 150,000; `--sample-n 0` disables sampling. Points with unknown
+semantic labels are removed by the loader even when sampling is disabled.
+
+The versioned JSON contains point records (coordinates, semantic labels, RGB and
+normals when loaded), segmented objects with `point_ids` referencing zero-based
+positions in `point_cloud.points`, centroids, bounds, geometric features, matched
+and unmatched annotations, scene features, relationships, and spatial graphs.
+Unclustered points remain in the point array. CIDOC nodes and edges are included
+when matched annotations are available; otherwise `cidoc_status` explains their
+absence. Non-finite numbers become JSON `null`. Normals require `--use-normals`.
+The CRS is recorded as `null` because the current loader does not retain it.
+This is application JSON, not JSON-LD or a lossless archive of every LAZ dimension.
+
+For an already computed context, use
+`arch_agent.scene_export.export_scene_json(ctx, "exports/scene.json")`.
+
+## OpenUSD scene export
+
+Install the optional official OpenUSD bindings in the project environment:
+
+```bash
+python -m pip install -r requirements-usd.txt
+python main.py path/to/scene.laz --annotation-csv path/to/annotations.csv --sample-n 0 --export-usd exports/scene.usda --export-only
+```
+
+Supported extensions are `.usda` (text), `.usdc` (binary) and `.usd` (SDK default
+encoding). You can combine `--export-usd` and `--export-json` in one run.
+Existing files are never overwritten. Sampling, unknown-label filtering and
+normal loading behave as described for JSON export above.
+
+`/Scene/PointCloud` is a standard `UsdGeom.Points` prim containing all loaded
+points, including unclustered points, point IDs, semantic-label primvars, widths,
+extent, and optional RGB display colors and normals. Object Xforms under
+`/Scene/Objects` reference the cloud and expose `arch:pointIds`; geometry is not
+duplicated per object. Spatial and CIDOC edge prims carry native USD relationships
+to their source and target prims. CIDOC nodes link back to scene objects where
+applicable. Metadata, features, annotations and graph details are preserved in
+custom JSON string attributes (`arch:dataJson`); original point attributes are in
+`arch:pointAttributesJson` on the cloud. This application mapping is not a
+standard CIDOC USD schema or a USD material/shader conversion.
+
+Coordinates are assumed to be meters with Z up, matching the pipeline's spatial
+thresholds. The cloud is rebased at its first point with a double-precision root
+translation; original coordinates are also retained as a double3 array in
+`arch:sourceCoordinates`. The loader does not retain CRS information. RGB is
+interpreted as 16-bit sRGB and converted to linear display colors; use
+`--usd-color-max 255` for 8-bit RGB data. Raw channels remain in the metadata.
+Point width defaults to 0.02 meters; the Python API accepts `point_width`.
+
+For a computed context, call
+`arch_agent.usd_export.export_scene_usd(ctx, "exports/scene.usda")`.
+The exporter uses the official [OpenUSD Points schema](https://openusd.org/dev/api/class_usd_geom_points.html).
+
+## IFC / BIM export
+
+```bash
+python -m pip install -r requirements-ifc.txt
+python main.py path/to/scene.laz --annotation-csv path/to/annotations.csv --sample-n 0 --export-ifc exports/scene.ifc --export-only
+```
+
+The IFC4 exporter creates a project/site/building/storey hierarchy and segmented
+elements with **approximate axis-aligned bounding-box geometry**, not reconstructed
+or parametric BIM geometry. Walls, columns, floors, roofs and stairs map to
+`IfcWall`, `IfcColumn`, `IfcSlab`, `IfcRoof` and `IfcStair`; other classes use
+`IfcBuildingElementProxy`. In particular, `door_window` is not guessed to be a
+door or window. Degenerate boxes retain metadata without an invented solid.
+
+Units are meters with Z up, as assumed by the pipeline; CRS is unavailable.
+Object property sets preserve features, annotations, original object IDs and
+point IDs. The project property set contains scene metadata, full graph/CIDOC
+details and object-to-IFC GUID mappings as JSON. Spatial predicates are named
+`IfcRelAssignsToProduct` links, not automatically converted to IFC physical
+connections or decomposition. CIDOC concepts remain application metadata.
+The source cloud is an external `IfcDocumentReference`: raw points, RGB and
+normals are not embedded. Keep the source file with the IFC, or combine with
+`--export-json` / `--export-usd` to deliver the loaded points too. Point IDs index
+the loaded, potentially sampled cloud as in the JSON export.
+
+Existing files are never overwritten. The Python API is
+`arch_agent.ifc_export.export_scene_ifc(ctx, "exports/scene.ifc")`.
+Geometry is created using [IfcOpenShell](https://docs.ifcopenshell.org/ifcopenshell-python/geometry_creation.html).
+
 ## Input format
 
 The input can be a LAZ file or a directory containing `.laz` files. When a directory is provided, the CLI lists the available `.laz` files and asks which one to load. The selected file must contain semantic labels in either a `semantic_label` extra dimension or the standard `classification` dimension. Optional RGB channels and normals are preserved when available.

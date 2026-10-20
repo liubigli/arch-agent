@@ -443,3 +443,15 @@ I nodi satellite `Tipo_*`, `Materiale_*` e `Funzione_*` restano concetti riusabi
 Il builder non esporta CSV automaticamente e non produce output di scena se non richiesto esplicitamente.
 I CSV di scena attualmente presenti sono da considerare input/prototipi di input, non output finali.
 Eventuali export verso RDF/Turtle, JSON-LD, Neo4j o CSV vanno aggiunti come step separato e richiesto esplicitamente.
+
+È disponibile un export JSON applicativo della scena tramite
+`python main.py scena.laz --annotation-csv annotazioni.csv --sample-n 0 --export-json exports/scena.json --export-only`.
+Include i punti caricati, i riferimenti degli oggetti ai punti, le caratteristiche,
+le annotazioni, le relazioni e i grafi; il CIDOC viene incluso quando sono presenti
+annotazioni associate. Non è JSON-LD. Vedere la sezione “JSON scene export” del README.
+
+È disponibile anche l'export OpenUSD con `--export-usd exports/scena.usda`
+(formati `.usd`, `.usda`, `.usdc`, dipendenza opzionale `usd-core`). Gli archi
+CIDOC sono rappresentati da prim con relazioni USD verso sorgente e destinazione;
+classi, predicati e proprietà originali sono conservati nei metadati applicativi.
+Vedere “OpenUSD scene export” nel README per la struttura e le assunzioni.

@@ -1,0 +1,2 @@
+# Optional OpenUSD exporter and validation SDK.
+usd-core>=25.11,<27
