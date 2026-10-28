@@ -88,6 +88,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     group2.add_argument(
+        "--no-reference",
+        action="store_true",
+        help=(
+            "Disable both an explicit and the automatically discovered "
+            "scene-specific reference. Useful for cross-scene routing tests."
+        ),
+    )
+    group2.add_argument(
         "--condition",
         choices=("full", "graph"),
         default="full",
@@ -258,7 +266,9 @@ def main() -> None:
 
     output_dir = _output_dir_from_args(args)
     scene_name = _sanitize_for_path(Path(point_cloud_path).stem)
-    if args.reference_file:
+    if args.no_reference:
+        reference_path = None
+    elif args.reference_file:
         reference_path = resolve_local_path(args.reference_file)
     else:
         candidate = Path("benchmark/references") / f"{scene_name}_reference_draft.json"

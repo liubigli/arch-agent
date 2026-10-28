@@ -175,6 +175,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("point_cloud_path", help="Input LAZ scene.")
     parser.add_argument("--annotation-csv", default=None, help="Optional scene annotation CSV.")
     parser.add_argument(
+        "--skip-annotations",
+        action="store_true",
+        help="Do not auto-load or use CSV annotations; validate point-cloud-derived triples only.",
+    )
+    parser.add_argument(
         "--gold-csv",
         "--gold-file",
         dest="gold_csv",
@@ -223,6 +228,7 @@ def main() -> None:
         use_normals=args.use_normals,
         annotation_csv_path=str(annotation_csv) if annotation_csv else None,
         annotation_match_threshold=args.annotation_match_threshold,
+        skip_annotations=args.skip_annotations,
     )
     ctx = run_pipeline(params)
 

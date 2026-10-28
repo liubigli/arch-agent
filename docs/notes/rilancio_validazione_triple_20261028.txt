@@ -1,0 +1,331 @@
+NOTE OPERATIVE - VALIDAZIONE TRIPLE SCENA4_VAL
+Data: 28 ottobre 2026
+
+Percorso principale degli output Windows:
+C:\Users\Utente\Desktop\Lucrezia\Lu_test_project\triple_validation_outputs
+
+Repository WSL:
+~/LG_project/arch-agent
+
+Scena:
+/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz
+
+CSV descrittivo:
+/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL_annotations.csv
+
+======================================================================
+1. VALIDAZIONE DELLE TRIPLE DELLO SPATIAL GRAPH
+======================================================================
+
+Il comando seguente genera le triple dello spatial graph, applica il
+validatore automatico e crea il file XLSX per la revisione manuale.
+
+cd ~/LG_project/arch-agent || exit 1
+
+BASE="/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/triple_validation_outputs"
+TODAY=$(date +"%Y%m%d")
+
+TEST_N=1
+while [ -d "$BASE/scena4_L1_revalidation_${TODAY}_test_${TEST_N}" ]; do
+  TEST_N=$((TEST_N + 1))
+done
+
+OUT="$BASE/scena4_L1_revalidation_${TODAY}_test_${TEST_N}"
+mkdir -p "$OUT"
+
+pixi run python validate_triples.py \
+"/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" \
+--graph spatial \
+--annotation-csv "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL_annotations.csv" \
+--eps 0.5 \
+--min-samples 15 \
+--distance-threshold 2.0 \
+--annotation-match-threshold 2.0 \
+--sample-n 150000 \
+--output-dir "$OUT"
+
+cat "$OUT"/spatial_triples_report_*.txt
+column -s, -t "$OUT"/spatial_triples_summary_by_relation_*.csv
+find "$OUT" -name "spatial_triples_manual_review_*.xlsx"
+
+File principali prodotti:
+
+- spatial_triples_raw_*.csv/json
+  Triple generate dal sistema, senza giudizio.
+
+- spatial_triples_validation_*.csv/json
+  Triple con valutazione automatica.
+
+- spatial_triples_manual_review_*.xlsx
+  File da compilare manualmente.
+
+- spatial_triples_report_*.txt
+  Conteggi complessivi e stato della validazione.
+
+- spatial_triples_summary_by_relation_*.csv
+  Numero di triple per relazione.
+
+======================================================================
+2. VALIDAZIONE DELLE TRIPLE CIDOC
+======================================================================
+
+Il CSV fornisce lo strato descrittivo utilizzato per materiale, tipologia,
+funzione e descrizione. Il builder CIDOC usa inoltre lo spatial context per
+le relazioni fra oggetti architettonici.
+
+cd ~/LG_project/arch-agent || exit 1
+
+BASE="/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/triple_validation_outputs"
+TODAY=$(date +"%Y%m%d")
+
+TEST_N=1
+while [ -d "$BASE/scena4_CIDOC_revalidation_${TODAY}_test_${TEST_N}" ]; do
+  TEST_N=$((TEST_N + 1))
+done
+
+OUT="$BASE/scena4_CIDOC_revalidation_${TODAY}_test_${TEST_N}"
+mkdir -p "$OUT"
+
+pixi run python validate_triples.py \
+"/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL.laz" \
+--graph cidoc \
+--annotation-csv "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented/scena4_VAL_annotations.csv" \
+--eps 0.5 \
+--min-samples 15 \
+--distance-threshold 2.0 \
+--annotation-match-threshold 2.0 \
+--sample-n 150000 \
+--output-dir "$OUT"
+
+cat "$OUT"/cidoc_triples_report_*.txt
+column -s, -t "$OUT"/cidoc_triples_summary_by_relation_*.csv
+find "$OUT" -name "cidoc_triples_manual_review_*.xlsx"
+
+Predicati CIDOC principali:
+
+- crm:P2_has_type: associa l'oggetto alla sua tipologia.
+- crm:P45_consists_of: associa l'oggetto al materiale.
+- crm:P103_was_intended_for: associa l'oggetto alla funzione.
+- crm:P46i_forms_part_of: indica che una feature forma parte di un oggetto.
+- crm:P56_bears_feature: indica che un oggetto porta una feature.
+
+======================================================================
+3. COMPILAZIONE DEL FILE MANUAL REVIEW
+======================================================================
+
+Nel file spatial_triples_manual_review_*.xlsx oppure
+cidoc_triples_manual_review_*.xlsx compilare:
+
+- manual_label: correct oppure incorrect
+- manual_issue: tipo di errore rilevato
+- manual_note: spiegazione della valutazione
+
+Se si compilano soltanto le eccezioni, le celle manual_label lasciate vuote
+possono essere interpretate come conferma del validatore usando l'opzione:
+
+--blank-means-confirm
+
+======================================================================
+4. CONFRONTO L1 DOPO LA REVISIONE MANUALE
+======================================================================
+
+cd ~/LG_project/arch-agent || exit 1
+
+cp \
+"/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/github_repo/arch-agent/evaluate_manual_triples.py" \
+"./evaluate_manual_triples.py"
+
+BASE="/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/triple_validation_outputs"
+TODAY=$(date +"%Y%m%d")
+
+MANUAL_FILE=$(
+  find "$BASE" \
+  -type f \
+  -path "*/scena4_L1_revalidation_${TODAY}_test_*/*" \
+  -name "spatial_triples_manual_review_*.xlsx" \
+  -printf '%T@ %p\n' |
+  sort -nr |
+  head -1 |
+  cut -d' ' -f2-
+)
+
+if [ -z "$MANUAL_FILE" ]; then
+  echo "ERRORE: file spatial manual review di oggi non trovato"
+  exit 1
+fi
+
+EVAL_DIR="$(dirname "$MANUAL_FILE")/manual_evaluation"
+mkdir -p "$EVAL_DIR"
+
+pixi run python evaluate_manual_triples.py \
+"$MANUAL_FILE" \
+--output-dir "$EVAL_DIR" \
+--blank-means-confirm
+
+echo "$EVAL_DIR"
+
+======================================================================
+5. CONFRONTO CIDOC DOPO LA REVISIONE MANUALE
+======================================================================
+
+cd ~/LG_project/arch-agent || exit 1
+
+cp \
+"/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/github_repo/arch-agent/evaluate_manual_triples.py" \
+"./evaluate_manual_triples.py"
+
+BASE="/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/triple_validation_outputs"
+TODAY=$(date +"%Y%m%d")
+
+MANUAL_FILE=$(
+  find "$BASE" \
+  -type f \
+  -path "*/scena4_CIDOC_revalidation_${TODAY}_test_*/*" \
+  -name "cidoc_triples_manual_review_*.xlsx" \
+  -printf '%T@ %p\n' |
+  sort -nr |
+  head -1 |
+  cut -d' ' -f2-
+)
+
+if [ -z "$MANUAL_FILE" ]; then
+  echo "ERRORE: file CIDOC manual review di oggi non trovato"
+  exit 1
+fi
+
+EVAL_DIR="$(dirname "$MANUAL_FILE")/manual_evaluation"
+mkdir -p "$EVAL_DIR"
+
+pixi run python evaluate_manual_triples.py \
+"$MANUAL_FILE" \
+--output-dir "$EVAL_DIR" \
+--blank-means-confirm
+
+echo "$EVAL_DIR"
+
+======================================================================
+6. OUTPUT DEL CONFRONTO AUTOMATICO-MANUALE
+======================================================================
+
+La cartella manual_evaluation contiene:
+
+- manual_evaluation_*.json
+- manual_evaluation_*.csv
+- manual_evaluation_*.xlsx
+- manual_evaluation_*.txt
+- manual_evaluation_*_confusion_matrix.png
+
+Metriche calcolate:
+
+- TP: validatore valid e revisione correct
+- FP: validatore valid e revisione incorrect
+- FN: validatore invalid e revisione correct
+- TN: validatore invalid e revisione incorrect
+- Precision
+- Recall
+- F1-score
+- Accuracy
+- Acceptance rate manuale
+
+La matrice di confusione usa il formato:
+
+[[TN, FP],
+ [FN, TP]]
+
+Nota: il numero di triple non coincide necessariamente con il numero di
+archi NetworkX. Piu predicati fra la stessa coppia direzionale possono essere
+memorizzati all'interno dello stesso arco del grafo.
+
+======================================================================
+7. TEST BATCH DELLE POINT CLOUD DEL DATASET
+======================================================================
+
+Cartella di input:
+C:\Users\Utente\Desktop\Lucrezia\Lu_test_project\laz_archdataset_segmented
+
+La cartella contiene 18 scene LAZ.
+
+In questo test vengono generate e validate soltanto le triple dello spatial
+graph derivate dalla point cloud e dalle classi semantiche. I CSV vengono
+esclusi tramite --skip-annotations, affinche tutte le scene siano confrontate
+nella stessa condizione sperimentale.
+
+Il batch:
+
+- elabora tutte le scene LAZ;
+- usa DBSCAN con eps=0.5 e min_samples=15;
+- usa distance_threshold=2.0 m;
+- carica al massimo 150000 punti per scena;
+- genera raw, validation, manual review e report per ogni scena;
+- continua sulle scene successive in caso di errore;
+- genera un riepilogo complessivo CSV, JSON e TXT.
+
+Comando da eseguire in WSL:
+
+cd ~/LG_project/arch-agent || exit 1
+
+cp \
+"/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/github_repo/arch-agent/validate_triples.py" \
+"./validate_triples.py"
+
+cp \
+"/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/github_repo/arch-agent/summarize_dataset_triples.py" \
+"./summarize_dataset_triples.py"
+
+mkdir -p scripts
+
+cp \
+"/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/github_repo/arch-agent/scripts/validate_spatial_dataset.sh" \
+"./scripts/validate_spatial_dataset.sh"
+
+chmod +x scripts/validate_spatial_dataset.sh
+
+bash scripts/validate_spatial_dataset.sh \
+"/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented" \
+"/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/triple_validation_outputs"
+
+Cartella generata il 28 ottobre 2026:
+
+C:\Users\Utente\Desktop\Lucrezia\Lu_test_project\triple_validation_outputs\dataset_L1_20261028_test_1
+
+Se test_1 esiste gia, il batch usa automaticamente test_2, test_3 e cosi via.
+
+Struttura principale:
+
+dataset_L1_20261028_test_1
+|-- scena1_TR_chiostro
+|   |-- spatial_triples_raw_*.csv/json
+|   |-- spatial_triples_validation_*.csv/json
+|   |-- spatial_triples_manual_review_*.xlsx
+|   |-- spatial_triples_report_*.txt
+|   `-- run.log
+|-- altre scene...
+|-- dataset_spatial_triples_summary.csv
+|-- dataset_spatial_triples_summary.json
+|-- dataset_spatial_triples_summary.txt
+|-- dataset_summary.log
+|-- batch_status.txt
+`-- failures.txt, se sono presenti errori
+
+Per leggere il riepilogo complessivo:
+
+cat \
+"/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/triple_validation_outputs/dataset_L1_20261028_test_1/dataset_spatial_triples_summary.txt"
+
+Il riepilogo contiene:
+
+- numero di scene completate;
+- numero complessivo di oggetti DBSCAN;
+- numero complessivo di triple;
+- conteggio per tipo di relazione;
+- conteggio valid, invalid e review;
+- oggetti e triple per ogni scena;
+- percorso della cartella di output di ogni scena.
+
+Per la revisione manuale usare, dentro ciascuna sottocartella, il file:
+
+spatial_triples_manual_review_*.xlsx
+
+Compilare manual_label con correct oppure incorrect. Dopo la revisione si puo
+eseguire evaluate_manual_triples.py separatamente per ciascuna scena, usando
+la procedura descritta nella sezione 4.

@@ -1,0 +1,58 @@
+BENCHMARK DELL'AGENTE SU TUTTE LE SCENE SENZA CSV
+Data: 2026-10-28
+
+Obiettivo
+---------
+Eseguire lo stesso set ufficiale di 60 domande su ogni point cloud LAZ/LAS,
+senza caricare annotazioni CSV. Il test misura principalmente comprensione
+della domanda, routing dei tool, correttezza degli argomenti e aderenza della
+risposta ai dati ottenuti dalla pipeline e dallo spatial graph.
+
+Interpretazione delle 60 domande
+--------------------------------
+1. Le domande su inventario, classi, oggetti e relazioni spaziali sono
+   direttamente valutabili.
+2. Le domande su materiale, tipologia, funzione documentaria e descrizioni
+   storiche restano nel set per verificare che il modello riconosca il limite
+   informativo e non inventi una risposta.
+3. In assenza del CSV, per queste ultime domande la risposta corretta è una
+   dichiarazione sintetica di indisponibilità. Il routing verso tool CSV non è
+   applicabile perché tali tool non sono esposti nella condizione graph.
+4. I risultati non devono essere confrontati con la reference numerica di
+   scena4_VAL: quantità, oggetti e relazioni cambiano in ogni scena.
+
+Modifiche operative
+-------------------
+- benchmark.py accetta --no-reference, che impedisce anche il caricamento
+  automatico di una reference con lo stesso nome della scena.
+- scripts/benchmark_spatial_dataset.sh controlla che le domande siano 60,
+  cerca tutti i file LAZ/LAS, usa --condition graph e crea una cartella per
+  ogni scena con raw, evaluation, manual_review e benchmark.log.
+- Il batch continua dopo un errore e registra l'esito in batch_status.tsv.
+
+Comando WSL, primo test con llama3.1
+-----------------------------------
+cd ~/LG_project/arch-agent
+
+bash scripts/benchmark_spatial_dataset.sh \
+  "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/laz_archdataset_segmented" \
+  "/mnt/c/Users/Utente/Desktop/Lucrezia/Lu_test_project/scena4_Benchmark/dataset_graph_only_20261028_test_1" \
+  llama3.1
+
+Output atteso
+-------------
+Per ogni scena e modello:
+- benchmark_raw_*.json e .csv
+- benchmark_evaluation_*.json e .csv
+- benchmark_manual_review_*.json e .csv
+- benchmark.log
+
+Alla radice del run:
+- batch_status.tsv
+
+Nota metodologica
+-----------------
+Senza una reference fattuale specifica per ciascuna scena, l'evaluation
+automatica misura bene routing, lingua, uso dei tool, errori e groundedness,
+ma non sostituisce una validazione gold completa della risposta. Il raw resta
+la fonte primaria per il confronto tra modelli.

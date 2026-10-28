@@ -1,0 +1,132 @@
+REPORT - DIFFERENZA TRA TRIPLE E ARCHI DELLO SPATIAL GRAPH
+
+Scena: scena4_VAL
+Data: 28 ottobre 2026
+Run analizzato: dataset_L1_20261028_test_1
+Condizione: point-cloud only, annotazioni CSV escluse
+Distance threshold: 2.0 m
+DBSCAN: eps=0.5, min_samples=15
+Campionamento massimo: 150000 punti
+
+======================================================================
+1. RISULTATO PRINCIPALE
+======================================================================
+
+Il test ha prodotto:
+
+- 33 nodi
+- 230 triple/relazioni
+- 170 archi direzionali NetworkX
+
+Il log riporta correttamente due conteggi differenti:
+
+  -> 230 relationships found
+  -> L1: 33 nodes, 170 edges
+
+Le 170 unita non rappresentano il numero di triple. Rappresentano il numero
+di coppie direzionali distinte source -> target presenti nel DiGraph.
+
+======================================================================
+2. MOTIVO DELLA DIFFERENZA
+======================================================================
+
+Lo spatial graph e implementato con networkx.DiGraph. Un DiGraph conserva un
+solo arco per ogni coppia direzionale di nodi:
+
+  source -> target
+
+Quando la stessa coppia di oggetti possiede piu predicati, questi vengono
+salvati come attributi dello stesso arco.
+
+Esempio:
+
+  wall_0 -- adjacent_to --> door_window_0
+  wall_0 -- has_part ----> door_window_0
+
+Questa configurazione corrisponde a:
+
+- 2 triple
+- 1 arco NetworkX
+
+Non avviene alcuna perdita di informazione: entrambi i predicati sono
+conservati nell'attributo relations dell'arco.
+
+======================================================================
+3. VERIFICA NUMERICA
+======================================================================
+
+Triple totali:                       230
+Coppie direzionali distinte:         170
+Archi con piu predicati:              60
+Triple aggiuntive accorpate:          60
+
+Calcolo:
+
+  230 triple - 60 predicati aggiuntivi accorpati = 170 archi
+
+======================================================================
+4. RELAZIONI ACCORPATE SULLO STESSO ARCO
+======================================================================
+
+Combinazione di predicati                         Archi
+---------------------------------------------------------------------
+adjacent_to + has_part                              27
+adjacent_to + is_ornament_of                        20
+adjacent_to + is_opening_in                          7
+is_opening_in + near                                 3
+has_part + near                                      3
+---------------------------------------------------------------------
+Totale                                              60
+
+======================================================================
+5. DISTRIBUZIONE DELLE 230 TRIPLE
+======================================================================
+
+Relazione                                         Triple
+---------------------------------------------------------------------
+adjacent_to                                         114
+near                                                 10
+supports                                             21
+rests_on                                             21
+has_part                                             32
+is_opening_in                                        12
+is_ornament_of                                       20
+---------------------------------------------------------------------
+Totale                                              230
+
+Livelli di derivazione:
+
+- geometric: 124
+- architectural_rule: 106
+- CSV/user metadata: 0
+
+======================================================================
+6. INTERPRETAZIONE
+======================================================================
+
+Il conteggio da usare per valutare le triple generate dal sistema e 230.
+
+Il conteggio 170 descrive invece la struttura topologica del DiGraph, ossia
+il numero di collegamenti direzionali distinti fra gli oggetti.
+
+Pertanto entrambi i valori sono corretti, ma misurano grandezze differenti:
+
+- 230 = triple semantiche/spaziali source-predicate-target
+- 170 = archi direzionali source-target nel grafo NetworkX
+
+Per confrontare la produzione di relazioni fra scene occorre usare il numero
+di triple e la loro distribuzione per predicato. Il numero di archi e utile
+per analizzare densita, connettivita e struttura topologica del grafo.
+
+======================================================================
+7. FILE SORGENTE DELLA VERIFICA
+======================================================================
+
+Report automatico:
+spatial_triples_report_scena4_VAL_threshold_2_0_20261028_154158.txt
+
+Triple grezze:
+spatial_triples_raw_scena4_VAL_threshold_2_0_20261028_154158.json
+
+Cartella:
+C:\Users\Utente\Desktop\Lucrezia\Lu_test_project\triple_validation_outputs\dataset_L1_20261028_test_1\scena4_VAL
